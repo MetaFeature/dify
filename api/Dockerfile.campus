@@ -1,0 +1,10 @@
+ARG DIFY_API_BASE_IMAGE=langgenius/dify-api@sha256:bd3e8b15cfc47e89dc7a0d17431e6f3289244f4b442b96e2372bd0f0646f3d58
+
+FROM ${DIFY_API_BASE_IMAGE}
+
+# The Campus checkout is pinned to the same Dify release as the base image.
+# Replacing only application source preserves the upstream runtime and lockfile
+# dependencies while keeping the Campus extension in a separate image.
+USER root
+COPY --chown=dify:dify api /app/api/
+USER dify

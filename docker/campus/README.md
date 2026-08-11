@@ -5,6 +5,10 @@ upstream Dify. Its Compose project is `njit-campus`; the default canary is
 `127.0.0.1:13000` for gateway administration and campus port `18080` for Dify.
 The gateway database and Redis have no host ports.
 
+The Campus API image layers the committed Campus source over the pinned
+official Dify 1.16.0 API image. The base-image digest is validated before every
+deployment; a registry mirror is allowed only when it retains that digest.
+
 ## Implemented boundary
 
 - One normalized student identity maps lazily to one Dify account, one Dify
