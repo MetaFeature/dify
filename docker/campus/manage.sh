@@ -182,7 +182,7 @@ backup() {
 
 verify() {
   validate
-  local campus_bind campus_port gateway_port baseline_url status published container_id nginx_config nginx_pattern
+  local campus_bind campus_port gateway_port baseline_url status published container_id nginx_config nginx_location
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
@@ -196,10 +196,10 @@ verify() {
   "${COMPOSE[@]}" ps --status running --services | grep -qx model-gateway || fail "model gateway is not running"
   published="$("${COMPOSE[@]}" port nginx 80)"
   [[ "${published}" == "${campus_bind}:${campus_port}" ]] || fail "Campus Dify bind differs from protected configuration"
-  nginx_pattern="$(sed -n 's/^[[:space:]]*location ~ \(.*\) {$/\1/p' \
+  nginx_location="$(sed -n '/^[[:space:]]*location ~ /{s/^[[:space:]]*//;p;q;}' \
     "${SCRIPT_DIR}/nginx/default.conf.template")"
   nginx_config="$("${COMPOSE[@]}" exec -T nginx nginx -T 2>&1)"
-  printf '%s\n' "${nginx_config}" | grep -Eq "${nginx_pattern}" || \
+  printf '%s\n' "${nginx_config}" | grep -Fq "${nginx_location}" || \
     fail "running nginx does not contain the Campus bootstrap route boundary"
   wait_for_campus_health "${campus_port}"
 
