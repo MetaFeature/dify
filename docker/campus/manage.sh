@@ -169,7 +169,7 @@ backup() {
 
 verify() {
   validate
-  local campus_port gateway_port baseline_url status published
+  local campus_port gateway_port baseline_url status published container_id
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   baseline_url="$(env_value CAMPUS_BASELINE_URL)"
@@ -187,8 +187,12 @@ verify() {
 
   published="$("${COMPOSE[@]}" port model-gateway 3000)"
   [[ "${published}" == "127.0.0.1:${gateway_port}" ]] || fail "model gateway is not loopback-only"
-  [[ -z "$("${COMPOSE[@]}" port model-gateway-db 5432 2>/dev/null || true)" ]] || fail "gateway database is published"
-  [[ -z "$("${COMPOSE[@]}" port model-gateway-redis 6379 2>/dev/null || true)" ]] || fail "gateway Redis is published"
+  container_id="$("${COMPOSE[@]}" ps -q model-gateway-db)"
+  [[ -n "${container_id}" && -z "$(docker port "${container_id}" 5432 2>/dev/null || true)" ]] || \
+    fail "gateway database is published"
+  container_id="$("${COMPOSE[@]}" ps -q model-gateway-redis)"
+  [[ -n "${container_id}" && -z "$(docker port "${container_id}" 6379 2>/dev/null || true)" ]] || \
+    fail "gateway Redis is published"
   curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
 }
 
