@@ -2,8 +2,9 @@
 
 This overlay deploys the Campus backend beside, not over, the current port-80
 upstream Dify. Its Compose project is `njit-campus`; the default canary is
-`127.0.0.1:13000` for gateway administration and campus port `18080` for Dify.
-The gateway database and Redis have no host ports.
+`127.0.0.1:13000` for gateway administration and loopback port `18080` for
+Dify during administrator bootstrap. The gateway database and Redis have no
+host ports.
 
 The Campus API image layers the committed Campus source over the pinned
 official Dify 1.16.0 API image. The base-image digest is validated before every
@@ -48,11 +49,18 @@ and real roster/SSO data are outside this phase.
    configure the allowed text/vision/image/audio channels and RMB-per-million
    token pricing, then create an administrator personal access token. Put only
    that token and user ID in `campus.env`.
-6. Start the Dify database and core services. Complete initial Dify setup,
+6. Start the Dify database and core services, then run
+   `docker/campus/manage.sh open-bootstrap`. This command requires Dify port
+   `18080` to remain loopback-only, takes a backup, and opens the one-time setup
+   page without disclosing an initialization password. Complete initial Dify setup,
    create the service-principal account named in `CAMPUS_SERVICE_PRINCIPAL_EMAIL`,
    install the configured OpenAI-compatible provider, and put the first Dify
    administrator account ID in `CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS`.
 7. Run `docker/campus/manage.sh deploy`, then `docker/campus/manage.sh verify`.
+
+Use an SSH tunnel to `127.0.0.1:18080` while creating the initial Dify
+administrators. Do not bind the Campus route to a campus interface until setup
+is complete and both administrator logins have been verified.
 
 If Docker Hub is unavailable, set the three `CAMPUS_GATEWAY_*_IMAGE`
 variables to an approved registry mirror while retaining the documented image

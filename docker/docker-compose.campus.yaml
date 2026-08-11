@@ -55,6 +55,9 @@ services:
     build: *campus-dify-build
 
   nginx:
+    ports: !override
+      - "${CAMPUS_NGINX_BIND_ADDRESS:-127.0.0.1}:${EXPOSE_NGINX_PORT:-18080}:${NGINX_PORT:-80}"
+      - "${CAMPUS_NGINX_BIND_ADDRESS:-127.0.0.1}:${EXPOSE_NGINX_SSL_PORT:-18443}:${NGINX_SSL_PORT:-443}"
     volumes:
       - ./campus/nginx/default.conf.template:/etc/nginx/conf.d/default.conf.template:ro
 

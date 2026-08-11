@@ -169,16 +169,20 @@ backup() {
 
 verify() {
   validate
-  local campus_port gateway_port baseline_url status published container_id
+  local campus_bind campus_port gateway_port baseline_url status published container_id
+  campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   baseline_url="$(env_value CAMPUS_BASELINE_URL)"
+  campus_bind="${campus_bind:-127.0.0.1}"
   campus_port="${campus_port:-18080}"
   gateway_port="${gateway_port:-13000}"
   baseline_url="${baseline_url:-http://127.0.0.1/}"
 
   "${COMPOSE[@]}" ps --status running --services | grep -qx api || fail "Campus API is not running"
   "${COMPOSE[@]}" ps --status running --services | grep -qx model-gateway || fail "model gateway is not running"
+  published="$("${COMPOSE[@]}" port nginx 80)"
+  [[ "${published}" == "${campus_bind}:${campus_port}" ]] || fail "Campus Dify bind differs from protected configuration"
   curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${campus_port}/health" >/dev/null
 
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
@@ -196,6 +200,40 @@ verify() {
   curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
 }
 
+open_bootstrap() {
+  validate
+  local campus_bind campus_port setup_step init_status env_tmp
+  campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
+  campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  campus_bind="${campus_bind:-127.0.0.1}"
+  campus_port="${campus_port:-18080}"
+  [[ "${campus_bind}" == "127.0.0.1" ]] || fail "administrator bootstrap requires a loopback-only Campus bind"
+
+  setup_step="$(curl --fail --silent --show-error --max-time 10 \
+    "http://127.0.0.1:${campus_port}/console/api/setup" | \
+    sed -n 's/.*"step":"\([^"]*\)".*/\1/p')"
+  [[ "${setup_step}" == "not_started" ]] || fail "Dify setup is not waiting for first-time bootstrap"
+
+  backup >/dev/null
+  env_tmp="$(mktemp "${DOCKER_DIR}/.env.bootstrap.XXXXXX")"
+  awk '
+    BEGIN { replaced = 0 }
+    /^INIT_PASSWORD=/ { print "INIT_PASSWORD="; replaced = 1; next }
+    { print }
+    END { if (!replaced) print "INIT_PASSWORD=" }
+  ' "${DOCKER_DIR}/.env" >"${env_tmp}"
+  chmod --reference="${DOCKER_DIR}/.env" "${env_tmp}"
+  mv "${env_tmp}" "${DOCKER_DIR}/.env"
+
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate api nginx
+  published="$("${COMPOSE[@]}" port nginx 80)"
+  [[ "${published}" == "127.0.0.1:${campus_port}" ]] || fail "administrator bootstrap is not loopback-only"
+  init_status="$(curl --fail --silent --show-error --max-time 10 \
+    "http://127.0.0.1:${campus_port}/console/api/init" | \
+    sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
+  [[ "${init_status}" == "finished" ]] || fail "Dify initialization gate did not open"
+}
+
 deploy() {
   validate
   if project_has_state; then
@@ -206,7 +244,7 @@ deploy() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|validate|backup|deploy|verify|stop}" >&2
+  echo "usage: $0 {gateway-up|validate|backup|deploy|verify|open-bootstrap|stop}" >&2
   exit 2
 }
 
@@ -224,6 +262,7 @@ case "${1:-}" in
   backup) backup ;;
   deploy) deploy ;;
   verify) verify ;;
+  open-bootstrap) open_bootstrap ;;
   stop)
     validate
     "${COMPOSE[@]}" down
