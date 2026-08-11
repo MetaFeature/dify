@@ -1,0 +1,106 @@
+server {
+    listen ${NGINX_PORT};
+    server_name ${NGINX_SERVER_NAME};
+
+    location = /_campus_access_check {
+      internal;
+      proxy_pass http://api:5001/console/api/campus/session/access-check;
+      proxy_pass_request_body off;
+      proxy_set_header Content-Length "";
+      proxy_set_header X-Original-URI $request_uri;
+      include proxy.conf;
+    }
+
+    location ^~ /console/api/campus/ {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    # These endpoints are required before a Dify administrator has a session.
+    # Campus student accounts have no passwords and cannot use this login path.
+    location ~ ^/console/api/(login|refresh-token|setup|parameters|system-features)$ {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /console/api {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /api {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /socket.io/ {
+      auth_request /_campus_access_check;
+      resolver 127.0.0.11 valid=30s ipv6=off;
+      set $socket_io_upstream ${NGINX_SOCKET_IO_UPSTREAM};
+      proxy_pass http://$socket_io_upstream;
+      include proxy.conf;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_cache_bypass $http_upgrade;
+    }
+
+    location /v1 {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /openapi {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /files {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /explore {
+      auth_request /_campus_access_check;
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    # Plugin callbacks must remain service-to-service accessible.
+    location /e/ {
+      proxy_pass http://plugin_daemon:5002;
+      proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
+      include proxy.conf;
+    }
+
+    # The stock Dify shell remains visible until the Campus frontend is built.
+    # All workspace APIs are still protected by the Campus access check above.
+    location / {
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location /mcp {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /triggers {
+      auth_request /_campus_access_check;
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location = /health {
+      proxy_pass http://api:5001/health;
+      include proxy.conf;
+    }
+
+    ${ACME_CHALLENGE_LOCATION}
+    ${HTTPS_CONFIG}
+}

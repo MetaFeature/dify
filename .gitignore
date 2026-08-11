@@ -178,6 +178,8 @@ docker/volumes/weaviate/*
 docker/volumes/qdrant/*
 docker/tidb/volumes/*
 docker/volumes/etcd/*
+docker/envs/campus.env
+docker/campus/backups/
 docker/volumes/minio/*
 docker/volumes/milvus/*
 docker/volumes/chroma/*

@@ -34,6 +34,8 @@ for module_name in RESOURCE_MODULES:
 # Import other controllers
 from . import (
     apikey,
+    campus,
+    campus_admin,
     extension,
     feature,
     human_input_form,
@@ -171,6 +173,8 @@ __all__ = [
     "banner",
     "billing",
     "bp",
+    "campus",
+    "campus_admin",
     "completion",
     "compliance",
     "console_ns",
