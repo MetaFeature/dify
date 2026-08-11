@@ -89,6 +89,18 @@ service_running() {
   "${COMPOSE[@]}" ps --status running --services | grep -qx "${service}"
 }
 
+wait_for_campus_health() {
+  local campus_port="$1" attempt
+  for attempt in {1..30}; do
+    if curl --fail --silent --show-error --max-time 5 \
+      "http://127.0.0.1:${campus_port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  fail "Campus API did not become healthy within 60 seconds"
+}
+
 service_has_state() {
   local service="$1"
   if [[ -n "$("${COMPOSE[@]}" ps -aq "${service}" 2>/dev/null)" ]]; then
@@ -183,7 +195,7 @@ verify() {
   "${COMPOSE[@]}" ps --status running --services | grep -qx model-gateway || fail "model gateway is not running"
   published="$("${COMPOSE[@]}" port nginx 80)"
   [[ "${published}" == "${campus_bind}:${campus_port}" ]] || fail "Campus Dify bind differs from protected configuration"
-  curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${campus_port}/health" >/dev/null
+  wait_for_campus_health "${campus_port}"
 
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${campus_port}/console/api/apps")"
@@ -228,6 +240,7 @@ open_bootstrap() {
   "${COMPOSE[@]}" up -d --no-deps --force-recreate api nginx
   published="$("${COMPOSE[@]}" port nginx 80)"
   [[ "${published}" == "127.0.0.1:${campus_port}" ]] || fail "administrator bootstrap is not loopback-only"
+  wait_for_campus_health "${campus_port}"
   init_status="$(curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${campus_port}/console/api/init" | \
     sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
