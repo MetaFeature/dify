@@ -209,6 +209,9 @@ verify() {
   container_id="$("${COMPOSE[@]}" ps -q model-gateway-redis)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 6379 2>/dev/null || true)" ]] || \
     fail "gateway Redis is published"
+  container_id="$("${COMPOSE[@]}" ps -q plugin_daemon)"
+  [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
+    fail "plugin daemon is published"
   curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
 }
 

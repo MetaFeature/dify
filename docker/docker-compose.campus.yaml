@@ -62,6 +62,7 @@ services:
       - ./campus/nginx/default.conf.template:/etc/nginx/conf.d/default.conf.template:ro
 
   plugin_daemon:
+    ports: !override []
     networks:
       - ssrf_proxy_network
       - default

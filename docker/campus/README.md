@@ -3,8 +3,8 @@
 This overlay deploys the Campus backend beside, not over, the current port-80
 upstream Dify. Its Compose project is `njit-campus`; the default canary is
 `127.0.0.1:13000` for gateway administration and loopback port `18080` for
-Dify during administrator bootstrap. The gateway database and Redis have no
-host ports.
+Dify during administrator bootstrap. The gateway database, Redis, Dify data
+services, and plugin daemon have no host ports.
 
 The Campus API image layers the committed Campus source over the pinned
 official Dify 1.16.0 API image. The base-image digest is validated before every
