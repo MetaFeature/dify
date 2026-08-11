@@ -62,6 +62,19 @@ Use an SSH tunnel to `127.0.0.1:18080` while creating the initial Dify
 administrators. Do not bind the Campus route to a campus interface until setup
 is complete and both administrator logins have been verified.
 
+After administrator setup, set `CAMPUS_NGINX_BIND_ADDRESS=0.0.0.0`, recreate
+nginx, and run the Windows script below from an elevated shell to allow only
+local-subnet traffic through both Windows Firewall and the WSL Hyper-V firewall:
+
+```powershell
+.\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 18080 -RemoteAddress 10.0.0.0/255.0.0.0
+```
+
+`-Action Verify` is idempotent verification. `-Action Remove` is the firewall
+rollback; change the Campus bind back to `127.0.0.1` and recreate nginx at the
+same time. The script backs up pre-existing matching rule state under
+`C:\ProgramData\NJITCampus\firewall-backups` before applying changes.
+
 If Docker Hub is unavailable, set the three `CAMPUS_GATEWAY_*_IMAGE`
 variables to an approved registry mirror while retaining the documented image
 digests. The build remains reproducible and does not require changing the
