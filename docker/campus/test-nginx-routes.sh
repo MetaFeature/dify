@@ -3,10 +3,16 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 template="${SCRIPT_DIR}/nginx/default.conf.template"
+compose_overlay="${SCRIPT_DIR}/../docker-compose.campus.yaml"
 pattern="$(sed -n 's/^[[:space:]]*location ~ \(.*\) {$/\1/p' "${template}")"
 
 [[ -n "${pattern}" ]] || {
   echo "missing Campus nginx bootstrap allowlist" >&2
+  exit 1
+}
+
+grep -Eq '^[[:space:]]+volumes: !override$' "${compose_overlay}" || {
+  echo "Campus nginx volumes must replace, not merge with, the upstream conf.d directory mount" >&2
   exit 1
 }
 
