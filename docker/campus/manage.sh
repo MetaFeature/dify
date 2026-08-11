@@ -161,7 +161,8 @@ backup() {
   fi
   tar -czf "${destination}/configuration.tgz" .env \
     -C "$(dirname -- "${CAMPUS_ENV_FILE}")" "$(basename -- "${CAMPUS_ENV_FILE}")"
-  "${COMPOSE[@]}" images --format json >"${destination}/images.json"
+  "${COMPOSE[@]}" config --images | sort -u >"${destination}/configured-images.txt"
+  "${COMPOSE[@]}" ps --all --format json >"${destination}/containers.json"
   checksum_manifest "${destination}"
   echo "${destination}"
 }

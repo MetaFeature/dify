@@ -95,8 +95,9 @@ shell later without changing these backend contracts.
 `manage.sh deploy` creates a mode-`0700` backup before changing an existing
 Campus project. `manage.sh backup` can be run explicitly. Each backup
 contains clean/re-creatable dumps for each database that is already running,
-Dify file/plugin/vector data, the protected configuration, the image inventory,
-and checksums. A gateway-only bootstrap backup therefore has no Dify dump yet.
+Dify file/plugin/vector data, the protected configuration, the configured-image
+and container inventory, and checksums. A gateway-only bootstrap backup
+therefore has no Dify dump yet.
 Treat the backup directory as secret-bearing data.
 
 The script also detects stopped Compose containers and existing PostgreSQL
