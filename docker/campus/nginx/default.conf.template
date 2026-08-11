@@ -18,7 +18,7 @@ server {
 
     # These endpoints are required before a Dify administrator has a session.
     # Campus student accounts have no passwords and cannot use this login path.
-    location ~ ^/console/api/(init|login|refresh-token|setup|parameters|system-features)$ {
+    location ~ ^/console/api/(account/profile|activate/check|features|init|login|parameters|refresh-token|setup|system-features|version|workspaces/current)$ {
       proxy_pass http://api:5001;
       include proxy.conf;
     }

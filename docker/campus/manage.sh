@@ -56,6 +56,7 @@ validate() {
     fail "replace all change-me placeholders in the Campus environment file"
   fi
   validate_gateway_build_images
+  "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${COMPOSE[@]}" config --quiet
 }
 
