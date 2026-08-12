@@ -182,26 +182,48 @@ backup() {
 
 verify() {
   validate
-  local campus_bind campus_port gateway_port baseline_url status published container_id nginx_config nginx_location
+  local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   baseline_url="$(env_value CAMPUS_BASELINE_URL)"
   campus_bind="${campus_bind:-127.0.0.1}"
   campus_port="${campus_port:-18080}"
+  admin_port="${admin_port:-18081}"
   gateway_port="${gateway_port:-13000}"
   baseline_url="${baseline_url:-http://127.0.0.1/}"
 
   "${COMPOSE[@]}" ps --status running --services | grep -qx api || fail "Campus API is not running"
+  "${COMPOSE[@]}" ps --status running --services | grep -qx portal || fail "Campus Access portal is not running"
   "${COMPOSE[@]}" ps --status running --services | grep -qx model-gateway || fail "model gateway is not running"
   published="$("${COMPOSE[@]}" port nginx 80)"
   [[ "${published}" == "${campus_bind}:${campus_port}" ]] || fail "Campus Dify bind differs from protected configuration"
+  published="$("${COMPOSE[@]}" port nginx 8081)"
+  [[ "${published}" == "127.0.0.1:${admin_port}" ]] || fail "Campus administration listener is not loopback-only"
   nginx_location="$(sed -n '/^[[:space:]]*location ~ /{s/^[[:space:]]*//;p;q;}' \
     "${SCRIPT_DIR}/nginx/default.conf.template")"
   nginx_config="$("${COMPOSE[@]}" exec -T nginx nginx -T 2>&1)"
   printf '%s\n' "${nginx_config}" | grep -Fq "${nginx_location}" || \
     fail "running nginx does not contain the Campus bootstrap route boundary"
   wait_for_campus_health "${campus_port}"
+
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${campus_port}/portal/")"
+  [[ "${status}" == "200" ]] || fail "Campus Access portal is unavailable (HTTP ${status})"
+
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${campus_port}/signin")"
+  [[ "${status}" == "404" ]] || fail "public Dify sign-in route was not blocked (HTTP ${status})"
+
+  container_id="$("${COMPOSE[@]}" ps -q portal)"
+  [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
+    fail "Campus Access portal publishes a host port"
+  portal_networks="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' "${container_id}")"
+  [[ "$(printf '%s\n' "${portal_networks}" | sed '/^$/d' | wc -l | tr -d ' ')" == "1" ]] || \
+    fail "Campus Access portal is attached to more than one network"
+  printf '%s\n' "${portal_networks}" | grep -q 'campus_portal$' || \
+    fail "Campus Access portal is not attached to its isolated network"
 
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${campus_port}/console/api/apps")"
@@ -223,15 +245,17 @@ verify() {
 
 open_bootstrap() {
   validate
-  local campus_bind campus_port setup_step init_status env_tmp
+  local campus_bind campus_port admin_port setup_step init_status env_tmp published
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"
   campus_bind="${campus_bind:-127.0.0.1}"
   campus_port="${campus_port:-18080}"
+  admin_port="${admin_port:-18081}"
   [[ "${campus_bind}" == "127.0.0.1" ]] || fail "administrator bootstrap requires a loopback-only Campus bind"
 
   setup_step="$(curl --fail --silent --show-error --max-time 10 \
-    "http://127.0.0.1:${campus_port}/console/api/setup" | \
+    "http://127.0.0.1:${admin_port}/console/api/setup" | \
     sed -n 's/.*"step":"\([^"]*\)".*/\1/p')"
   [[ "${setup_step}" == "not_started" ]] || fail "Dify setup is not waiting for first-time bootstrap"
 
@@ -249,9 +273,11 @@ open_bootstrap() {
   "${COMPOSE[@]}" up -d --no-deps --force-recreate api nginx
   published="$("${COMPOSE[@]}" port nginx 80)"
   [[ "${published}" == "127.0.0.1:${campus_port}" ]] || fail "administrator bootstrap is not loopback-only"
+  published="$("${COMPOSE[@]}" port nginx 8081)"
+  [[ "${published}" == "127.0.0.1:${admin_port}" ]] || fail "administrator listener is not loopback-only"
   wait_for_campus_health "${campus_port}"
   init_status="$(curl --fail --silent --show-error --max-time 10 \
-    "http://127.0.0.1:${campus_port}/console/api/init" | \
+    "http://127.0.0.1:${admin_port}/console/api/init" | \
     sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
   [[ "${init_status}" == "finished" ]] || fail "Dify initialization gate did not open"
 }

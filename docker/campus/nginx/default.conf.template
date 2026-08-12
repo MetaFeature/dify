@@ -16,11 +16,23 @@ server {
       include proxy.conf;
     }
 
-    # These endpoints are required before a Dify administrator has a session.
-    # Campus student accounts have no passwords and cannot use this login path.
-    location ~ ^/console/api/(account/profile|activate/check|features|init|login|parameters|refresh-token|setup|system-features|version|workspaces/current)$ {
-      proxy_pass http://api:5001;
+    location = /portal {
+      return 308 /portal/;
+    }
+
+    location ^~ /portal/ {
+      proxy_pass http://portal:8080/;
       include proxy.conf;
+    }
+
+    # Student authentication is available only through the Access portal.
+    # Named administrators use the host-loopback-only listener below.
+    location ~ ^/(activate|forgot-password|reset-password|signin|signup)(/|$) {
+      return 404;
+    }
+
+    location ~ ^/console/api/(activate|email-code-login|forgot-password|login|oauth/(authorize|login)|reset-password)(/|$) {
+      return 404;
     }
 
     location /console/api {
@@ -77,9 +89,8 @@ server {
       include proxy.conf;
     }
 
-    # The stock Dify shell remains visible until the Campus frontend is built.
-    # All workspace APIs are still protected by the Campus access check above.
     location / {
+      auth_request /_campus_access_check;
       proxy_pass http://web:3000;
       include proxy.conf;
     }
@@ -103,4 +114,77 @@ server {
 
     ${ACME_CHALLENGE_LOCATION}
     ${HTTPS_CONFIG}
+}
+
+# The stock Dify administration surface is never published on a campus
+# interface. Docker binds this listener to host loopback for named admins.
+server {
+    listen 8081;
+    server_name _;
+
+    location /console/api {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /api {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /socket.io/ {
+      resolver 127.0.0.11 valid=30s ipv6=off;
+      set $socket_io_upstream ${NGINX_SOCKET_IO_UPSTREAM};
+      proxy_pass http://$socket_io_upstream;
+      include proxy.conf;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_cache_bypass $http_upgrade;
+    }
+
+    location /v1 {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /openapi {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /files {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /explore {
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location /e/ {
+      proxy_pass http://plugin_daemon:5002;
+      proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
+      include proxy.conf;
+    }
+
+    location / {
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location /mcp {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location /triggers {
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
+    location = /health {
+      proxy_pass http://api:5001/health;
+      include proxy.conf;
+    }
 }

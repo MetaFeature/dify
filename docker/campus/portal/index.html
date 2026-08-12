@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>南京工程学院 · AI 实践平台</title>
+    <link rel="stylesheet" href="./assets/portal.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="brand" href="/portal/" aria-label="南京工程学院 AI 实践平台首页">
+          <span class="brand-mark" aria-hidden="true">NJIT</span>
+          <span><strong>AI 实践平台</strong><small>南京工程学院</small></span>
+        </a>
+        <span class="network-badge">校园内网</span>
+      </header>
+
+      <section id="login-view" class="login-layout">
+        <article class="hero-card">
+          <p class="eyebrow">CAMPUS AI WORKSPACE</p>
+          <h1>预约你的专属<br>AI 实践空间</h1>
+          <p>在开放时段内进入隔离的 Dify 工作区，完成课程实践、模型调用与作品导出。</p>
+          <div class="hero-steps" aria-label="使用步骤">
+            <span><b>01</b>身份认证</span><span><b>02</b>预约时段</span><span><b>03</b>进入空间</span>
+          </div>
+        </article>
+        <form id="login-form" class="panel login-panel">
+          <div>
+            <p class="eyebrow">STUDENT ACCESS</p>
+            <h2>学生登录</h2>
+            <p class="muted">请使用管理员提供的学号与访问码。</p>
+          </div>
+          <label>学号<input id="student-number" name="studentNumber" autocomplete="username" required maxlength="64"></label>
+          <label>访问码<input id="login-code" name="loginCode" type="password" autocomplete="current-password" required maxlength="255"></label>
+          <button class="primary" type="submit">登录并进入预约中心</button>
+          <p id="login-error" class="message error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="dashboard-view" class="dashboard" hidden>
+        <div class="welcome-row">
+          <div><p class="eyebrow">ACCESS CENTER</p><h1>预约中心</h1><p class="muted">选择七日内的开放时段；每位学生同时只能持有一条未完成预约。</p></div>
+          <button id="refresh-button" class="secondary" type="button">刷新状态</button>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card"><span>当前访问</span><strong id="access-state">未开放</strong><small id="access-detail">需在已确认的预约时段内进入</small></article>
+          <article class="stat-card accent"><span>模型余额</span><strong><i>¥</i><span id="allowance-remaining">—</span></strong><small id="allowance-detail">正在读取使用情况</small></article>
+          <article class="stat-card"><span>当前预约</span><strong id="reservation-state">—</strong><small id="reservation-detail">正在读取预约状态</small></article>
+        </div>
+
+        <div class="content-grid">
+          <article class="panel slots-panel">
+            <div class="section-heading"><div><p class="eyebrow">AVAILABLE SLOTS</p><h2>开放时段</h2></div><input id="slot-day" type="date" aria-label="预约日期"></div>
+            <div id="slot-list" class="slot-list" aria-live="polite"></div>
+          </article>
+          <aside class="panel action-panel">
+            <p class="eyebrow">YOUR RESERVATION</p><h2>我的预约</h2>
+            <div id="reservation-list" class="reservation-list"></div>
+            <button id="launch-button" class="primary" type="button" disabled>进入 Dify 工作区</button>
+            <p id="dashboard-message" class="message" role="status" hidden></p>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./assets/portal.js"></script>
+  </body>
+</html>

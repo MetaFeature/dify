@@ -1,7 +1,9 @@
-# Campus backend phase 1 operations
+# Campus platform operations
 
 This overlay deploys the Campus backend beside, not over, the current port-80
-upstream Dify. Its Compose project is `njit-campus`; the default canary is
+upstream Dify. The Access portal is a separate, thin frontend container; the
+existing Campus backend remains inside the Dify API container. The Compose
+project is `njit-campus`; the default canary is
 `127.0.0.1:13000` for gateway administration and loopback port `18080` for
 Dify during administrator bootstrap. The gateway database, Redis, Dify data
 services, and plugin daemon have no host ports.
@@ -27,8 +29,8 @@ deployment; a registry mirror is allowed only when it retains that digest.
   per-model usage. Gateway tokens, channels, upstream credentials, and internal
   price expressions are never returned.
 
-Frontend work, assignment submission, grading, groups, teacher Dify, payments,
-and real roster/SSO data are outside this phase.
+Assignment submission, grading, groups, teacher Dify, payments, and real
+roster/SSO data remain outside the implemented boundary.
 
 ## First canary deployment
 
@@ -58,8 +60,27 @@ and real roster/SSO data are outside this phase.
    administrator account ID in `CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS`.
 7. Run `docker/campus/manage.sh deploy`, then `docker/campus/manage.sh verify`.
 
-Use an SSH tunnel to `127.0.0.1:18080` while creating the initial Dify
-administrators. Do not bind the Campus route to a campus interface until setup
+The Access portal is served at `/portal/` on the Campus origin. It holds no
+credentials or durable business state and is attached only to the internal
+`campus_portal` network. Campus nginx bridges that network to the existing Dify
+network, so browsers call `/console/api/campus/*` with same-origin cookies while
+the portal container has no host port and no direct API-network access.
+
+The campus-facing listener blocks stock Dify sign-in, signup, password-reset,
+activation, and login APIs. Named administrators use the separate
+host-loopback-only listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally
+through an SSH tunnel). This preserves the upstream administration surface
+without exposing a second student authentication path.
+
+The portal is intentionally a Chinese-only, framework-independent static
+surface. It does not modify or import the upstream Dify `web/` application;
+dynamic portal copy is owned by `portal/assets/messages.js`. This is the
+localization boundary for the isolated portal rather than Dify's
+`web/i18n/*` catalogs.
+
+Use an SSH tunnel to the host-loopback administration listener at
+`127.0.0.1:18081` while creating the initial Dify administrators. Do not bind
+the Campus route to a campus interface until setup
 is complete and both administrator logins have been verified.
 
 After administrator setup, set `CAMPUS_NGINX_BIND_ADDRESS=0.0.0.0`, recreate
@@ -107,9 +128,12 @@ Use a virtual identity from the protected environment file:
    interactive workspace API requests even if the Dify cookie remains valid.
 9. Verify the existing port-80 Dify route before and after every canary change.
 
-The stock Dify shell remains visible in this backend-only phase, but its
-workspace APIs are protected. The Campus access frontend will replace that
-shell later without changing these backend contracts.
+The Access portal is the student-facing entry point. The stock Dify shell and
+bootstrap login routes remain reachable for named Campus administrators; Campus
+student accounts use internal, non-routable addresses, receive no passwords,
+and can obtain a Dify session only through the portal launch API during an
+active reservation. All workspace APIs remain protected by the authorization
+subrequest after launch.
 
 ## Backup and rollback
 
