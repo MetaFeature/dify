@@ -1,9 +1,11 @@
 # Campus platform operations
 
-This overlay deploys the Campus backend beside, not over, the current port-80
-upstream Dify. The Access portal is a separate, thin frontend container; the
-existing Campus backend remains inside the Dify API container. The Compose
-project is `njit-campus`; the default canary is
+This overlay first deploys the Campus backend beside, not over, the current
+port-80 upstream Dify. After acceptance, its reversible promotion workflow
+makes the Access portal the campus-intranet front door and preserves the
+unchanged upstream Dify nginx on host loopback. The Access portal is a separate,
+thin frontend container; the existing Campus backend remains inside the Dify
+API container. The Compose project is `njit-campus`; the default canary is
 `127.0.0.1:13000` for gateway administration and loopback port `18080` for
 Dify during administrator bootstrap. The gateway database, Redis, Dify data
 services, and plugin daemon have no host ports.
@@ -83,18 +85,25 @@ Use an SSH tunnel to the host-loopback administration listener at
 the Campus route to a campus interface until setup
 is complete and both administrator logins have been verified.
 
-After administrator setup, set `CAMPUS_NGINX_BIND_ADDRESS=0.0.0.0`, recreate
-nginx, and run the Windows script below from an elevated shell to allow only
-local-subnet traffic through both Windows Firewall and the WSL Hyper-V firewall:
+After administrator setup and full canary acceptance, keep port `18080` as a
+loopback verification route. From an elevated Windows shell, restrict TCP 80
+through both Windows Firewall and the WSL Hyper-V firewall before promotion:
 
 ```powershell
-.\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 18080 -RemoteAddress 10.0.0.0/255.0.0.0
+.\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 80 -RemoteAddress 10.0.0.0/255.0.0.0
 ```
 
-`-Action Verify` is idempotent verification. `-Action Remove` is the firewall
-rollback; change the Campus bind back to `127.0.0.1` and recreate nginx at the
-same time. The script backs up pre-existing matching rule state under
-`C:\ProgramData\NJITCampus\firewall-backups` before applying changes.
+Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
+rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
+`10.20.10.193:80`, retains `127.0.0.1:18080` for health checks, and verifies
+that `/` redirects to `/portal/`. It fails closed and restores the upstream
+entry if Campus verification fails.
+
+`-Action Verify` is idempotent firewall verification. For rollback, run
+`docker/campus/manage.sh rollback-promotion` first, then use firewall
+`-Action Remove`; this restores the previous port-80 rule state from the latest
+port-specific backup. Firewall backups are stored under
+`C:\ProgramData\NJITCampus\firewall-backups`.
 
 If Docker Hub is unavailable, set the three `CAMPUS_GATEWAY_*_IMAGE`
 variables to an approved registry mirror while retaining the documented image
@@ -126,7 +135,9 @@ Use a virtual identity from the protected environment file:
    workspace remains usable and export still works.
 8. After the slot end, the nginx authorization subrequest must reject further
    interactive workspace API requests even if the Dify cookie remains valid.
-9. Verify the existing port-80 Dify route before and after every canary change.
+9. Before promotion, verify the existing port-80 Dify route. After promotion,
+   verify `http://10.20.10.193/` redirects to `/portal/`, while the unchanged
+   upstream Dify responds only on `127.0.0.1:18082`.
 
 The Access portal is the student-facing entry point. The stock Dify shell and
 bootstrap login routes remain reachable for named Campus administrators; Campus
@@ -134,6 +145,15 @@ student accounts use internal, non-routable addresses, receive no passwords,
 and can obtain a Dify session only through the portal launch API during an
 active reservation. All workspace APIs remain protected by the authorization
 subrequest after launch.
+
+For the demonstration gate, configure exactly two virtual identities in the
+protected `campus.env`, synchronize those identities through the Campus
+administrator service, and activate two individually named, password-enabled
+Dify accounts as Campus administrators. Run
+`docker/campus/manage.sh verify-demo-accounts` to compare the protected virtual
+roster with active Campus rows, require a successful login for both named
+administrators and a current portal session for both students, and print only
+account names; it never prints emails, password hashes, login codes, or tokens.
 
 ## Backup and rollback
 
@@ -164,6 +184,16 @@ the selected backup, pipe each `--clean --if-exists` SQL dump into its matching
 PostgreSQL container, restore `dify-files.tgz`, then start and repeat the full
 acceptance flow. Preserve the failed state until the restored stack is proven;
 do not delete volumes during rollback.
+
+After front-door promotion, use the deterministic runtime rollback instead:
+
+```sh
+docker/campus/manage.sh rollback-promotion
+```
+
+Then remove the Campus TCP-80 firewall rules from an elevated Windows shell.
+The upstream nginx returns to its original public port without changing its
+database, network, volume, image, or application configuration.
 
 ## HTTPS
 

@@ -45,14 +45,20 @@ services:
   api_websocket:
     image: *campus-dify-image
     build: *campus-dify-build
+    environment:
+      MIGRATION_ENABLED: "false"
 
   worker:
     image: *campus-dify-image
     build: *campus-dify-build
+    environment:
+      MIGRATION_ENABLED: "false"
 
   worker_beat:
     image: *campus-dify-image
     build: *campus-dify-build
+    environment:
+      MIGRATION_ENABLED: "false"
 
   nginx:
     depends_on:

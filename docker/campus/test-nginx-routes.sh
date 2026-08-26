@@ -19,6 +19,12 @@ grep -Fq 'proxy_pass http://portal:8080/;' "${template}" || {
   exit 1
 }
 
+root_location="$(sed -n '/^[[:space:]]*location = \/ {$/,/^[[:space:]]*}/p' "${template}")"
+printf '%s\n' "${root_location}" | grep -Fq 'return 302 /portal/;' || {
+  echo "Campus root does not enter the Access portal" >&2
+  exit 1
+}
+
 grep -Eq '^[[:space:]]{2}portal:$' "${compose_overlay}" || {
   echo "Campus Compose does not define the Access portal container" >&2
   exit 1
@@ -78,3 +84,11 @@ grep -Fq '127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}:8081' "${compose_overlay}" || {
   echo "Campus administration listener is not bound to host loopback" >&2
   exit 1
 }
+
+for service in api_websocket worker worker_beat; do
+  service_config="$(sed -n "/^[[:space:]]\\{2\\}${service}:$/,/^[[:space:]]\\{2\\}[a-zA-Z0-9_-]*:$/p" "${compose_overlay}")"
+  printf '%s\n' "${service_config}" | grep -Fq 'MIGRATION_ENABLED: "false"' || {
+    echo "${service} must not race the API database migration" >&2
+    exit 1
+  }
+done
