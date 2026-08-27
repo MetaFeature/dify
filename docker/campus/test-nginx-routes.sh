@@ -20,8 +20,20 @@ grep -Fq 'proxy_pass http://portal:8080/;' "${template}" || {
 }
 
 root_location="$(sed -n '/^[[:space:]]*location = \/ {$/,/^[[:space:]]*}/p' "${template}")"
-printf '%s\n' "${root_location}" | grep -Fq 'return 302 /portal/;' || {
-  echo "Campus root does not enter the Access portal" >&2
+for directive in \
+  'auth_request /_campus_access_check;' \
+  'error_page 401 = @campus_portal_entry;' \
+  'error_page 403 = @campus_portal_entry;' \
+  'proxy_pass http://web:3000;'; do
+  printf '%s\n' "${root_location}" | grep -Fq "${directive}" || {
+    echo "Campus root does not preserve authenticated Dify home access: ${directive}" >&2
+    exit 1
+  }
+done
+
+portal_entry_location="$(sed -n '/^[[:space:]]*location @campus_portal_entry {$/,/^[[:space:]]*}/p' "${template}")"
+printf '%s\n' "${portal_entry_location}" | grep -Fq 'return 302 /portal/;' || {
+  echo "Unauthenticated Campus root does not enter the Access portal" >&2
   exit 1
 }
 

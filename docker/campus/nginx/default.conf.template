@@ -26,6 +26,14 @@ server {
     }
 
     location = / {
+      auth_request /_campus_access_check;
+      error_page 401 = @campus_portal_entry;
+      error_page 403 = @campus_portal_entry;
+      proxy_pass http://web:3000;
+      include proxy.conf;
+    }
+
+    location @campus_portal_entry {
       return 302 /portal/;
     }
 

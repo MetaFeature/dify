@@ -125,8 +125,10 @@ curl.exe --noproxy "*" -I http://10.20.10.193/
 Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
 rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
 `10.20.10.193:80`, retains `127.0.0.1:18080` for health checks, and verifies
-that `/` redirects to `/portal/`. It fails closed and restores the upstream
-entry if Campus verification fails.
+that an unauthenticated `/` request redirects to `/portal/`. An active,
+authorized student session reaches the upstream Dify home page at `/` instead.
+Promotion fails closed and restores the upstream entry if Campus verification
+fails.
 
 `-Action Verify` is idempotent firewall, WSL-loopback, runtime-anchor, and
 Windows HTTP verification. For rollback, run
@@ -160,7 +162,9 @@ Use a virtual identity from the protected environment file:
 5. Before the slot, `/console/api/campus/session/launch` must be rejected. At
    the slot start it must establish a Dify session in exactly that student's
    workspace and send the browser to `/apps`. A different student must not see
-   the workspace; `/` must continue to redirect to the Portal.
+   the workspace. From inside Dify, the Home link to `/` must remain on the
+   guarded Dify surface; an unauthenticated `/` request must continue to
+   redirect to the Portal.
 6. Import a teacher-provided `.yml`, edit it, and export it again. No assignment
    submission or grading controls should be present.
 7. Exhaust the model allowance. Model calls must fail at the gateway while the
