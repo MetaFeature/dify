@@ -1,11 +1,15 @@
 """Adapters that apply Campus isolation policy through Dify's service layer."""
 
 import hashlib
+import time
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from configs import dify_config
+from core.plugin.impl.plugin import PluginInstaller
+from core.plugin.plugin_service import PluginService
 from models.account import Account, AccountStatus, Tenant, TenantAccountJoin, TenantAccountRole
 from models.provider import ProviderCredential
 from services.account_service import AccountService, TenantService, TokenPair
@@ -13,6 +17,62 @@ from services.campus.domain import ProvisionedWorkspace
 from services.campus.errors import CampusProvisioningError
 from services.enterprise.rbac_service import RBACService
 from services.model_provider_service import ModelProviderService
+
+
+class ProviderPluginInstaller(Protocol):
+    def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None: ...
+
+
+class ProviderCredentialService(Protocol):
+    def create_provider_credential(
+        self,
+        tenant_id: str,
+        provider: str,
+        credentials: dict[str, str],
+        credential_name: str | None,
+    ) -> None: ...
+
+    def update_provider_credential(
+        self,
+        tenant_id: str,
+        provider: str,
+        credentials: dict[str, str],
+        credential_id: str,
+        credential_name: str | None,
+    ) -> None: ...
+
+
+class MarketplaceProviderPluginInstaller:
+    """Install one pinned Marketplace plugin per tenant and wait for visibility."""
+
+    _timeout_seconds: float
+    _poll_interval_seconds: float
+
+    def __init__(self, *, timeout_seconds: float = 120, poll_interval_seconds: float = 2) -> None:
+        if timeout_seconds <= 0 or poll_interval_seconds <= 0:
+            raise ValueError("plugin installation timing must be positive")
+        self._timeout_seconds = timeout_seconds
+        self._poll_interval_seconds = poll_interval_seconds
+
+    def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+        """Install the pinned provider plugin once and wait for the daemon task."""
+        plugin_id = plugin_unique_identifier.split(":", 1)[0].strip()
+        if not plugin_id or "/" not in plugin_id:
+            raise CampusProvisioningError("Campus model provider plugin identifier is invalid")
+        if self._is_installed(tenant_id, plugin_id):
+            return
+
+        PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+        deadline = time.monotonic() + self._timeout_seconds
+        while time.monotonic() < deadline:
+            if self._is_installed(tenant_id, plugin_id):
+                return
+            time.sleep(self._poll_interval_seconds)
+        raise CampusProvisioningError("Campus model provider plugin installation timed out")
+
+    @staticmethod
+    def _is_installed(tenant_id: str, plugin_id: str) -> bool:
+        return any(plugin.plugin_id == plugin_id for plugin in PluginInstaller().list_plugins(tenant_id))
 
 
 class DifyWorkspaceProvisioner:
@@ -107,34 +167,46 @@ class DifyModelConfigurator:
 
     _session: Session
     _provider: str
+    _provider_plugin_unique_identifier: str
     _credential_name: str
     _api_key_field: str
     _base_url_field: str
     _base_url: str
+    _plugin_installer: ProviderPluginInstaller
+    _provider_service: ProviderCredentialService
 
     def __init__(
         self,
         *,
         session: Session,
         provider: str,
+        provider_plugin_unique_identifier: str,
         credential_name: str,
         api_key_field: str,
         base_url_field: str,
         base_url: str,
+        plugin_installer: ProviderPluginInstaller | None = None,
+        provider_service: ProviderCredentialService | None = None,
     ) -> None:
         self._session = session
         self._provider = provider
+        self._provider_plugin_unique_identifier = provider_plugin_unique_identifier
         self._credential_name = credential_name
         self._api_key_field = api_key_field
         self._base_url_field = base_url_field
         self._base_url = base_url
+        self._plugin_installer = plugin_installer or MarketplaceProviderPluginInstaller()
+        self._provider_service = provider_service or ModelProviderService()
 
     def configure(self, dify_tenant_id: str, gateway_secret: str) -> None:
+        self._plugin_installer.ensure_installed(
+            dify_tenant_id,
+            self._provider_plugin_unique_identifier,
+        )
         credentials = {
             self._api_key_field: gateway_secret,
             self._base_url_field: self._base_url,
         }
-        service = ModelProviderService()
         existing = self._session.scalar(
             select(ProviderCredential).where(
                 ProviderCredential.tenant_id == dify_tenant_id,
@@ -143,14 +215,14 @@ class DifyModelConfigurator:
             )
         )
         if existing is None:
-            service.create_provider_credential(
+            self._provider_service.create_provider_credential(
                 tenant_id=dify_tenant_id,
                 provider=self._provider,
                 credentials=credentials,
                 credential_name=self._credential_name,
             )
             return
-        service.update_provider_credential(
+        self._provider_service.update_provider_credential(
             tenant_id=dify_tenant_id,
             provider=self._provider,
             credentials=credentials,

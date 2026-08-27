@@ -1,10 +1,17 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
 
 from models.account import Tenant, TenantAccountJoin, TenantAccountRole
-from services.campus.dify_adapters import DifyWorkspaceProvisioner
+from models.provider import ProviderCredential
+from services.campus import dify_adapters
+from services.campus.dify_adapters import (
+    DifyModelConfigurator,
+    DifyWorkspaceProvisioner,
+    MarketplaceProviderPluginInstaller,
+)
 from services.campus.errors import CampusProvisioningError
 
 
@@ -50,3 +57,97 @@ def test_existing_workspace_rejects_any_additional_human_member(tenant_session: 
 
     with pytest.raises(CampusProvisioningError, match="unexpected human members"):
         provisioner._existing_workspace(student_id, service_principal_id)
+
+
+def test_model_configurator_installs_provider_plugin_before_credential(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(sqlite_engine, tables=[ProviderCredential.__table__])
+    events: list[str] = []
+
+    class PluginInstaller:
+        def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+            assert tenant_id == "tenant-1"
+            assert plugin_unique_identifier == "langgenius/openai:1.0.4@checksum"
+            events.append("plugin-installed")
+
+    class ProviderService:
+        def create_provider_credential(
+            self,
+            tenant_id: str,
+            provider: str,
+            credentials: dict[str, str],
+            credential_name: str,
+        ) -> None:
+            assert tenant_id == "tenant-1"
+            assert provider == "langgenius/openai/openai"
+            assert credentials == {
+                "openai_api_key": "managed-secret",
+                "openai_api_base": "http://model-gateway:3000/v1",
+            }
+            assert credential_name == "Campus managed"
+            events.append("credential-created")
+
+        def update_provider_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its provider credential")
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai/openai",
+            provider_plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+            credential_name="Campus managed",
+            api_key_field="openai_api_key",
+            base_url_field="openai_api_base",
+            base_url="http://model-gateway:3000/v1",
+            plugin_installer=PluginInstaller(),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert events == ["plugin-installed", "credential-created"]
+
+
+def test_marketplace_provider_installer_skips_existing_plugin(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            assert tenant_id == "tenant-1"
+            return [SimpleNamespace(plugin_id="langgenius/openai")]
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda *_: pytest.fail("existing plugin must not be installed again"),
+    )
+
+    MarketplaceProviderPluginInstaller().ensure_installed(
+        "tenant-1",
+        "langgenius/openai:1.0.4@checksum",
+    )
+
+
+def test_marketplace_provider_installer_waits_until_plugin_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    list_calls = 0
+    install_calls: list[tuple[str, list[str]]] = []
+
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            nonlocal list_calls
+            assert tenant_id == "tenant-1"
+            list_calls += 1
+            return [] if list_calls == 1 else [SimpleNamespace(plugin_id="langgenius/openai")]
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda tenant_id, identifiers: install_calls.append((tenant_id, list(identifiers))),
+    )
+
+    MarketplaceProviderPluginInstaller(poll_interval_seconds=0.001).ensure_installed(
+        "tenant-1",
+        "langgenius/openai:1.0.4@checksum",
+    )
+
+    assert install_calls == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
+    assert list_calls == 2

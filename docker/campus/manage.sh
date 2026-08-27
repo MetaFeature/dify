@@ -87,6 +87,9 @@ EOF
   value="$(env_value CAMPUS_DIFY_API_BASE_IMAGE)"
   [[ -z "${value}" || "${value}" == *@sha256:bd3e8b15cfc47e89dc7a0d17431e6f3289244f4b442b96e2372bd0f0646f3d58 ]] || \
     fail "CAMPUS_DIFY_API_BASE_IMAGE must retain the approved Dify 1.16.0 sha256 digest"
+  value="$(env_value CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER)"
+  [[ "${value}" == "langgenius/openai:1.0.4@3b49ff900a77c9b2cfba21e3cd1180fbfd7edf5ec008bc20564541c7a3914295" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER must retain the approved package identity"
   value="$(env_value CAMPUS_GATEWAY_GO_PROXY)"
   case "${value}" in
     ""|https://proxy.golang.org,direct|https://goproxy.cn,direct) ;;

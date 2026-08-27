@@ -33,6 +33,7 @@ class CampusConfig(BaseSettings):
     CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN: int = Field(default=500_000, ge=1)
 
     CAMPUS_MODEL_PROVIDER: str = Field(default="langgenius/openai/openai")
+    CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER: str = Field(default="")
     CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME: str = Field(default="Campus managed", min_length=1, max_length=30)
     CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: str = Field(default="openai_api_key", min_length=1)
     CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: str = Field(default="openai_api_base", min_length=1)

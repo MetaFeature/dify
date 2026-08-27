@@ -27,6 +27,10 @@ deployment; a registry mirror is allowed only when it retains that digest.
   promotion, and slot-time access are enforced in the database service.
 - A zero model allowance blocks gateway calls but does not block Dify access,
   editing, viewing, or export during a confirmed slot.
+- Each student workspace installs the pinned official OpenAI provider plugin
+  before the managed NewAPI credential is validated and stored. Plugin package
+  identity is explicit configuration so deployments do not drift to an
+  unreviewed Marketplace release during provisioning.
 - The student allowance contract returns only RMB remaining/used/total and
   per-model usage. Gateway tokens, channels, upstream credentials, and internal
   price expressions are never returned.

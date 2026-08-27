@@ -102,6 +102,7 @@ def platform_provisioner() -> PlatformProvisioningService:
         model_configurator=DifyModelConfigurator(
             session=session,
             provider=dify_config.CAMPUS_MODEL_PROVIDER,
+            provider_plugin_unique_identifier=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER,
             credential_name=dify_config.CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME,
             api_key_field=dify_config.CAMPUS_MODEL_PROVIDER_API_KEY_FIELD,
             base_url_field=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD,

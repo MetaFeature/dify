@@ -7,6 +7,12 @@ public_overlay="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
+approved_openai_plugin='langgenius/openai:1.0.4@3b49ff900a77c9b2cfba21e3cd1180fbfd7edf5ec008bc20564541c7a3914295'
+
+grep -Fq "${approved_openai_plugin}" "${manager}" || {
+  echo "Campus validation does not pin the approved OpenAI provider plugin" >&2
+  exit 1
+}
 
 redirect_function="$(sed -n '/^assert_portal_root_redirect() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{redirect_url}\\n'" || {
