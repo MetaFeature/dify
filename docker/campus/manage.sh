@@ -173,15 +173,24 @@ assert_service_never_restarted() {
   [[ "${restart_count}" == "0" ]] || fail "${service} restarted ${restart_count} times"
 }
 
-wait_for_campus_health() {
-  local campus_port="$1" attempt
-  for attempt in {1..30}; do
-    if curl --fail --silent --show-error --max-time 5 \
-      "http://127.0.0.1:${campus_port}/health" >/dev/null 2>&1; then
+wait_for_http() {
+  local url="$1" label="$2" deadline remaining max_wait
+  deadline="$((SECONDS + 60))"
+  while (( (remaining = deadline - SECONDS) > 0 )); do
+    max_wait="$((remaining < 5 ? remaining : 5))"
+    if curl --fail --silent --show-error --max-time "${max_wait}" "${url}" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 2
+    remaining="$((deadline - SECONDS))"
+    ((remaining > 0)) && sleep "$((remaining < 2 ? remaining : 2))"
   done
+  printf 'campus-manage: %s did not become ready within 60 seconds\n' "${label}" >&2
+  return 1
+}
+
+wait_for_campus_health() {
+  local campus_port="$1"
+  wait_for_http "http://127.0.0.1:${campus_port}/health" "Campus API" && return 0
   fail "Campus API did not become healthy within 60 seconds"
 }
 
@@ -549,7 +558,7 @@ promote() {
   "${UPSTREAM_LOOPBACK_COMPOSE[@]}" up -d --no-deps --force-recreate nginx
   published="$("${UPSTREAM_LOOPBACK_COMPOSE[@]}" port nginx 80)"
   if [[ "${published}" != "127.0.0.1:${upstream_port}" ]] || \
-    ! curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${upstream_port}/" >/dev/null; then
+    ! wait_for_http "http://127.0.0.1:${upstream_port}/" "upstream rollback route"; then
     restore_upstream_public_entry || true
     fail "upstream Dify could not be preserved on its loopback rollback route"
   fi

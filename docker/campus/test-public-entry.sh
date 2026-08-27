@@ -104,6 +104,13 @@ printf '%s\n' "${promote_function}" | grep -Fq 'verify_demo_accounts' || {
   echo "Campus promotion does not enforce the demo-account gate" >&2
   exit 1
 }
+loopback_recreate_line="$(printf '%s\n' "${promote_function}" | grep -n -m1 'UPSTREAM_LOOPBACK_COMPOSE.*up -d' || true)"
+loopback_wait_line="$(printf '%s\n' "${promote_function}" | grep -n -m1 'wait_for_http.*upstream' || true)"
+[[ -n "${loopback_recreate_line}" && -n "${loopback_wait_line}" && \
+   "${loopback_recreate_line%%:*}" -lt "${loopback_wait_line%%:*}" ]] || {
+  echo "Campus promotion must wait for the recreated upstream rollback route" >&2
+  exit 1
+}
 port_owner_function="$(sed -n '/^assert_port_owner() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${port_owner_function}" | grep -Fq 'docker ps --no-trunc --quiet' || {
   echo "Campus promotion compares a truncated Docker ID with the exact port owner" >&2
