@@ -111,7 +111,12 @@ def test_marketplace_provider_installer_skips_existing_plugin(monkeypatch: pytes
     class Installer:
         def list_plugins(self, tenant_id: str):
             assert tenant_id == "tenant-1"
-            return [SimpleNamespace(plugin_id="langgenius/openai")]
+            return [
+                SimpleNamespace(
+                    plugin_id="langgenius/openai",
+                    plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+                )
+            ]
 
     monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
     monkeypatch.setattr(
@@ -135,7 +140,16 @@ def test_marketplace_provider_installer_waits_until_plugin_is_visible(monkeypatc
             nonlocal list_calls
             assert tenant_id == "tenant-1"
             list_calls += 1
-            return [] if list_calls == 1 else [SimpleNamespace(plugin_id="langgenius/openai")]
+            return (
+                []
+                if list_calls == 1
+                else [
+                    SimpleNamespace(
+                        plugin_id="langgenius/openai",
+                        plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+                    )
+                ]
+            )
 
     monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
     monkeypatch.setattr(
@@ -151,3 +165,46 @@ def test_marketplace_provider_installer_waits_until_plugin_is_visible(monkeypatc
 
     assert install_calls == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
     assert list_calls == 2
+
+
+def test_marketplace_provider_installer_replaces_wrong_plugin_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_calls: list[tuple[str, list[str]]] = []
+    list_calls = 0
+
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            nonlocal list_calls
+            assert tenant_id == "tenant-1"
+            list_calls += 1
+            identifier = "langgenius/openai:0.9.0@old" if list_calls == 1 else "langgenius/openai:1.0.4@checksum"
+            return [SimpleNamespace(plugin_id="langgenius/openai", plugin_unique_identifier=identifier)]
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda tenant_id, identifiers: install_calls.append((tenant_id, list(identifiers))),
+    )
+
+    MarketplaceProviderPluginInstaller(poll_interval_seconds=0.001).ensure_installed(
+        "tenant-1",
+        "langgenius/openai:1.0.4@checksum",
+    )
+
+    assert install_calls == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
+
+
+def test_marketplace_provider_installer_translates_daemon_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            raise RuntimeError(f"daemon unavailable for {tenant_id}")
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+
+    with pytest.raises(CampusProvisioningError, match="plugin installation failed") as raised:
+        MarketplaceProviderPluginInstaller().ensure_installed(
+            "tenant-1",
+            "langgenius/openai:1.0.4@checksum",
+        )
+
+    assert isinstance(raised.value.__cause__, RuntimeError)

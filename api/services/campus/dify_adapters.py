@@ -1,6 +1,7 @@
 """Adapters that apply Campus isolation policy through Dify's service layer."""
 
 import hashlib
+import logging
 import time
 from typing import Protocol
 
@@ -17,6 +18,8 @@ from services.campus.domain import ProvisionedWorkspace
 from services.campus.errors import CampusProvisioningError
 from services.enterprise.rbac_service import RBACService
 from services.model_provider_service import ModelProviderService
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderPluginInstaller(Protocol):
@@ -59,20 +62,34 @@ class MarketplaceProviderPluginInstaller:
         plugin_id = plugin_unique_identifier.split(":", 1)[0].strip()
         if not plugin_id or "/" not in plugin_id:
             raise CampusProvisioningError("Campus model provider plugin identifier is invalid")
-        if self._is_installed(tenant_id, plugin_id):
-            return
-
-        PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
-        deadline = time.monotonic() + self._timeout_seconds
-        while time.monotonic() < deadline:
-            if self._is_installed(tenant_id, plugin_id):
+        try:
+            if self._is_installed(tenant_id, plugin_unique_identifier):
                 return
-            time.sleep(self._poll_interval_seconds)
+
+            PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+            deadline = time.monotonic() + self._timeout_seconds
+            while time.monotonic() < deadline:
+                if self._is_installed(tenant_id, plugin_unique_identifier):
+                    return
+                time.sleep(self._poll_interval_seconds)
+        except CampusProvisioningError:
+            raise
+        except Exception as error:
+            logger.warning(
+                "Failed to install Campus model provider plugin. tenant_id=%s plugin_id=%s",
+                tenant_id,
+                plugin_id,
+                exc_info=True,
+            )
+            raise CampusProvisioningError("Campus model provider plugin installation failed") from error
         raise CampusProvisioningError("Campus model provider plugin installation timed out")
 
     @staticmethod
-    def _is_installed(tenant_id: str, plugin_id: str) -> bool:
-        return any(plugin.plugin_id == plugin_id for plugin in PluginInstaller().list_plugins(tenant_id))
+    def _is_installed(tenant_id: str, plugin_unique_identifier: str) -> bool:
+        return any(
+            plugin.plugin_unique_identifier == plugin_unique_identifier
+            for plugin in PluginInstaller().list_plugins(tenant_id)
+        )
 
 
 class DifyWorkspaceProvisioner:

@@ -7,12 +7,21 @@ public_overlay="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
-approved_openai_plugin='langgenius/openai:1.0.4@3b49ff900a77c9b2cfba21e3cd1180fbfd7edf5ec008bc20564541c7a3914295'
+approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
+approved_openai_plugin="$(sed -n '1p' "${approved_plugin_file}")"
 
-grep -Fq "${approved_openai_plugin}" "${manager}" || {
-  echo "Campus validation does not pin the approved OpenAI provider plugin" >&2
+[[ -n "${approved_openai_plugin}" ]] || {
+  echo "Approved OpenAI provider plugin identity is missing" >&2
   exit 1
 }
+grep -Fq 'APPROVED_PROVIDER_PLUGIN_FILE' "${manager}" || {
+  echo "Campus validation does not consume the approved provider plugin file" >&2
+  exit 1
+}
+if grep -Fq "${approved_openai_plugin}" "${manager}"; then
+  echo "Campus manager duplicates the approved provider plugin identity" >&2
+  exit 1
+fi
 
 redirect_function="$(sed -n '/^assert_portal_root_redirect() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{redirect_url}\\n'" || {

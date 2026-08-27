@@ -46,6 +46,9 @@ roster/SSO data remain outside the implemented boundary.
 2. Copy the normal Dify `.env.example` to `.env`, generate fresh Campus-only
    Dify secrets, then copy `docker/envs/campus.env.example` to
    `docker/envs/campus.env`, set mode `0600`, and replace every placeholder.
+   Copy the provider package identity from
+   `docker/campus/approved-provider-plugin.txt`; this is the single reviewed
+   source for `CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER`.
    The management script loads `.env` first and the protected Campus file
    second, so the Campus ports and controls take precedence.
 3. Run `docker/campus/manage.sh validate`.

@@ -7,6 +7,7 @@ CAMPUS_ENV_FILE="${CAMPUS_ENV_FILE:-${DOCKER_DIR}/envs/campus.env}"
 BACKUP_ROOT="${CAMPUS_BACKUP_ROOT:-${SCRIPT_DIR}/backups}"
 PUBLIC_COMPOSE_FILE="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 UPSTREAM_LOOPBACK_FILE="${SCRIPT_DIR}/upstream-loopback.yaml"
+APPROVED_PROVIDER_PLUGIN_FILE="${SCRIPT_DIR}/approved-provider-plugin.txt"
 
 env_value() {
   local key="$1"
@@ -74,7 +75,7 @@ set_env_value() {
 }
 
 validate_gateway_build_images() {
-  local key expected value
+  local key expected value approved_provider_plugin
   while read -r key expected; do
     value="$(env_value "${key}")"
     [[ -z "${value}" || "${value}" == *@sha256:"${expected}" ]] || \
@@ -88,7 +89,10 @@ EOF
   [[ -z "${value}" || "${value}" == *@sha256:bd3e8b15cfc47e89dc7a0d17431e6f3289244f4b442b96e2372bd0f0646f3d58 ]] || \
     fail "CAMPUS_DIFY_API_BASE_IMAGE must retain the approved Dify 1.16.0 sha256 digest"
   value="$(env_value CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER)"
-  [[ "${value}" == "langgenius/openai:1.0.4@3b49ff900a77c9b2cfba21e3cd1180fbfd7edf5ec008bc20564541c7a3914295" ]] || \
+  [[ -f "${APPROVED_PROVIDER_PLUGIN_FILE}" ]] || fail "missing approved provider plugin identity"
+  approved_provider_plugin="$(sed -n '1p' "${APPROVED_PROVIDER_PLUGIN_FILE}")"
+  [[ -n "${approved_provider_plugin}" ]] || fail "approved provider plugin identity is empty"
+  [[ "${value}" == "${approved_provider_plugin}" ]] || \
     fail "CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER must retain the approved package identity"
   value="$(env_value CAMPUS_GATEWAY_GO_PROXY)"
   case "${value}" in
