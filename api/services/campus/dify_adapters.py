@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from configs import dify_config
+from configs.extra.campus_config import ModelApiProtocol
 from core.plugin.impl.plugin import PluginInstaller
 from core.plugin.plugin_service import PluginService
+from graphon.model_runtime.entities.model_entities import ModelType
 from models.account import Account, AccountStatus, Tenant, TenantAccountJoin, TenantAccountRole
-from models.provider import ProviderCredential
+from models.provider import ProviderCredential, ProviderModelCredential
 from services.account_service import AccountService, TenantService, TokenPair
 from services.campus.domain import ProvisionedWorkspace
 from services.campus.errors import CampusProvisioningError
@@ -26,12 +28,15 @@ class ProviderPluginInstaller(Protocol):
     def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None: ...
 
 
-class ProviderCredentialService(Protocol):
+type ModelCredentialPayload = dict[str, str]
+
+
+class ModelProviderCredentialService(Protocol):
     def create_provider_credential(
         self,
         tenant_id: str,
         provider: str,
-        credentials: dict[str, str],
+        credentials: ModelCredentialPayload,
         credential_name: str | None,
     ) -> None: ...
 
@@ -39,7 +44,28 @@ class ProviderCredentialService(Protocol):
         self,
         tenant_id: str,
         provider: str,
-        credentials: dict[str, str],
+        credentials: ModelCredentialPayload,
+        credential_id: str,
+        credential_name: str | None,
+    ) -> None: ...
+
+    def create_model_credential(
+        self,
+        tenant_id: str,
+        provider: str,
+        model_type: str,
+        model: str,
+        credentials: ModelCredentialPayload,
+        credential_name: str | None,
+    ) -> None: ...
+
+    def update_model_credential(
+        self,
+        tenant_id: str,
+        provider: str,
+        model_type: str,
+        model: str,
+        credentials: ModelCredentialPayload,
         credential_id: str,
         credential_name: str | None,
     ) -> None: ...
@@ -185,7 +211,13 @@ class DifyWorkspaceProvisioner:
 
 
 class DifyModelConfigurator:
-    """Install the opaque per-workspace gateway credential in Dify."""
+    """Install the plugin and upsert the workspace's opaque gateway credentials.
+
+    The pinned OpenAI plugin uses a model name to validate provider credentials,
+    but that probe alone does not register a non-catalog model. The same Campus
+    model is therefore saved as a tenant custom LLM, using the API protocol that
+    the isolated gateway actually implements.
+    """
 
     _session: Session
     _provider: str
@@ -194,8 +226,10 @@ class DifyModelConfigurator:
     _api_key_field: str
     _base_url_field: str
     _base_url: str
+    _model: str
+    _api_protocol: ModelApiProtocol
     _plugin_installer: ProviderPluginInstaller
-    _provider_service: ProviderCredentialService
+    _provider_service: ModelProviderCredentialService
 
     def __init__(
         self,
@@ -207,8 +241,10 @@ class DifyModelConfigurator:
         api_key_field: str,
         base_url_field: str,
         base_url: str,
+        model: str,
+        api_protocol: ModelApiProtocol,
         plugin_installer: ProviderPluginInstaller | None = None,
-        provider_service: ProviderCredentialService | None = None,
+        provider_service: ModelProviderCredentialService | None = None,
     ) -> None:
         self._session = session
         self._provider = provider
@@ -217,6 +253,8 @@ class DifyModelConfigurator:
         self._api_key_field = api_key_field
         self._base_url_field = base_url_field
         self._base_url = base_url
+        self._model = model
+        self._api_protocol = api_protocol
         self._plugin_installer = plugin_installer or MarketplaceProviderPluginInstaller()
         self._provider_service = provider_service or ModelProviderService()
 
@@ -225,9 +263,11 @@ class DifyModelConfigurator:
             dify_tenant_id,
             self._provider_plugin_unique_identifier,
         )
-        credentials = {
+        provider_credentials = {
             self._api_key_field: gateway_secret,
             self._base_url_field: self._base_url,
+            "validate_model": self._model,
+            "api_protocol": self._api_protocol,
         }
         existing = self._session.scalar(
             select(ProviderCredential).where(
@@ -240,17 +280,51 @@ class DifyModelConfigurator:
             self._provider_service.create_provider_credential(
                 tenant_id=dify_tenant_id,
                 provider=self._provider,
-                credentials=credentials,
+                credentials=provider_credentials,
                 credential_name=self._credential_name,
             )
-            return
-        self._provider_service.update_provider_credential(
-            tenant_id=dify_tenant_id,
-            provider=self._provider,
-            credentials=credentials,
-            credential_id=existing.id,
-            credential_name=self._credential_name,
+        else:
+            self._provider_service.update_provider_credential(
+                tenant_id=dify_tenant_id,
+                provider=self._provider,
+                credentials=provider_credentials,
+                credential_id=existing.id,
+                credential_name=self._credential_name,
+            )
+
+        model_credentials = {
+            self._api_key_field: gateway_secret,
+            self._base_url_field: self._base_url,
+            "api_protocol": self._api_protocol,
+        }
+        existing_model = self._session.scalar(
+            select(ProviderModelCredential).where(
+                ProviderModelCredential.tenant_id == dify_tenant_id,
+                ProviderModelCredential.provider_name == self._provider,
+                ProviderModelCredential.model_name == self._model,
+                ProviderModelCredential.model_type == ModelType.LLM,
+                ProviderModelCredential.credential_name == self._credential_name,
+            )
         )
+        if existing_model is None:
+            self._provider_service.create_model_credential(
+                tenant_id=dify_tenant_id,
+                provider=self._provider,
+                model_type=ModelType.LLM.value,
+                model=self._model,
+                credentials=model_credentials,
+                credential_name=self._credential_name,
+            )
+        else:
+            self._provider_service.update_model_credential(
+                tenant_id=dify_tenant_id,
+                provider=self._provider,
+                model_type=ModelType.LLM.value,
+                model=self._model,
+                credentials=model_credentials,
+                credential_id=existing_model.id,
+                credential_name=self._credential_name,
+            )
 
 
 class DifySessionIssuer:

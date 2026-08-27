@@ -1,7 +1,10 @@
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
+
+type ModelApiProtocol = Literal["responses", "chat"]
 
 
 class CampusConfig(BaseSettings):
@@ -38,3 +41,5 @@ class CampusConfig(BaseSettings):
     CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: str = Field(default="openai_api_key", min_length=1)
     CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: str = Field(default="openai_api_base", min_length=1)
     CAMPUS_MODEL_PROVIDER_BASE_URL: str = Field(default="http://model-gateway:3000/v1", min_length=1)
+    CAMPUS_MODEL_PROVIDER_MODEL: str = Field(default="deepseek-v4-flash", min_length=1)
+    CAMPUS_MODEL_PROVIDER_API_PROTOCOL: ModelApiProtocol = "chat"

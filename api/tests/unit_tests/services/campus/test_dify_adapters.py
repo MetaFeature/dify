@@ -4,8 +4,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.orm import Session
 
+from graphon.model_runtime.entities.model_entities import ModelType
 from models.account import Tenant, TenantAccountJoin, TenantAccountRole
-from models.provider import ProviderCredential
+from models.provider import ProviderCredential, ProviderModelCredential
 from services.campus import dify_adapters
 from services.campus.dify_adapters import (
     DifyModelConfigurator,
@@ -59,8 +60,11 @@ def test_existing_workspace_rejects_any_additional_human_member(tenant_session: 
         provisioner._existing_workspace(student_id, service_principal_id)
 
 
-def test_model_configurator_installs_provider_plugin_before_credential(sqlite_engine) -> None:
-    ProviderCredential.metadata.create_all(sqlite_engine, tables=[ProviderCredential.__table__])
+def test_model_configurator_installs_provider_plugin_before_credentials(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
     events: list[str] = []
 
     class PluginInstaller:
@@ -82,12 +86,38 @@ def test_model_configurator_installs_provider_plugin_before_credential(sqlite_en
             assert credentials == {
                 "openai_api_key": "managed-secret",
                 "openai_api_base": "http://model-gateway:3000/v1",
+                "validate_model": "deepseek-v4-flash",
+                "api_protocol": "chat",
             }
             assert credential_name == "Campus managed"
-            events.append("credential-created")
+            events.append("provider-credential-created")
 
         def update_provider_credential(self, **_: object) -> None:
             raise AssertionError("new workspace must create its provider credential")
+
+        def create_model_credential(
+            self,
+            tenant_id: str,
+            provider: str,
+            model_type: str,
+            model: str,
+            credentials: dict[str, str],
+            credential_name: str,
+        ) -> None:
+            assert tenant_id == "tenant-1"
+            assert provider == "langgenius/openai/openai"
+            assert model_type == "llm"
+            assert model == "deepseek-v4-flash"
+            assert credentials == {
+                "openai_api_key": "managed-secret",
+                "openai_api_base": "http://model-gateway:3000/v1",
+                "api_protocol": "chat",
+            }
+            assert credential_name == "Campus managed"
+            events.append("model-credential-created")
+
+        def update_model_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its model credential")
 
     with Session(sqlite_engine) as session:
         configurator = DifyModelConfigurator(
@@ -98,13 +128,78 @@ def test_model_configurator_installs_provider_plugin_before_credential(sqlite_en
             api_key_field="openai_api_key",
             base_url_field="openai_api_base",
             base_url="http://model-gateway:3000/v1",
+            model="deepseek-v4-flash",
+            api_protocol="chat",
             plugin_installer=PluginInstaller(),
             provider_service=ProviderService(),
         )
 
         configurator.configure("tenant-1", "managed-secret")
 
-    assert events == ["plugin-installed", "credential-created"]
+    assert events == ["plugin-installed", "provider-credential-created", "model-credential-created"]
+
+
+def test_model_configurator_updates_existing_provider_and_model_credentials(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    events: list[str] = []
+
+    class PluginInstaller:
+        def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+            events.append("plugin-installed")
+
+    class ProviderService:
+        def create_provider_credential(self, **_: object) -> None:
+            raise AssertionError("existing provider credential must be updated")
+
+        def update_provider_credential(self, *, credential_id: str, **_: object) -> None:
+            assert credential_id == provider_credential.id
+            events.append("provider-credential-updated")
+
+        def create_model_credential(self, **_: object) -> None:
+            raise AssertionError("existing model credential must be updated")
+
+        def update_model_credential(self, *, credential_id: str, **_: object) -> None:
+            assert credential_id == model_credential.id
+            events.append("model-credential-updated")
+
+    with Session(sqlite_engine) as session:
+        provider_credential = ProviderCredential(
+            tenant_id="tenant-1",
+            provider_name="langgenius/openai/openai",
+            credential_name="Campus managed",
+            encrypted_config="{}",
+        )
+        model_credential = ProviderModelCredential(
+            tenant_id="tenant-1",
+            provider_name="langgenius/openai/openai",
+            model_name="deepseek-v4-flash",
+            model_type=ModelType.LLM,
+            credential_name="Campus managed",
+            encrypted_config="{}",
+        )
+        session.add_all([provider_credential, model_credential])
+        session.commit()
+
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai/openai",
+            provider_plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+            credential_name="Campus managed",
+            api_key_field="openai_api_key",
+            base_url_field="openai_api_base",
+            base_url="http://model-gateway:3000/v1",
+            model="deepseek-v4-flash",
+            api_protocol="chat",
+            plugin_installer=PluginInstaller(),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert events == ["plugin-installed", "provider-credential-updated", "model-credential-updated"]
 
 
 def test_marketplace_provider_installer_skips_existing_plugin(monkeypatch: pytest.MonkeyPatch) -> None:

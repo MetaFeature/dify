@@ -107,6 +107,8 @@ def platform_provisioner() -> PlatformProvisioningService:
             api_key_field=dify_config.CAMPUS_MODEL_PROVIDER_API_KEY_FIELD,
             base_url_field=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,
+            model=dify_config.CAMPUS_MODEL_PROVIDER_MODEL,
+            api_protocol=dify_config.CAMPUS_MODEL_PROVIDER_API_PROTOCOL,
         ),
         quota_units_per_yuan=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN,
     )

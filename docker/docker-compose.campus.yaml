@@ -36,6 +36,8 @@ services:
       CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: ${CAMPUS_MODEL_PROVIDER_API_KEY_FIELD:-openai_api_key}
       CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: ${CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD:-openai_api_base}
       CAMPUS_MODEL_PROVIDER_BASE_URL: http://model-gateway:3000/v1
+      CAMPUS_MODEL_PROVIDER_MODEL: ${CAMPUS_MODEL_PROVIDER_MODEL:-deepseek-v4-flash}
+      CAMPUS_MODEL_PROVIDER_API_PROTOCOL: ${CAMPUS_MODEL_PROVIDER_API_PROTOCOL:-chat}
     depends_on:
       model-gateway:
         condition: service_healthy
