@@ -174,7 +174,7 @@ wait_for_campus_health() {
 assert_portal_root_redirect() {
   local url="$1" status redirect_url
   read -r status redirect_url < <(curl --silent --output /dev/null \
-    --write-out '%{http_code} %{redirect_url}' --max-time 10 "${url}")
+    --write-out '%{http_code} %{redirect_url}\n' --max-time 10 "${url}")
   [[ "${status}" == "302" && "${redirect_url}" == */portal/ ]] || \
     fail "${url} does not redirect to the Access portal"
 }
@@ -282,9 +282,10 @@ verify() {
     baseline_url="http://127.0.0.1:${upstream_port}/"
   fi
 
-  for service in api portal model-gateway worker worker_beat; do
+  for service in api portal model-gateway worker worker_beat nginx; do
     require_running_service "${service}"
   done
+  wait_for_campus_health "${campus_port}"
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
@@ -314,8 +315,6 @@ verify() {
     fail "running nginx does not contain the Campus bootstrap route boundary"
   printf '%s\n' "${nginx_config}" | grep -Fq 'return 302 /portal/;' || \
     fail "running nginx does not make the Access portal the default entry"
-  wait_for_campus_health "${campus_port}"
-
   assert_portal_root_redirect "http://127.0.0.1:${campus_port}/"
 
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \

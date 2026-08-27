@@ -8,6 +8,20 @@ upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 
+redirect_function="$(sed -n '/^assert_portal_root_redirect() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{redirect_url}\\n'" || {
+  echo "Portal redirect verification must terminate curl output for Bash read" >&2
+  exit 1
+}
+
+verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
+wait_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'wait_for_campus_health')"
+health_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'assert_service_healthy')"
+[[ -n "${wait_line}" && -n "${health_line}" && "${wait_line%%:*}" -lt "${health_line%%:*}" ]] || {
+  echo "Campus verification must wait for API health before asserting container health" >&2
+  exit 1
+}
+
 [[ -f "${public_overlay}" ]] || {
   echo "Campus public-entry Compose overlay is missing" >&2
   exit 1
@@ -52,7 +66,6 @@ printf '%s\n' "${promote_function}" | grep -Fq 'verify_demo_accounts' || {
   echo "Campus promotion does not enforce the demo-account gate" >&2
   exit 1
 }
-verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${verify_function}" | grep -Fq 'verify_public_firewall' || {
   echo "Promoted-state verification does not recheck the firewall boundary" >&2
   exit 1
