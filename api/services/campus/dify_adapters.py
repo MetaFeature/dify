@@ -75,13 +75,18 @@ class MarketplaceProviderPluginInstaller:
         except CampusProvisioningError:
             raise
         except Exception as error:
-            logger.warning(
+            logger.error(
                 "Failed to install Campus model provider plugin. tenant_id=%s plugin_id=%s",
                 tenant_id,
                 plugin_id,
                 exc_info=True,
             )
             raise CampusProvisioningError("Campus model provider plugin installation failed") from error
+        logger.error(
+            "Timed out installing Campus model provider plugin. tenant_id=%s plugin_id=%s",
+            tenant_id,
+            plugin_id,
+        )
         raise CampusProvisioningError("Campus model provider plugin installation timed out")
 
     @staticmethod

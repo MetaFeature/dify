@@ -194,7 +194,9 @@ def test_marketplace_provider_installer_replaces_wrong_plugin_package(monkeypatc
     assert install_calls == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
 
 
-def test_marketplace_provider_installer_translates_daemon_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_marketplace_provider_installer_translates_daemon_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     class Installer:
         def list_plugins(self, tenant_id: str):
             raise RuntimeError(f"daemon unavailable for {tenant_id}")
@@ -208,3 +210,26 @@ def test_marketplace_provider_installer_translates_daemon_failure(monkeypatch: p
         )
 
     assert isinstance(raised.value.__cause__, RuntimeError)
+    assert "Failed to install Campus model provider plugin" in caplog.text
+
+
+def test_marketplace_provider_installer_logs_timeout(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            assert tenant_id == "tenant-1"
+            return []
+
+    monotonic_values = iter((0.0, 1.0))
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(dify_adapters.PluginService, "install_from_marketplace_pkg", lambda *_: None)
+    monkeypatch.setattr(dify_adapters.time, "monotonic", lambda: next(monotonic_values))
+
+    with pytest.raises(CampusProvisioningError, match="installation timed out"):
+        MarketplaceProviderPluginInstaller(timeout_seconds=0.5).ensure_installed(
+            "tenant-1",
+            "langgenius/openai:1.0.4@checksum",
+        )
+
+    assert "Timed out installing Campus model provider plugin" in caplog.text
