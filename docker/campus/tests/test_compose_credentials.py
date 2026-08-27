@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import quote
 
 
@@ -15,7 +18,27 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
-ComposeConfigFixture = dict[str, dict[str, dict[str, dict[str, str]]]]
+
+class EnvironmentFixture(TypedDict, total=False):
+    CELERY_BROKER_URL: str
+    REDISCLI_AUTH: str
+    REDIS_HOST: str
+    REDIS_PORT: str
+
+
+class ServiceFixture(TypedDict):
+    environment: EnvironmentFixture
+
+
+class ServicesFixture(TypedDict):
+    redis: ServiceFixture
+    api: ServiceFixture
+    worker: ServiceFixture
+    worker_beat: ServiceFixture
+
+
+class ComposeConfigFixture(TypedDict):
+    services: ServicesFixture
 
 
 def compose_config(redis_password: str, broker_password: str | None = None) -> ComposeConfigFixture:
@@ -56,6 +79,37 @@ class ComposeCredentialValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "worker broker endpoint"):
             MODULE.validate_compose_credentials(config)
+
+    def test_rejects_transport_and_acl_forms_not_used_by_internal_redis(self) -> None:
+        for broker_url in (
+            "rediss://:current-password@redis:6379/1",
+            "redis://campus:current-password@redis:6379/1",
+        ):
+            with self.subTest(broker_url=broker_url):
+                config = compose_config("current-password")
+                config["services"]["worker"]["environment"]["CELERY_BROKER_URL"] = broker_url
+
+                with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "worker broker"):
+                    MODULE.validate_compose_credentials(config)
+
+    def test_cli_redacts_malformed_broker_netloc(self) -> None:
+        secret = "malformed-secret-must-not-leak"
+        config = compose_config("current-password")
+        config["services"]["worker"]["environment"]["CELERY_BROKER_URL"] = (
+            f"redis://:{secret}@／redis:6379/1"
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH)],
+            input=json.dumps(config),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertIn("campus-compose:", result.stderr)
 
 
 if __name__ == "__main__":

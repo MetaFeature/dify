@@ -42,16 +42,23 @@ def validate_compose_credentials(config: object) -> None:
         redis_host = _required_text(environment, "REDIS_HOST", f"{service_name} Redis host")
         redis_port = _required_text(environment, "REDIS_PORT", f"{service_name} Redis port")
 
-        parsed = urlsplit(broker_url)
         try:
+            parsed = urlsplit(broker_url)
+            parsed_scheme = parsed.scheme
+            parsed_hostname = parsed.hostname
             parsed_port = parsed.port
-        except ValueError as error:
-            raise CredentialConfigurationError(f"{service_name} broker endpoint is invalid") from error
-        if parsed.scheme not in {"redis", "rediss"} or parsed.hostname != redis_host or str(parsed_port) != redis_port:
+            parsed_username = unquote(parsed.username or "")
+            parsed_password = unquote(parsed.password or "")
+            parsed_path = parsed.path
+        except (UnicodeError, ValueError):
+            raise CredentialConfigurationError(f"{service_name} broker endpoint is invalid") from None
+        if parsed_scheme != "redis" or parsed_username:
+            raise CredentialConfigurationError(f"{service_name} broker transport does not match Redis")
+        if parsed_hostname != redis_host or str(parsed_port) != redis_port:
             raise CredentialConfigurationError(f"{service_name} broker endpoint does not match Redis")
-        if parsed.path != "/1":
+        if parsed_path != "/1":
             raise CredentialConfigurationError(f"{service_name} broker must use the Celery Redis database")
-        if unquote(parsed.password or "") != redis_password:
+        if parsed_password != redis_password:
             raise CredentialConfigurationError(f"{service_name} broker credential does not match Redis")
 
 
