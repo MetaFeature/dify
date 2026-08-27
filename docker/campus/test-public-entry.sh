@@ -41,6 +41,21 @@ printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{
   exit 1
 }
 
+local_curl_function="$(sed -n '/^local_curl() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${local_curl_function}" | grep -Fq -- "--noproxy '*'" || {
+  echo "Campus local HTTP verification does not bypass inherited proxies" >&2
+  exit 1
+}
+wait_for_http_function="$(sed -n '/^wait_for_http() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${wait_for_http_function}" | grep -Fq 'local_curl' || {
+  echo "Campus readiness checks can still send loopback traffic through a proxy" >&2
+  exit 1
+}
+printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
+  echo "Campus redirect checks can still send loopback traffic through a proxy" >&2
+  exit 1
+}
+
 verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${verify_function}" | grep -Fq 'docker port "${container_id}" 80/tcp' || {
   echo "Campus verification does not inspect every nginx host binding" >&2
@@ -128,6 +143,10 @@ printf '%s\n' "${verify_function}" | grep -Fq 'verify_public_firewall' || {
   echo "Promoted-state verification does not recheck the firewall boundary" >&2
   exit 1
 }
+if printf '%s\n' "${verify_function}" | grep -Fq 'http://${public_bind}:${public_port}'; then
+  echo "Campus verification incorrectly hairpins the Windows LAN address from WSL" >&2
+  exit 1
+fi
 grep -Fq 'last_login_at IS NOT NULL' "${manager}" || {
   echo "Campus demo verification does not prove both administrator logins" >&2
   exit 1
@@ -205,3 +224,38 @@ for snapshot in PreviousWindowsRule PreviousHyperVRule; do
     exit 1
   }
 done
+
+grep -Fq 'PreviousWslConfig' "${firewall_script}" || {
+  echo "Campus public-entry rollback does not preserve the previous WSL configuration" >&2
+  exit 1
+}
+grep -Fq 'hostAddressLoopback=true' "${firewall_script}" || {
+  echo "Campus public entry does not enable mirrored host-address loopback" >&2
+  exit 1
+}
+grep -Fq 'Test-CampusHostAddressLoopback' "${firewall_script}" || {
+  echo "Campus public-entry verification does not test the Windows LAN address" >&2
+  exit 1
+}
+grep -Fq 'wsl-docker-boot' "${firewall_script}" || {
+  echo "Campus public-entry verification does not require the WSL keepalive task" >&2
+  exit 1
+}
+grep -Fq 'Test-WslKeepaliveTask' "${firewall_script}" || {
+  echo "Campus public-entry verification does not validate the WSL runtime anchor" >&2
+  exit 1
+}
+firewall_verify_function="$(sed -n '/^verify_public_firewall() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${firewall_verify_function}" | grep -Fq -- '-ListenAddress "${public_bind}"' || {
+  echo "Campus verification does not test the configured campus address from Windows" >&2
+  exit 1
+}
+printf '%s\n' "${firewall_verify_function}" | grep -Fq 'System32/WindowsPowerShell/v1.0/powershell.exe' || {
+  echo "Campus firewall verification cannot locate Windows PowerShell under sudo" >&2
+  exit 1
+}
+host_loopback_function="$(sed -n '/^function Test-CampusHostAddressLoopback {$/,/^}/p' "${firewall_script}")"
+printf '%s\n' "${host_loopback_function}" | grep -Fq 'portal/' || {
+  echo "Windows public-entry verification does not load the Portal page" >&2
+  exit 1
+}

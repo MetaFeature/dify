@@ -3,7 +3,9 @@ param(
     [string]$Action = "Apply",
     [ValidateRange(1, 65535)]
     [int]$Port = 18080,
-    [string]$RemoteAddress = "10.0.0.0/255.0.0.0"
+    [string]$RemoteAddress = "10.0.0.0/255.0.0.0",
+    [string]$ListenAddress = "10.20.10.193",
+    [string]$WslDistributionName = "Ubuntu-2404"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,12 +15,180 @@ $HyperVRuleName = "NJIT-Campus-Dify-$Port-HyperV"
 $BackupRoot = "C:\ProgramData\NJITCampus\firewall-backups"
 $ActiveBackupPath = "$BackupRoot\$Port-active.json"
 $LegacyPort80RuleDisplayNames = @("Dify HTTP 80", "dify-nginx-80")
+$WslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
+$WslKeepaliveTaskName = "wsl-docker-boot"
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw "Administrator privileges are required."
+    }
+}
+
+function Assert-IPv4Address {
+    param(
+        [string]$Address,
+        [string]$Name
+    )
+
+    $parsed = $null
+    if (-not [System.Net.IPAddress]::TryParse($Address, [ref]$parsed) -or
+        $parsed.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw "$Name must be an IPv4 address."
+    }
+}
+
+function Get-WslConfigSnapshot {
+    if (-not (Test-Path -LiteralPath $WslConfigPath)) {
+        return [PSCustomObject]@{ Exists = $false }
+    }
+    $content = [System.IO.File]::ReadAllBytes($WslConfigPath)
+    return [PSCustomObject]@{
+        Exists = $true
+        ContentBase64 = [Convert]::ToBase64String($content)
+    }
+}
+
+function Set-WslHostAddressLoopback {
+    $lines = if (Test-Path -LiteralPath $WslConfigPath) {
+        [System.IO.File]::ReadAllLines($WslConfigPath)
+    }
+    else {
+        @()
+    }
+    $output = [System.Collections.Generic.List[string]]::new()
+    $inExperimental = $false
+    $experimentalSeen = $false
+    $settingWritten = $false
+
+    foreach ($line in $lines) {
+        if ($line -match '^\s*\[([^]]+)\]\s*$') {
+            if ($inExperimental -and -not $settingWritten) {
+                $output.Add("hostAddressLoopback=true")
+                $settingWritten = $true
+            }
+            $inExperimental = $Matches[1].Trim() -ieq "experimental"
+            if ($inExperimental) {
+                $experimentalSeen = $true
+            }
+            $output.Add($line)
+            continue
+        }
+        if ($line -match '^\s*hostAddressLoopback\s*=') {
+            if ($inExperimental -and -not $settingWritten) {
+                $output.Add("hostAddressLoopback=true")
+                $settingWritten = $true
+            }
+            continue
+        }
+        $output.Add($line)
+    }
+
+    if ($inExperimental -and -not $settingWritten) {
+        $output.Add("hostAddressLoopback=true")
+        $settingWritten = $true
+    }
+    if (-not $experimentalSeen) {
+        if ($output.Count -gt 0 -and $output[$output.Count - 1] -ne "") {
+            $output.Add("")
+        }
+        $output.Add("[experimental]")
+        $output.Add("hostAddressLoopback=true")
+    }
+
+    $temporaryPath = "$WslConfigPath.njit-campus-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        [System.IO.File]::WriteAllLines(
+            $temporaryPath,
+            $output,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Move-Item -LiteralPath $temporaryPath -Destination $WslConfigPath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
+function Test-WslHostAddressLoopbackConfiguration {
+    if (-not (Test-Path -LiteralPath $WslConfigPath)) {
+        throw "The Windows WSL configuration is missing."
+    }
+    $section = ""
+    $settings = @()
+    foreach ($line in [System.IO.File]::ReadAllLines($WslConfigPath)) {
+        if ($line -match '^\s*\[([^]]+)\]\s*$') {
+            $section = $Matches[1].Trim()
+            continue
+        }
+        if ($line -match '^\s*hostAddressLoopback\s*=\s*([^#;\s]+)') {
+            $settings += [PSCustomObject]@{
+                Section = $section
+                Value = $Matches[1]
+            }
+        }
+    }
+    if ($settings.Count -ne 1 -or $settings[0].Section -ine "experimental" -or
+        $settings[0].Value -ine "true") {
+        throw "WSL mirrored host-address loopback is not enabled exactly once."
+    }
+}
+
+function Test-CampusHostAddressLoopback {
+    $curlPath = Join-Path $env:SystemRoot "System32\curl.exe"
+    if (-not (Test-Path -LiteralPath $curlPath)) {
+        throw "Windows curl.exe is required for Campus public-entry verification."
+    }
+    $checks = @(
+        [PSCustomObject]@{ Path = "/"; Status = "302" },
+        [PSCustomObject]@{ Path = "/portal/"; Status = "200" }
+    )
+    foreach ($check in $checks) {
+        $url = "http://${ListenAddress}:${Port}$($check.Path)"
+        $verified = $false
+        foreach ($attempt in 1..10) {
+            $output = @(
+                & $curlPath --noproxy "*" --connect-timeout 1 --max-time 2 `
+                    --silent --output NUL --write-out "%{http_code}" $url 2>$null
+            )
+            $status = ($output -join "").Trim()
+            if ($LASTEXITCODE -eq 0 -and $status -eq $check.Status) {
+                $verified = $true
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $verified) {
+            throw "Windows cannot reach the expected Campus route at $($check.Path)."
+        }
+    }
+}
+
+function Test-WslKeepaliveTask {
+    param([switch]$RequireRunning)
+
+    $task = Get-ScheduledTask `
+        -TaskName $WslKeepaliveTaskName `
+        -TaskPath "\" `
+        -ErrorAction Stop
+    $actions = @($task.Actions)
+    $expectedArguments = "-d $WslDistributionName -u root -e /usr/bin/tail -f /dev/null"
+    $actualArguments = if ($actions.Count -eq 1) {
+        ($actions[0].Arguments -replace '\s+', ' ').Trim()
+    }
+    else {
+        ""
+    }
+    if ($actions.Count -ne 1 -or
+        [System.IO.Path]::GetFileName($actions[0].Execute) -ine "wsl.exe" -or
+        $actualArguments -ne $expectedArguments) {
+        throw "The Windows WSL keepalive task does not match the Campus runtime anchor."
+    }
+    if ($RequireRunning -and $task.State -ne "Running") {
+        throw "The Windows WSL keepalive task is not running."
     }
 }
 
@@ -89,6 +259,33 @@ function Restore-PreviousCampusRules {
     }
 }
 
+function Restore-PreviousWslConfig {
+    param([object]$Backup)
+
+    $property = $Backup.PSObject.Properties["PreviousWslConfig"]
+    if ($null -eq $property) {
+        return
+    }
+    if ($Backup.PreviousWslConfig.Exists -ne $true) {
+        if (Test-Path -LiteralPath $WslConfigPath) {
+            Remove-Item -LiteralPath $WslConfigPath -Force
+        }
+        return
+    }
+
+    $content = [Convert]::FromBase64String($Backup.PreviousWslConfig.ContentBase64)
+    $temporaryPath = "$WslConfigPath.njit-campus-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        [System.IO.File]::WriteAllBytes($temporaryPath, $content)
+        Move-Item -LiteralPath $temporaryPath -Destination $WslConfigPath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
 function Test-CampusFirewallRules {
     $windowsRule = Get-NetFirewallRule -Name $WindowsRuleName -ErrorAction Stop
     $windowsPort = $windowsRule | Get-NetFirewallPortFilter
@@ -123,6 +320,7 @@ function Test-CampusFirewallRules {
 }
 
 Assert-Administrator
+Assert-IPv4Address -Address $ListenAddress -Name "ListenAddress"
 
 switch ($Action) {
     "Apply" {
@@ -140,9 +338,11 @@ switch ($Action) {
                 }
             }
         }
+        $previousWslConfig = Get-WslConfigSnapshot
         $backupState = @{
             PreviousWindowsRule = Get-WindowsRuleSnapshot
             PreviousHyperVRule = Get-HyperVRuleSnapshot
+            PreviousWslConfig = $previousWslConfig
             LegacyWindowsRules = $legacyRuleStates
         }
         $backupState | ConvertTo-Json -Depth 6 |
@@ -150,6 +350,16 @@ switch ($Action) {
         if (-not (Test-Path -Path $ActiveBackupPath)) {
             $backupState | ConvertTo-Json -Depth 6 |
                 Set-Content -Encoding UTF8 -Path $ActiveBackupPath
+        }
+        else {
+            $activeBackup = Get-Content -Raw -Path $ActiveBackupPath | ConvertFrom-Json
+            if ($null -eq $activeBackup.PSObject.Properties["PreviousWslConfig"]) {
+                $activeBackup | Add-Member `
+                    -NotePropertyName PreviousWslConfig `
+                    -NotePropertyValue $previousWslConfig
+                $activeBackup | ConvertTo-Json -Depth 6 |
+                    Set-Content -Encoding UTF8 -Path $ActiveBackupPath
+            }
         }
 
         foreach ($legacyRule in $legacyRuleStates) {
@@ -183,11 +393,17 @@ switch ($Action) {
             -LocalPorts $Port `
             -RemoteAddresses $RemoteAddress | Out-Null
 
+        Set-WslHostAddressLoopback
         Test-CampusFirewallRules
-        Write-Output "Campus Dify intranet firewall rules applied for TCP $Port."
+        Test-WslHostAddressLoopbackConfiguration
+        Test-WslKeepaliveTask
+        Write-Output "Campus Dify intranet boundary applied for TCP $Port; restart WSL before Verify."
     }
     "Verify" {
         Test-CampusFirewallRules
+        Test-WslHostAddressLoopbackConfiguration
+        Test-WslKeepaliveTask -RequireRunning
+        Test-CampusHostAddressLoopback
         Write-Output "Campus Dify intranet firewall rules verified for TCP $Port."
     }
     "Remove" {
@@ -203,8 +419,9 @@ switch ($Action) {
                     Set-NetFirewallRule -Enabled $enabled
             }
             Restore-PreviousCampusRules -Backup $backup
+            Restore-PreviousWslConfig -Backup $backup
             Remove-Item -Path $ActiveBackupPath
         }
-        Write-Output "Campus Dify intranet firewall rules removed for TCP $Port."
+        Write-Output "Campus Dify intranet boundary removed for TCP $Port; restart WSL to finish rollback."
     }
 }

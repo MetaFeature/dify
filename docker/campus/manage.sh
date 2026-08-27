@@ -60,6 +60,10 @@ fail() {
   exit 1
 }
 
+local_curl() {
+  command curl --noproxy '*' "$@"
+}
+
 set_env_value() {
   local key="$1" value="$2" env_tmp
   [[ "${key}" =~ ^[A-Z0-9_]+$ ]] || fail "invalid environment key"
@@ -178,7 +182,7 @@ wait_for_http() {
   deadline="$((SECONDS + 60))"
   while (( (remaining = deadline - SECONDS) > 0 )); do
     max_wait="$((remaining < 5 ? remaining : 5))"
-    if curl --fail --silent --show-error --max-time "${max_wait}" "${url}" >/dev/null 2>&1; then
+    if local_curl --fail --silent --show-error --max-time "${max_wait}" "${url}" >/dev/null 2>&1; then
       return 0
     fi
     remaining="$((deadline - SECONDS))"
@@ -213,7 +217,7 @@ print(f"current_slot_load_per_cpu={one_minute_load / cpu_count:.3f} threshold={t
 
 assert_portal_root_redirect() {
   local url="$1" status redirect_url
-  read -r status redirect_url < <(curl --silent --output /dev/null \
+  read -r status redirect_url < <(local_curl --silent --output /dev/null \
     --write-out '%{http_code} %{redirect_url}\n' --max-time 10 "${url}")
   [[ "${status}" == "302" && "${redirect_url}" == */portal/ ]] || \
     fail "${url} does not redirect to the Access portal"
@@ -361,22 +365,18 @@ verify() {
     fail "running nginx does not make the Access portal the default entry"
   assert_portal_root_redirect "http://127.0.0.1:${campus_port}/"
 
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${campus_port}/portal/")"
   [[ "${status}" == "200" ]] || fail "Campus Access portal is unavailable (HTTP ${status})"
 
   if [[ "${public_enabled}" == "true" ]]; then
     verify_public_firewall "${public_port}"
-    assert_portal_root_redirect "http://${public_bind}:${public_port}/"
-    status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
-      "http://${public_bind}:${public_port}/portal/")"
-    [[ "${status}" == "200" ]] || fail "public Campus Access portal is unavailable (HTTP ${status})"
     published="$("${UPSTREAM_LOOPBACK_COMPOSE[@]}" port nginx 80)"
     [[ "${published}" == "127.0.0.1:${upstream_port}" ]] || \
       fail "upstream Dify rollback route is not loopback-only"
   fi
 
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${campus_port}/signin")"
   [[ "${status}" == "404" ]] || fail "public Dify sign-in route was not blocked (HTTP ${status})"
 
@@ -389,13 +389,13 @@ verify() {
   printf '%s\n' "${portal_networks}" | grep -q 'campus_portal$' || \
     fail "Campus Access portal is not attached to its isolated network"
 
-  status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${campus_port}/console/api/apps")"
   [[ "${status}" == "401" ]] || fail "direct workspace API was not rejected (HTTP ${status})"
 
   published="$("${COMPOSE[@]}" port model-gateway 3000)"
   [[ "${published}" == "127.0.0.1:${gateway_port}" ]] || fail "model gateway is not loopback-only"
-  curl --fail --silent --show-error --max-time 10 \
+  local_curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${gateway_port}/api/status" | grep -q '"success":true' || \
     fail "model gateway status endpoint is unhealthy"
   container_id="$("${COMPOSE[@]}" ps -q model-gateway-db)"
@@ -407,7 +407,7 @@ verify() {
   container_id="$("${COMPOSE[@]}" ps -q plugin_daemon)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
     fail "plugin daemon is published"
-  curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
+  local_curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
 }
 
 open_bootstrap() {
@@ -421,7 +421,7 @@ open_bootstrap() {
   admin_port="${admin_port:-18081}"
   [[ "${campus_bind}" == "127.0.0.1" ]] || fail "administrator bootstrap requires a loopback-only Campus bind"
 
-  setup_step="$(curl --fail --silent --show-error --max-time 10 \
+  setup_step="$(local_curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${admin_port}/console/api/setup" | \
     sed -n 's/.*"step":"\([^"]*\)".*/\1/p')"
   [[ "${setup_step}" == "not_started" ]] || fail "Dify setup is not waiting for first-time bootstrap"
@@ -443,7 +443,7 @@ open_bootstrap() {
   published="$("${COMPOSE[@]}" port nginx 8081)"
   [[ "${published}" == "127.0.0.1:${admin_port}" ]] || fail "administrator listener is not loopback-only"
   wait_for_campus_health "${campus_port}"
-  init_status="$(curl --fail --silent --show-error --max-time 10 \
+  init_status="$(local_curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${admin_port}/console/api/init" | \
     sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
   [[ "${init_status}" == "finished" ]] || fail "Dify initialization gate did not open"
@@ -467,14 +467,21 @@ assert_public_bind_is_local() {
 }
 
 verify_public_firewall() {
-  local public_port="$1" remote_address windows_script
-  command -v powershell.exe >/dev/null || fail "powershell.exe is required for public-entry firewall verification"
+  local public_port="$1" remote_address public_bind powershell_bin windows_script
+  powershell_bin="$(command -v powershell.exe || true)"
+  if [[ -z "${powershell_bin}" && -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]]; then
+    powershell_bin=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+  fi
+  [[ -n "${powershell_bin}" ]] || fail "powershell.exe is required for public-entry firewall verification"
   command -v wslpath >/dev/null || fail "wslpath is required for public-entry firewall verification"
   remote_address="$(env_value CAMPUS_PUBLIC_REMOTE_ADDRESS)"
   remote_address="${remote_address:-10.0.0.0/255.0.0.0}"
+  public_bind="$(env_value CAMPUS_PUBLIC_BIND_ADDRESS)"
+  public_bind="${public_bind:-10.20.10.193}"
   windows_script="$(wslpath -w "${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1")"
-  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}" \
-    -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}"
+  "${powershell_bin}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}" \
+    -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}" \
+    -ListenAddress "${public_bind}"
 }
 
 assert_port_owner() {

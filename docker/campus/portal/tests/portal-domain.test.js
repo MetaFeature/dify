@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { addCampusDays, campusDay, canCancelReservation, isCurrentAccessSlot } from '../assets/portal-domain.js'
+import {
+  addCampusDays,
+  campusDay,
+  canCancelReservation,
+  isCurrentAccessSlot,
+  launchWorkspace,
+} from '../assets/portal-domain.js'
 
 test('booking window follows UTC+8 even when the instant is still the previous UTC day', () => {
   const now = new Date('2026-08-11T16:30:00Z')
@@ -24,4 +30,15 @@ test('current access slot is active only before its fixed end', () => {
   assert.equal(isCurrentAccessSlot(slot, new Date('2026-08-12T02:30:00Z')), true)
   assert.equal(isCurrentAccessSlot(slot, new Date('2026-08-12T01:59:59Z')), false)
   assert.equal(isCurrentAccessSlot(slot, new Date('2026-08-12T04:00:00Z')), false)
+})
+
+test('successful session launch enters the guarded Dify apps page', async () => {
+  const events = []
+
+  await launchWorkspace(
+    async () => events.push('session-issued'),
+    path => events.push(`navigate:${path}`),
+  )
+
+  assert.deepEqual(events, ['session-issued', 'navigate:/apps'])
 })

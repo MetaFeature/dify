@@ -1,5 +1,11 @@
 import { CampusApi, CampusApiError } from './campus-api.js'
-import { addCampusDays, campusDay, canCancelReservation, isCurrentAccessSlot } from './portal-domain.js'
+import {
+  addCampusDays,
+  campusDay,
+  canCancelReservation,
+  isCurrentAccessSlot,
+  launchWorkspace,
+} from './portal-domain.js'
 import { messages } from './messages.js'
 
 const api = new CampusApi()
@@ -54,8 +60,10 @@ elements.launchButton.addEventListener('click', async () => {
   setBusy(elements.launchButton, true)
   hideMessage(elements.message)
   try {
-    await api.launchSession()
-    window.location.assign('/')
+    await launchWorkspace(
+      () => api.launchSession(),
+      path => window.location.assign(path),
+    )
   }
   catch (error) {
     showMessage(elements.message, messageFor(error), true)

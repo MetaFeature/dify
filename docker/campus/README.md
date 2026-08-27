@@ -103,10 +103,23 @@ is complete and both administrator logins have been verified.
 
 After administrator setup and full canary acceptance, keep port `18080` as a
 loopback verification route. From an elevated Windows shell, restrict TCP 80
-through both Windows Firewall and the WSL Hyper-V firewall before promotion:
+through both Windows Firewall and the WSL Hyper-V firewall before promotion.
+The same reviewed script preserves `%UserProfile%\.wslconfig`, enables mirrored
+host-address loopback, and validates the existing `wsl-docker-boot` task:
 
 ```powershell
 .\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 80 -RemoteAddress 10.0.0.0/255.0.0.0
+```
+
+Apply the WSL setting without racing the runtime anchor, then verify the real
+Windows-to-Campus path:
+
+```powershell
+Stop-ScheduledTask -TaskName wsl-docker-boot
+wsl.exe --shutdown
+Start-ScheduledTask -TaskName wsl-docker-boot
+.\campus\windows\configure-intranet-firewall.ps1 -Action Verify -Port 80 -RemoteAddress 10.0.0.0/255.0.0.0
+curl.exe --noproxy "*" -I http://10.20.10.193/
 ```
 
 Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
@@ -115,10 +128,12 @@ rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
 that `/` redirects to `/portal/`. It fails closed and restores the upstream
 entry if Campus verification fails.
 
-`-Action Verify` is idempotent firewall verification. For rollback, run
+`-Action Verify` is idempotent firewall, WSL-loopback, runtime-anchor, and
+Windows HTTP verification. For rollback, run
 `docker/campus/manage.sh rollback-promotion` first, then use firewall
-`-Action Remove`; this restores the previous port-80 rule state from the latest
-port-specific backup. Firewall backups are stored under
+`-Action Remove`; this restores the previous port-80 rule and `.wslconfig`
+state from the latest port-specific backup. Restart WSL with the task sequence
+above after rollback. Firewall backups are stored under
 `C:\ProgramData\NJITCampus\firewall-backups`.
 
 If Docker Hub is unavailable, set the three `CAMPUS_GATEWAY_*_IMAGE`
@@ -144,7 +159,8 @@ Use a virtual identity from the protected environment file:
    verify FIFO waitlisting, cancel a confirmed booking, and verify promotion.
 5. Before the slot, `/console/api/campus/session/launch` must be rejected. At
    the slot start it must establish a Dify session in exactly that student's
-   workspace. A different student must not see the workspace.
+   workspace and send the browser to `/apps`. A different student must not see
+   the workspace; `/` must continue to redirect to the Portal.
 6. Import a teacher-provided `.yml`, edit it, and export it again. No assignment
    submission or grading controls should be present.
 7. Exhaust the model allowance. Model calls must fail at the gateway while the
@@ -152,8 +168,10 @@ Use a virtual identity from the protected environment file:
 8. After the slot end, the nginx authorization subrequest must reject further
    interactive workspace API requests even if the Dify cookie remains valid.
 9. Before promotion, verify the existing port-80 Dify route. After promotion,
-   verify `http://10.20.10.193/` redirects to `/portal/`, while the unchanged
-   upstream Dify responds only on `127.0.0.1:18082`.
+   verify from Windows or a campus peer that `http://10.20.10.193/` redirects
+   to `/portal/`; do not substitute a WSL self-request to the mirrored host
+   address. The unchanged upstream Dify must respond only on
+   `127.0.0.1:18082`.
 
 The Access portal is the student-facing entry point. The stock Dify shell and
 bootstrap login routes remain reachable for named Campus administrators; Campus

@@ -37,3 +37,14 @@ export function isCurrentAccessSlot(slot, now) {
   const endsAt = new Date(slot.ends_at).getTime()
   return startsAt <= now.getTime() && now.getTime() < endsAt
 }
+
+/**
+ * Enter the guarded Dify workspace only after the backend has issued its session.
+ *
+ * @param {() => Promise<unknown>} launchSession
+ * @param {(path: string) => void} navigate
+ */
+export async function launchWorkspace(launchSession, navigate) {
+  await launchSession()
+  navigate('/apps')
+}
