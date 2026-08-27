@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,9 +12,10 @@ from models.campus import (
     ReservationStatus,
     StudentStatus,
 )
-from services.campus.domain import AccessDecision, ReservationResult, SlotAvailability
+from services.campus.domain import AccessDecision, CurrentSlotLoadAdmission, ReservationResult, SlotAvailability
 from services.campus.errors import (
     ActiveReservationExistsError,
+    CurrentSlotLoadUnavailableError,
     ReservationCancellationError,
     ReservationNotFoundError,
     ReservationWindowError,
@@ -27,14 +28,29 @@ CAMPUS_TIMEZONE = timezone(timedelta(hours=8))
 SLOT_DURATION = timedelta(hours=2)
 
 
+class ClosedCurrentSlotLoadAdmission:
+    """Fail closed when no runtime load-admission source is configured."""
+
+    def allows_current_slot_reservation(self) -> bool:
+        return False
+
+
 class ReservationService:
-    """Owns fixed-slot booking, wait-list promotion, and time-bound access."""
+    """Owns fixed-slot booking, current-slot admission, FIFO priority, and time-bound access."""
 
     _session: Session
     _capacity: int
     _booking_days: int
+    _current_slot_load_admission: CurrentSlotLoadAdmission
 
-    def __init__(self, *, session: Session, capacity: int, booking_days: int) -> None:
+    def __init__(
+        self,
+        *,
+        session: Session,
+        capacity: int,
+        booking_days: int,
+        current_slot_load_admission: CurrentSlotLoadAdmission | None = None,
+    ) -> None:
         if capacity < 1:
             raise ValueError("capacity must be positive")
         if booking_days < 1:
@@ -42,9 +58,30 @@ class ReservationService:
         self._session = session
         self._capacity = capacity
         self._booking_days = booking_days
+        self._current_slot_load_admission = current_slot_load_admission or ClosedCurrentSlotLoadAdmission()
 
     def reserve(self, student_id: str, starts_at: datetime, *, now: datetime) -> ReservationResult:
-        """Lock student and slot, allocate a monotonic queue position, then commit one claim."""
+        """Create and commit one fixed-slot claim under student and slot locks.
+
+        Args:
+            student_id: Active Campus student requesting the claim.
+            starts_at: Time-zone-aware start of a fixed two-hour slot.
+            now: Time-zone-aware command time used for booking and load-admission boundaries.
+
+        Returns:
+            The confirmed reservation or FIFO waitlist entry created for the student.
+
+        Raises:
+            StudentNotFoundError: The Campus student does not exist.
+            StudentSuspendedError: The Campus student is not active.
+            ActiveReservationExistsError: The student already has an unfinished claim.
+            ReservationWindowError: The requested slot is not a current or future bookable slot.
+            CurrentSlotLoadUnavailableError: Current capacity exists but load admission fails closed.
+
+        Side effects:
+            Locks the student and slot, materializes the student's elapsed claims, creates the slot when absent,
+            promotes eligible FIFO waiters without bypassing load admission, inserts the new claim, and commits.
+        """
         starts_at_utc = self._validate_starts_at(starts_at, now=now)
         now_utc = to_naive_utc(now)
         student = self._session.scalar(select(CampusStudent).where(CampusStudent.id == student_id).with_for_update())
@@ -85,15 +122,29 @@ class ReservationService:
                 if slot is None:
                     raise
 
-        confirmed_count = self._session.scalar(
-            select(func.count(CampusReservation.id)).where(
-                CampusReservation.slot_id == slot.id,
-                CampusReservation.status == ReservationStatus.CONFIRMED,
+        confirmed_count = (
+            self._session.scalar(
+                select(func.count(CampusReservation.id)).where(
+                    CampusReservation.slot_id == slot.id,
+                    CampusReservation.status == ReservationStatus.CONFIRMED,
+                )
             )
+            or 0
         )
-        status = (
-            ReservationStatus.CONFIRMED if int(confirmed_count or 0) < slot.capacity else ReservationStatus.WAITLISTED
-        )
+        is_current_slot = starts_at_utc <= now_utc < slot.ends_at
+        if is_current_slot and confirmed_count < slot.capacity:
+            if not self._current_slot_load_admission.allows_current_slot_reservation():
+                raise CurrentSlotLoadUnavailableError("current slot admission is unavailable")
+            promoted_count = self._promote_waiters(slot, available=1, confirmed_at=now_utc)
+            status = ReservationStatus.WAITLISTED if promoted_count else ReservationStatus.CONFIRMED
+        else:
+            if not is_current_slot:
+                confirmed_count += self._promote_waiters(
+                    slot,
+                    available=slot.capacity - confirmed_count,
+                    confirmed_at=now_utc,
+                )
+            status = ReservationStatus.CONFIRMED if confirmed_count < slot.capacity else ReservationStatus.WAITLISTED
         last_queue_sequence = self._session.scalar(
             select(func.max(CampusReservation.queue_sequence)).where(CampusReservation.slot_id == slot.id)
         )
@@ -102,7 +153,7 @@ class ReservationService:
             slot_id=slot.id,
             status=status,
             queued_at=now_utc,
-            queue_sequence=int(last_queue_sequence or 0) + 1,
+            queue_sequence=(last_queue_sequence or 0) + 1,
             confirmed_at=now_utc if status is ReservationStatus.CONFIRMED else None,
             cancelled_at=None,
         )
@@ -143,19 +194,7 @@ class ReservationService:
         reservation.status = ReservationStatus.CANCELLED
         reservation.cancelled_at = now_utc
         if was_confirmed:
-            waiter = self._session.scalar(
-                select(CampusReservation)
-                .where(
-                    CampusReservation.slot_id == slot.id,
-                    CampusReservation.status == ReservationStatus.WAITLISTED,
-                )
-                .order_by(CampusReservation.queue_sequence)
-                .with_for_update()
-                .limit(1)
-            )
-            if waiter is not None:
-                waiter.status = ReservationStatus.CONFIRMED
-                waiter.confirmed_at = now_utc
+            self._promote_waiters(slot, available=1, confirmed_at=now_utc)
         self._session.commit()
 
     def access_decision(self, student_id: str, *, now: datetime) -> AccessDecision:
@@ -212,7 +251,7 @@ class ReservationService:
                 capacity=self._capacity,
                 confirmed=counts.get(starts_utc[index], {}).get(ReservationStatus.CONFIRMED, 0),
                 waitlisted=counts.get(starts_utc[index], {}).get(ReservationStatus.WAITLISTED, 0),
-                reservable=start > now.astimezone(CAMPUS_TIMEZONE),
+                reservable=start + SLOT_DURATION > now.astimezone(CAMPUS_TIMEZONE),
             )
             for index, start in enumerate(starts)
         )
@@ -247,8 +286,8 @@ class ReservationService:
             raise ReservationWindowError("slot must start on a two-hour boundary")
         if starts_local.hour % 2 != 0:
             raise ReservationWindowError("slot must start on a two-hour boundary")
-        if starts_at <= now:
-            raise ReservationWindowError("slot has already started")
+        if starts_at + SLOT_DURATION <= now:
+            raise ReservationWindowError("slot has already ended")
         last_bookable_date = now_local.date() + timedelta(days=self._booking_days - 1)
         if not now_local.date() <= starts_local.date() <= last_bookable_date:
             raise ReservationWindowError("slot is outside the booking window")
@@ -261,16 +300,7 @@ class ReservationService:
             .where(
                 CampusReservation.student_id == student_id,
                 CampusReservation.status.in_(ACTIVE_RESERVATION_STATUSES),
-                or_(
-                    and_(
-                        CampusReservation.status == ReservationStatus.CONFIRMED,
-                        CampusAccessSlot.ends_at <= now_utc,
-                    ),
-                    and_(
-                        CampusReservation.status == ReservationStatus.WAITLISTED,
-                        CampusAccessSlot.starts_at <= now_utc,
-                    ),
-                ),
+                CampusAccessSlot.ends_at <= now_utc,
             )
         ).all()
         for reservation, _slot in rows:
@@ -281,7 +311,7 @@ class ReservationService:
             )
 
     def _expire_elapsed_waiters(self, now_utc: datetime) -> None:
-        elapsed_slot_ids = select(CampusAccessSlot.id).where(CampusAccessSlot.starts_at <= now_utc)
+        elapsed_slot_ids = select(CampusAccessSlot.id).where(CampusAccessSlot.ends_at <= now_utc)
         self._session.execute(
             update(CampusReservation)
             .where(
@@ -299,4 +329,30 @@ class ReservationService:
                 CampusReservation.queue_sequence <= reservation.queue_sequence,
             )
         )
-        return int(preceding or 0)
+        return preceding or 0
+
+    def _promote_waiters(
+        self,
+        slot: CampusAccessSlot,
+        *,
+        available: int,
+        confirmed_at: datetime,
+    ) -> int:
+        """Lock and confirm up to ``available`` FIFO waiters, returning the promoted count."""
+
+        if available <= 0:
+            return 0
+        waiters = self._session.scalars(
+            select(CampusReservation)
+            .where(
+                CampusReservation.slot_id == slot.id,
+                CampusReservation.status == ReservationStatus.WAITLISTED,
+            )
+            .order_by(CampusReservation.queue_sequence)
+            .with_for_update()
+            .limit(available)
+        ).all()
+        for waiter in waiters:
+            waiter.status = ReservationStatus.CONFIRMED
+            waiter.confirmed_at = confirmed_at
+        return len(waiters)

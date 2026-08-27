@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from flask import Response, make_response, request
 from flask.typing import ResponseReturnValue
 from flask_restx import Resource
-from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound, Unauthorized
+from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound, TooManyRequests, Unauthorized
 
 from configs import dify_config
 from controllers.common.schema import query_params_from_model
@@ -41,6 +41,7 @@ from services.campus.errors import (
     AccessSlotRequiredError,
     ActiveReservationExistsError,
     CampusAdministratorRequiredError,
+    CurrentSlotLoadUnavailableError,
     GatewayBindingNotFoundError,
     PortalSessionError,
     ReservationCancellationError,
@@ -127,6 +128,8 @@ class CampusReservationListApi(Resource):
             reservation = reservation_service().reserve(student.id, payload.starts_at, now=datetime.now(UTC))
         except ActiveReservationExistsError as error:
             raise Conflict("Student already has an unfinished reservation") from error
+        except CurrentSlotLoadUnavailableError as error:
+            raise TooManyRequests("Current slot admission is temporarily unavailable") from error
         except ReservationWindowError as error:
             raise BadRequest(str(error)) from error
         return _reservation_response(reservation), 201
@@ -218,4 +221,3 @@ class CampusAllowanceApi(Resource):
         except GatewayBindingNotFoundError as error:
             raise Conflict("Student model allowance is not provisioned") from error
         return _allowance_response(summary)
-

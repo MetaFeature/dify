@@ -2,10 +2,12 @@ export const messages = Object.freeze({
   booking: {
     cancelled: '预约已取消。',
     confirmed: '预约成功。',
+    supplemented: '当前时段补约成功，可立即进入平台。',
     waitlisted: '时段已满，已加入候补队列。',
   },
   errors: {
     'bad-request': '请求内容有误，请检查后重试。',
+    busy: '服务器当前负载较高，暂时无法补约本时段，请稍后重试。',
     conflict: '当前操作与已有预约冲突，请刷新后重试。',
     forbidden: '当前预约时段尚未生效。',
     generic: '操作失败，请稍后重试。',
@@ -31,6 +33,7 @@ export const messages = Object.freeze({
   },
   slots: {
     reserve: '预约',
+    supplement: '补约当前时段',
     waitlist: '加入候补',
     unavailable: '不可预约',
   },

@@ -81,3 +81,12 @@ test('API failures expose a safe normalized message without leaking response bod
     error => error instanceof CampusApiError && error.status === 500 && error.code === 'unavailable',
   )
 })
+
+test('current-slot load rejection has a dedicated safe error code', async () => {
+  const api = new CampusApi(async () => response({ message: 'private load detail' }, { status: 429 }))
+
+  await assert.rejects(
+    api.reserve('2026-08-12T02:00:00+08:00'),
+    error => error instanceof CampusApiError && error.status === 429 && error.code === 'busy',
+  )
+})

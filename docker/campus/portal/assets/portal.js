@@ -1,5 +1,5 @@
 import { CampusApi, CampusApiError } from './campus-api.js'
-import { addCampusDays, campusDay, canCancelReservation } from './portal-domain.js'
+import { addCampusDays, campusDay, canCancelReservation, isCurrentAccessSlot } from './portal-domain.js'
 import { messages } from './messages.js'
 
 const api = new CampusApi()
@@ -72,7 +72,12 @@ elements.slotList.addEventListener('click', async (event) => {
   setBusy(button, true)
   try {
     const reservation = await api.reserve(button.getAttribute('data-starts-at') || '')
-    showMessage(elements.message, reservation.status === 'waitlisted' ? messages.booking.waitlisted : messages.booking.confirmed)
+    const bookingMessage = reservation.status === 'waitlisted'
+      ? messages.booking.waitlisted
+      : isCurrentAccessSlot(reservation, new Date())
+        ? messages.booking.supplemented
+        : messages.booking.confirmed
+    showMessage(elements.message, bookingMessage)
     await refreshDashboard()
   }
   catch (error) {
@@ -166,7 +171,13 @@ function slotCard(slot) {
   button.className = 'secondary compact'
   button.dataset.startsAt = slot.starts_at
   button.disabled = !slot.reservable
-  button.textContent = slot.reservable ? (slot.confirmed >= slot.capacity ? messages.slots.waitlist : messages.slots.reserve) : messages.slots.unavailable
+  button.textContent = slot.reservable
+    ? slot.confirmed >= slot.capacity
+      ? messages.slots.waitlist
+      : isCurrentAccessSlot(slot, new Date())
+        ? messages.slots.supplement
+        : messages.slots.reserve
+    : messages.slots.unavailable
   article.append(copy, button)
   return article
 }

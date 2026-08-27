@@ -13,7 +13,23 @@ from models.campus import CampusAccessSlot, CampusReservation, CampusStudent, Re
 from services.campus.reservation_service import ReservationService
 
 
-def test_concurrent_last_seat_creates_one_confirmation_and_one_waiter() -> None:
+class AllowCurrentSlotAdmission:
+    def allows_current_slot_reservation(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize(
+    ("now", "load_admission"),
+    [
+        (datetime(2026, 8, 11, 0, 30, tzinfo=UTC), None),
+        (datetime(2026, 8, 11, 2, 30, tzinfo=UTC), AllowCurrentSlotAdmission()),
+    ],
+    ids=("advance-booking", "current-slot-supplemental-booking"),
+)
+def test_concurrent_last_seat_creates_one_confirmation_and_one_waiter(
+    now: datetime,
+    load_admission: AllowCurrentSlotAdmission | None,
+) -> None:
     database_url = os.getenv("CAMPUS_TEST_DATABASE_URL")
     if not database_url or not database_url.startswith(("postgresql://", "postgresql+psycopg://")):
         pytest.skip("CAMPUS_TEST_DATABASE_URL must point to an isolated PostgreSQL test database")
@@ -43,11 +59,12 @@ def test_concurrent_last_seat_creates_one_confirmation_and_one_waiter() -> None:
             try:
                 with Session(engine, expire_on_commit=False) as session:
                     barrier.wait(timeout=5)
-                    result = ReservationService(session=session, capacity=1, booking_days=7).reserve(
-                        student_id,
-                        datetime(2026, 8, 11, 2, 0, tzinfo=UTC),
-                        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
-                    )
+                    result = ReservationService(
+                        session=session,
+                        capacity=1,
+                        booking_days=7,
+                        current_slot_load_admission=load_admission,
+                    ).reserve(student_id, datetime(2026, 8, 11, 2, 0, tzinfo=UTC), now=now)
                     results.append(result.status)
             except BaseException as error:  # thread failures must be asserted in the parent
                 errors.append(error)

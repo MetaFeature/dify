@@ -12,7 +12,7 @@ const CAMPUS_API_BASE = '/console/api/campus'
 export class CampusApiError extends Error {
   /**
    * @param {number} status
-   * @param {'bad-request' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'unavailable' | 'network'} code
+   * @param {'bad-request' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'busy' | 'unavailable' | 'network'} code
    */
   constructor(status, code) {
     super(code)
@@ -122,7 +122,7 @@ export class CampusApi {
 
 /**
  * @param {number} status
- * @returns {'bad-request' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'unavailable'}
+ * @returns {'bad-request' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'busy' | 'unavailable'}
  */
 function errorCode(status) {
   if (status === 400)
@@ -135,5 +135,7 @@ function errorCode(status) {
     return 'not-found'
   if (status === 409)
     return 'conflict'
+  if (status === 429)
+    return 'busy'
   return 'unavailable'
 }

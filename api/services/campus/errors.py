@@ -26,6 +26,10 @@ class ReservationWindowError(CampusError):
     pass
 
 
+class CurrentSlotLoadUnavailableError(CampusError):
+    """Raised when an under-capacity current slot fails load admission."""
+
+
 class ReservationNotFoundError(CampusError):
     pass
 

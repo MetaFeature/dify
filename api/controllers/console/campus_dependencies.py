@@ -21,6 +21,7 @@ from services.campus.errors import (
     StudentSuspendedError,
 )
 from services.campus.identity_source import UnconfiguredIdentitySource, VirtualIdentitySource
+from services.campus.load_admission import SystemLoadAdmission
 from services.campus.newapi_client import NewApiClient
 from services.campus.portal_session_service import PortalSessionService
 from services.campus.provisioning_service import PlatformProvisioningService
@@ -63,6 +64,9 @@ def reservation_service() -> ReservationService:
         session=db.session(),
         capacity=dify_config.CAMPUS_RESERVATION_CAPACITY,
         booking_days=dify_config.CAMPUS_BOOKING_DAYS,
+        current_slot_load_admission=SystemLoadAdmission(
+            max_load_per_cpu=dify_config.CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU,
+        ),
     )
 
 

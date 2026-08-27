@@ -185,6 +185,23 @@ wait_for_campus_health() {
   fail "Campus API did not become healthy within 60 seconds"
 }
 
+assert_current_slot_load_signal() {
+  "${COMPOSE[@]}" exec -T api python -c '
+import math
+import os
+
+from configs import dify_config
+
+one_minute_load = os.getloadavg()[0]
+cpu_count = os.cpu_count()
+threshold = dify_config.CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU
+assert cpu_count is not None and cpu_count > 0
+assert math.isfinite(one_minute_load) and one_minute_load >= 0
+assert math.isfinite(threshold) and threshold > 0
+print(f"current_slot_load_per_cpu={one_minute_load / cpu_count:.3f} threshold={threshold:.3f} signal=ready")
+'
+}
+
 assert_portal_root_redirect() {
   local url="$1" status redirect_url
   read -r status redirect_url < <(curl --silent --output /dev/null \
@@ -303,6 +320,7 @@ verify() {
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
+  assert_current_slot_load_signal
   for service in worker worker_beat; do
     assert_service_never_restarted "${service}"
   done

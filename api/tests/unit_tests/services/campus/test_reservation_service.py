@@ -4,8 +4,38 @@ import pytest
 from sqlalchemy.orm import Session
 
 from models.campus import CampusAccessSlot, CampusReservation, CampusStudent, ReservationStatus, StudentStatus
-from services.campus.errors import ActiveReservationExistsError, ReservationWindowError
+from services.campus.errors import (
+    ActiveReservationExistsError,
+    CurrentSlotLoadUnavailableError,
+    ReservationWindowError,
+)
 from services.campus.reservation_service import ReservationService
+
+
+class FixedLoadAdmission:
+    allowed: bool
+
+    def __init__(self, allowed: bool) -> None:
+        self.allowed = allowed
+
+    def allows_current_slot_reservation(self) -> bool:
+        return self.allowed
+
+
+class UnexpectedLoadAdmission:
+    def allows_current_slot_reservation(self) -> bool:
+        raise AssertionError("load admission must not run for a full current slot")
+
+
+class CountingLoadAdmission:
+    calls: int
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def allows_current_slot_reservation(self) -> bool:
+        self.calls += 1
+        return True
 
 
 @pytest.fixture
@@ -22,6 +52,7 @@ def campus_session(sqlite_engine) -> Session:
                 CampusStudent(student_number="20260001", display_name="Student One", status=StudentStatus.ACTIVE),
                 CampusStudent(student_number="20260002", display_name="Student Two", status=StudentStatus.ACTIVE),
                 CampusStudent(student_number="20260003", display_name="Student Three", status=StudentStatus.ACTIVE),
+                CampusStudent(student_number="20260004", display_name="Student Four", status=StudentStatus.ACTIVE),
             ]
         )
         session.commit()
@@ -45,6 +76,171 @@ def test_capacity_overflow_enters_fifo_waitlist(campus_session: Session):
     assert first.status is ReservationStatus.CONFIRMED
     assert second.status is ReservationStatus.WAITLISTED
     assert second.waitlist_position == 1
+
+
+def test_current_slot_supplemental_reservation_grants_immediate_access(campus_session: Session) -> None:
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+
+    reservation = service.reserve(student_id, starts_at, now=now)
+    access = service.access_decision(student_id, now=now)
+
+    assert reservation.status is ReservationStatus.CONFIRMED
+    assert reservation.ends_at == datetime(2026, 8, 11, 4, 0, tzinfo=UTC)
+    assert access.allowed is True
+    assert access.ends_at == reservation.ends_at
+
+
+def test_current_slot_load_rejection_creates_no_claim(campus_session: Session) -> None:
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=False),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+
+    with pytest.raises(CurrentSlotLoadUnavailableError):
+        service.reserve(student_id, starts_at, now=now)
+
+    assert service.list_student_reservations(student_id, now=now) == ()
+
+
+def test_full_current_slot_creates_fifo_waitlist_entry_without_load_admission(campus_session: Session) -> None:
+    service = ReservationService(
+        session=campus_session,
+        capacity=1,
+        booking_days=7,
+        current_slot_load_admission=UnexpectedLoadAdmission(),
+    )
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    service.reserve(
+        _student_id(campus_session, "20260001"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+
+    waiting = service.reserve(
+        _student_id(campus_session, "20260002"),
+        starts_at,
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )
+
+    assert waiting.status is ReservationStatus.WAITLISTED
+    assert waiting.waitlist_position == 1
+
+
+def test_waitlist_retains_fifo_priority_until_current_slot_ends(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    service.reserve(
+        _student_id(campus_session, "20260001"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+    waiting = service.reserve(
+        _student_id(campus_session, "20260002"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+
+    reservations = service.list_student_reservations(
+        _student_id(campus_session, "20260002"),
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )
+
+    assert reservations[0].id == waiting.id
+    assert reservations[0].status is ReservationStatus.WAITLISTED
+    assert reservations[0].waitlist_position == 1
+
+
+def test_existing_waiter_is_admitted_before_a_new_current_slot_request(campus_session: Session) -> None:
+    advance_service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    advance_service.reserve(
+        _student_id(campus_session, "20260001"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+    waiting = advance_service.reserve(
+        _student_id(campus_session, "20260002"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+    slot = campus_session.query(CampusAccessSlot).filter_by(starts_at=datetime(2026, 8, 11, 2, 0)).one()
+    slot.capacity = 2
+    campus_session.commit()
+    current_service = ReservationService(
+        session=campus_session,
+        capacity=2,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+
+    newcomer = current_service.reserve(
+        _student_id(campus_session, "20260003"),
+        starts_at,
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )
+    waiting_result = current_service.list_student_reservations(
+        _student_id(campus_session, "20260002"),
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )[0]
+
+    assert waiting_result.id == waiting.id
+    assert waiting_result.status is ReservationStatus.CONFIRMED
+    assert newcomer.status is ReservationStatus.WAITLISTED
+    assert newcomer.waitlist_position == 1
+
+
+def test_one_load_decision_admits_at_most_one_existing_waiter(campus_session: Session) -> None:
+    advance_service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    for student_number in ("20260001", "20260002", "20260003"):
+        advance_service.reserve(
+            _student_id(campus_session, student_number),
+            starts_at,
+            now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+        )
+    slot = campus_session.query(CampusAccessSlot).filter_by(starts_at=datetime(2026, 8, 11, 2, 0)).one()
+    slot.capacity = 4
+    campus_session.commit()
+    load_admission = CountingLoadAdmission()
+    current_service = ReservationService(
+        session=campus_session,
+        capacity=4,
+        booking_days=7,
+        current_slot_load_admission=load_admission,
+    )
+
+    newcomer = current_service.reserve(
+        _student_id(campus_session, "20260004"),
+        starts_at,
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )
+    second_student = current_service.list_student_reservations(
+        _student_id(campus_session, "20260002"),
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )[0]
+    third_student = current_service.list_student_reservations(
+        _student_id(campus_session, "20260003"),
+        now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+    )[0]
+
+    assert load_admission.calls == 1
+    assert second_student.status is ReservationStatus.CONFIRMED
+    assert third_student.status is ReservationStatus.WAITLISTED
+    assert newcomer.status is ReservationStatus.WAITLISTED
+    assert newcomer.waitlist_position == 2
 
 
 def test_pre_start_cancellation_promotes_first_waiter(campus_session: Session):
@@ -111,7 +307,7 @@ def test_student_can_book_later_slot_after_previous_slot_ends(campus_session: Se
     assert later.status is ReservationStatus.CONFIRMED
 
 
-def test_waitlist_expires_at_slot_start_so_student_can_book_a_later_slot(campus_session: Session):
+def test_waitlist_expires_at_slot_end_so_student_can_book_a_later_slot(campus_session: Session):
     service = ReservationService(session=campus_session, capacity=1, booking_days=7)
     first_student = _student_id(campus_session, "20260001")
     waitlisted_student = _student_id(campus_session, "20260002")
@@ -129,7 +325,7 @@ def test_waitlist_expires_at_slot_start_so_student_can_book_a_later_slot(campus_
     later = service.reserve(
         waitlisted_student,
         datetime(2026, 8, 11, 6, 0, tzinfo=UTC),
-        now=datetime(2026, 8, 11, 2, 1, tzinfo=UTC),
+        now=datetime(2026, 8, 11, 4, 1, tzinfo=UTC),
     )
 
     expired = campus_session.get(CampusReservation, waiting.id)
@@ -138,7 +334,7 @@ def test_waitlist_expires_at_slot_start_so_student_can_book_a_later_slot(campus_
     assert later.status is ReservationStatus.CONFIRMED
 
 
-def test_listing_materializes_waitlist_expiry_at_slot_start(campus_session: Session):
+def test_listing_materializes_waitlist_expiry_at_slot_end(campus_session: Session):
     service = ReservationService(session=campus_session, capacity=1, booking_days=7)
     first_student = _student_id(campus_session, "20260001")
     waitlisted_student = _student_id(campus_session, "20260002")
@@ -146,7 +342,10 @@ def test_listing_materializes_waitlist_expiry_at_slot_start(campus_session: Sess
     service.reserve(first_student, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
     waiting = service.reserve(waitlisted_student, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
 
-    reservations = service.list_student_reservations(waitlisted_student, now=starts_at)
+    reservations = service.list_student_reservations(
+        waitlisted_student,
+        now=datetime(2026, 8, 11, 4, 0, tzinfo=UTC),
+    )
 
     assert reservations[0].status is ReservationStatus.EXPIRED
     stored = campus_session.get(CampusReservation, waiting.id)
@@ -168,13 +367,28 @@ def test_slot_listing_expires_elapsed_waiters_before_counting(campus_session: Se
         now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
     )
 
-    slots = service.list_slots(datetime(2026, 8, 11).date(), now=starts_at)
+    slots = service.list_slots(
+        datetime(2026, 8, 11).date(),
+        now=datetime(2026, 8, 11, 4, 0, tzinfo=UTC),
+    )
 
     matching = next(slot for slot in slots if slot.starts_at == starts_at)
     stored = campus_session.get(CampusReservation, waiting.id)
     assert matching.waitlisted == 0
     assert stored is not None
     assert stored.status is ReservationStatus.EXPIRED
+
+
+def test_slot_listing_keeps_current_slot_reservable_until_its_fixed_end(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+
+    slots = service.list_slots(datetime(2026, 8, 11).date(), now=now)
+
+    by_start = {slot.starts_at: slot for slot in slots}
+    assert by_start[datetime(2026, 8, 11, 0, 0, tzinfo=UTC)].reservable is False
+    assert by_start[datetime(2026, 8, 11, 2, 0, tzinfo=UTC)].reservable is True
+    assert by_start[datetime(2026, 8, 11, 4, 0, tzinfo=UTC)].reservable is True
 
 
 def test_access_is_only_granted_inside_confirmed_slot(campus_session: Session):

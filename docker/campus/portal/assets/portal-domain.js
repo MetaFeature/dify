@@ -2,6 +2,7 @@ const CAMPUS_TIME_ZONE = 'Asia/Shanghai'
 
 /** @typedef {import('./campus-api.js').ReservationStatus} ReservationStatus */
 /** @typedef {{ status: ReservationStatus, starts_at: string }} CancellableReservation */
+/** @typedef {{ starts_at: string, ends_at: string }} TimedSlot */
 
 /**
  * Return the Campus calendar date independently of the browser time zone.
@@ -28,4 +29,11 @@ export function addCampusDays(date, days) {
 export function canCancelReservation(reservation, now) {
   const unfinished = reservation.status === 'confirmed' || reservation.status === 'waitlisted'
   return unfinished && new Date(reservation.starts_at).getTime() > now.getTime()
+}
+
+/** @param {TimedSlot} slot @param {Date} now */
+export function isCurrentAccessSlot(slot, now) {
+  const startsAt = new Date(slot.starts_at).getTime()
+  const endsAt = new Date(slot.ends_at).getTime()
+  return startsAt <= now.getTime() && now.getTime() < endsAt
 }

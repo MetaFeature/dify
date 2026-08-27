@@ -141,6 +141,14 @@ class IdentitySource(Protocol):
     def authenticate(self, subject: str, credential: str) -> StudentIdentity: ...
 
 
+class CurrentSlotLoadAdmission(Protocol):
+    """Decide whether current server load permits one supplemental reservation."""
+
+    def allows_current_slot_reservation(self) -> bool:
+        """Return false when the load threshold is exceeded or the signal is unavailable."""
+        ...
+
+
 class StudentRosterSource(Protocol):
     def load_students(self) -> Iterable[StudentIdentity]: ...
 

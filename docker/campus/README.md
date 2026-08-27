@@ -25,6 +25,11 @@ deployment; a registry mirror is allowed only when it retains that digest.
 - UTC+8 has twelve fixed two-hour slots per day. The rolling seven-day window,
   capacity 500, one unfinished booking, FIFO waitlist, pre-start cancellation,
   promotion, and slot-time access are enforced in the database service.
+- The current in-progress slot accepts a supplemental reservation only while
+  fixed capacity remains and the one-minute system load per logical CPU is at
+  or below `CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU`. Missing or invalid load data
+  fails closed. A full current slot still creates a FIFO waitlist entry, and
+  every current-slot claim ends at the original slot boundary.
 - A zero model allowance blocks gateway calls but does not block Dify access,
   editing, viewing, or export during a confirmed slot.
 - Each student workspace installs the pinned official OpenAI provider plugin

@@ -10,6 +10,7 @@ firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
 credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
+campus_env_example="${DOCKER_DIR}/envs/campus.env.example"
 approved_openai_plugin="$(sed -n '1p' "${approved_plugin_file}")"
 
 [[ -n "${approved_openai_plugin}" ]] || {
@@ -128,6 +129,18 @@ for service in worker worker_beat model-gateway; do
 done
 grep -Fq 'RestartCount' "${manager}" || {
   echo "Campus verification does not reject worker restart loops" >&2
+  exit 1
+}
+grep -Fq 'assert_current_slot_load_signal' "${manager}" || {
+  echo "Campus verification does not prove the current-slot load signal" >&2
+  exit 1
+}
+grep -Fq 'CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU' "${DOCKER_DIR}/docker-compose.campus.yaml" || {
+  echo "Campus API does not receive the current-slot load threshold" >&2
+  exit 1
+}
+grep -Fq 'CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU=' "${campus_env_example}" || {
+  echo "Campus environment example omits the current-slot load threshold" >&2
   exit 1
 }
 grep -Fq '/api/status' "${manager}" || {

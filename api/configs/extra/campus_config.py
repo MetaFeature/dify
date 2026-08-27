@@ -24,6 +24,7 @@ class CampusConfig(BaseSettings):
     CAMPUS_DEFAULT_ALLOWANCE_YUAN: Decimal = Field(default=Decimal(20), ge=Decimal(0))
     CAMPUS_RESERVATION_CAPACITY: int = Field(default=500, ge=1)
     CAMPUS_BOOKING_DAYS: int = Field(default=7, ge=1, le=31)
+    CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU: float = Field(default=1.0, gt=0, le=10)
     CAMPUS_PORTAL_SESSION_TTL_HOURS: int = Field(default=12, ge=1, le=168)
     CAMPUS_PORTAL_COOKIE_NAME: str = Field(default="campus_portal_session", min_length=1, max_length=64)
     CAMPUS_PORTAL_COOKIE_SECURE: bool = Field(default=True)
