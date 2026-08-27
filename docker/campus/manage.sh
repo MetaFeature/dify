@@ -461,7 +461,7 @@ verify_public_firewall() {
   remote_address="$(env_value CAMPUS_PUBLIC_REMOTE_ADDRESS)"
   remote_address="${remote_address:-10.0.0.0/255.0.0.0}"
   windows_script="$(wslpath -w "${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1")"
-  powershell.exe -NoProfile -NonInteractive -File "${windows_script}" \
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}" \
     -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}"
 }
 

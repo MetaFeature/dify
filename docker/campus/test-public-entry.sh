@@ -140,6 +140,10 @@ grep -Fq -- '-Action Verify' "${manager}" || {
   echo "Campus promotion does not enforce the Windows and Hyper-V firewall gate" >&2
   exit 1
 }
+grep -Fq -- '-ExecutionPolicy Bypass' "${manager}" || {
+  echo "Campus firewall verification cannot run the reviewed WSL-hosted PowerShell script" >&2
+  exit 1
+}
 for service in worker worker_beat model-gateway; do
   grep -Fq "${service}" "${manager}" || {
     echo "Campus verification does not cover ${service}" >&2
