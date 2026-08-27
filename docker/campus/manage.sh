@@ -468,7 +468,7 @@ verify_public_firewall() {
 assert_port_owner() {
   local port="$1" expected_container_id="$2"
   local owners=()
-  mapfile -t owners < <(docker ps --quiet --filter "publish=${port}")
+  mapfile -t owners < <(docker ps --no-trunc --quiet --filter "publish=${port}")
   [[ "${#owners[@]}" == "1" && "${owners[0]}" == "${expected_container_id}" ]] || \
     fail "TCP ${port} is not owned exclusively by the expected nginx container"
 }

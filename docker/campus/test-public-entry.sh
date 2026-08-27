@@ -104,6 +104,11 @@ printf '%s\n' "${promote_function}" | grep -Fq 'verify_demo_accounts' || {
   echo "Campus promotion does not enforce the demo-account gate" >&2
   exit 1
 }
+port_owner_function="$(sed -n '/^assert_port_owner() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${port_owner_function}" | grep -Fq 'docker ps --no-trunc --quiet' || {
+  echo "Campus promotion compares a truncated Docker ID with the exact port owner" >&2
+  exit 1
+}
 printf '%s\n' "${verify_function}" | grep -Fq 'verify_public_firewall' || {
   echo "Promoted-state verification does not recheck the firewall boundary" >&2
   exit 1
