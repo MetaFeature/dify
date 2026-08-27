@@ -604,6 +604,7 @@ deploy() {
     backup >/dev/null
   fi
   "${COMPOSE[@]}" up -d --build
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
   verify
 }
 

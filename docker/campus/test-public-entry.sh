@@ -49,6 +49,17 @@ health_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'assert_service_
   exit 1
 }
 
+deploy_function="$(sed -n '/^deploy() {$/,/^}/p' "${manager}")"
+build_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'up -d --build' || true)"
+nginx_recreate_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 -- '--force-recreate nginx' || true)"
+deploy_verify_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'verify' || true)"
+[[ -n "${build_line}" && -n "${nginx_recreate_line}" && -n "${deploy_verify_line}" && \
+   "${build_line%%:*}" -lt "${nginx_recreate_line%%:*}" && \
+   "${nginx_recreate_line%%:*}" -lt "${deploy_verify_line%%:*}" ]] || {
+  echo "Campus deployment must recreate nginx after application containers and before verification" >&2
+  exit 1
+}
+
 [[ -f "${public_overlay}" ]] || {
   echo "Campus public-entry Compose overlay is missing" >&2
   exit 1
