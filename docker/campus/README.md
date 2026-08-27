@@ -47,6 +47,9 @@ roster/SSO data remain outside the implemented boundary.
 2. Copy the normal Dify `.env.example` to `.env`, generate fresh Campus-only
    Dify secrets, then copy `docker/envs/campus.env.example` to
    `docker/envs/campus.env`, set mode `0600`, and replace every placeholder.
+   When rotating `REDIS_PASSWORD`, percent-encode the same value in
+   `CELERY_BROKER_URL`; validation rejects a stale Celery credential before
+   deployment without printing either value.
    Copy the provider package identity from
    `docker/campus/approved-provider-plugin.txt`; this is the single reviewed
    source for `CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER`.
@@ -154,10 +157,11 @@ and can obtain a Dify session only through the portal launch API during an
 active reservation. All workspace APIs remain protected by the authorization
 subrequest after launch.
 
-For the demonstration gate, configure exactly two virtual identities in the
-protected `campus.env`, synchronize those identities through the Campus
-administrator service, and activate two individually named, password-enabled
-Dify accounts as Campus administrators. Run
+For the demonstration gate, configure exactly two virtual identities with the
+`demo` cohort in the protected `campus.env`, synchronize those identities
+through the Campus administrator service, and activate two individually named,
+password-enabled Dify accounts as Campus administrators. Other non-demo roster
+identities remain outside this gate. Run
 `docker/campus/manage.sh verify-demo-accounts` to compare the protected virtual
 roster with active Campus rows, require a successful login for both named
 administrators and a current portal session for both students, and print only

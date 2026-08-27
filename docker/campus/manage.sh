@@ -104,6 +104,7 @@ EOF
 validate() {
   command -v docker >/dev/null || fail "docker is required"
   command -v curl >/dev/null || fail "curl is required"
+  command -v python3 >/dev/null || fail "python3 is required"
   [[ -f "${DOCKER_DIR}/.env" ]] || fail "missing ${DOCKER_DIR}/.env"
   [[ -f "${CAMPUS_ENV_FILE}" ]] || fail "missing ${CAMPUS_ENV_FILE}"
   if grep -Ev '^[[:space:]]*#' "${CAMPUS_ENV_FILE}" | grep -Fq 'change-me'; then
@@ -113,6 +114,8 @@ validate() {
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
   "${COMPOSE[@]}" config --quiet
+  "${COMPOSE[@]}" config --format json | \
+    python3 "${SCRIPT_DIR}/validate_compose_credentials.py"
 }
 
 validate_gateway_bootstrap() {
@@ -477,12 +480,12 @@ verify_demo_accounts() {
   done <<<"${admin_summary}"
   student_count="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
-    "SELECT COUNT(*) FROM campus_students WHERE status=\$\$active\$\$;"')"
+    "SELECT COUNT(*) FROM campus_students WHERE status=\$\$active\$\$ AND cohort=\$\$demo\$\$;"')"
   student_login_count="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
-    "SELECT COUNT(DISTINCT student.id) FROM campus_students student JOIN campus_portal_sessions portal_session ON portal_session.student_id=student.id WHERE student.status=\$\$active\$\$ AND portal_session.revoked_at IS NULL AND portal_session.expires_at > CURRENT_TIMESTAMP;"')"
+    "SELECT COUNT(DISTINCT student.id) FROM campus_students student JOIN campus_portal_sessions portal_session ON portal_session.student_id=student.id WHERE student.status=\$\$active\$\$ AND student.cohort=\$\$demo\$\$ AND portal_session.revoked_at IS NULL AND portal_session.expires_at > CURRENT_TIMESTAMP;"')"
   virtual_count="$("${COMPOSE[@]}" exec -T api python -c \
-    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print(len(rows))')"
+    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print(sum(row.get("cohort") == "demo" for row in rows))')"
   [[ "${admin_count}" == "2" && "${admin_name_count}" == "2" ]] || \
     fail "expected two distinct active administrators with successful logins"
   [[ "${student_count}" == "2" ]] || fail "expected two active demo student identities"
@@ -491,9 +494,9 @@ verify_demo_accounts() {
 
   student_names="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
-    "SELECT student_number || chr(32) || display_name FROM campus_students WHERE status=\$\$active\$\$ ORDER BY student_number;"')"
+    "SELECT student_number || chr(32) || display_name FROM campus_students WHERE status=\$\$active\$\$ AND cohort=\$\$demo\$\$ ORDER BY student_number;"')"
   virtual_names="$("${COMPOSE[@]}" exec -T api python -c \
-    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print("\\n".join(sorted("{0} {1}".format(row.get("student_number"), row.get("display_name")) for row in rows)))')"
+    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print("\\n".join(sorted("{0} {1}".format(row.get("student_number"), row.get("display_name")) for row in rows if row.get("cohort") == "demo")))')"
   [[ "${student_names}" == "${virtual_names}" ]] || fail "active students do not match the protected virtual demo roster"
   printf 'Named administrators:\n%s\nDemo students:\n%s\n' "${admin_names}" "${student_names}"
 }

@@ -8,6 +8,8 @@ upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
+credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
+credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
 approved_openai_plugin="$(sed -n '1p' "${approved_plugin_file}")"
 
 [[ -n "${approved_openai_plugin}" ]] || {
@@ -22,6 +24,15 @@ if grep -Fq "${approved_openai_plugin}" "${manager}"; then
   echo "Campus manager duplicates the approved provider plugin identity" >&2
   exit 1
 fi
+[[ -f "${credential_validator}" && -f "${credential_validator_test}" ]] || {
+  echo "Campus Compose credential validator or its tests are missing" >&2
+  exit 1
+}
+python3 "${credential_validator_test}"
+grep -Fq 'validate_compose_credentials.py' "${manager}" || {
+  echo "Campus validation does not enforce Redis/Celery credential consistency" >&2
+  exit 1
+}
 
 redirect_function="$(sed -n '/^assert_portal_root_redirect() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{redirect_url}\\n'" || {
@@ -95,6 +106,14 @@ grep -Fq 'COUNT(DISTINCT lower(name))' "${manager}" || {
 }
 grep -Fq 'campus_portal_sessions' "${manager}" || {
   echo "Campus demo verification does not prove both student portal logins" >&2
+  exit 1
+}
+[[ "$(grep -F -o 'cohort=\$\$demo\$\$' "${manager}" | wc -l | tr -d ' ')" -ge 3 ]] || {
+  echo "Campus demo verification must scope database checks to the demo cohort" >&2
+  exit 1
+}
+[[ "$(grep -F 'row.get("cohort") == "demo"' "${manager}" | wc -l | tr -d ' ')" -ge 2 ]] || {
+  echo "Campus demo verification must scope protected identities to the demo cohort" >&2
   exit 1
 }
 grep -Fq -- '-Action Verify' "${manager}" || {
