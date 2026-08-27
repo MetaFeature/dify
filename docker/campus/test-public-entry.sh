@@ -42,6 +42,14 @@ printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{
 }
 
 verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${verify_function}" | grep -Fq 'docker port "${container_id}" 80/tcp' || {
+  echo "Campus verification does not inspect every nginx host binding" >&2
+  exit 1
+}
+printf '%s\n' "${verify_function}" | grep -Fq 'actual_bindings' || {
+  echo "Campus verification does not reject additional nginx host bindings" >&2
+  exit 1
+}
 wait_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'wait_for_campus_health')"
 health_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'assert_service_healthy')"
 [[ -n "${wait_line}" && -n "${health_line}" && "${wait_line%%:*}" -lt "${health_line%%:*}" ]] || {

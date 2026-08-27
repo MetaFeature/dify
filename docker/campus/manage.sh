@@ -300,6 +300,7 @@ backup() {
 verify() {
   validate
   local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
+  local actual_bindings expected_bindings
   local public_enabled public_bind public_port upstream_port
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
@@ -337,17 +338,19 @@ verify() {
     require_running_service api_websocket
     assert_service_never_restarted api_websocket
   fi
-  published="$("${COMPOSE[@]}" port nginx 80)"
+  container_id="$("${COMPOSE[@]}" ps -q nginx)"
+  [[ -n "${container_id}" ]] || fail "Campus nginx container is missing"
+  published="$(docker port "${container_id}" 80/tcp)"
   if [[ "${public_enabled}" == "true" ]]; then
-    printf '%s\n' "${published}" | grep -Fxq "${public_bind}:${public_port}" || \
-      fail "Campus public entry is not bound to ${public_bind}:${public_port}"
-    printf '%s\n' "${published}" | grep -Fxq "127.0.0.1:${campus_port}" || \
-      fail "Campus loopback verification route is missing"
+    actual_bindings="$(printf '%s\n' "${published}" | sed '/^$/d' | sort)"
+    expected_bindings="$(printf '%s\n' "${public_bind}:${public_port}" "127.0.0.1:${campus_port}" | sort)"
+    [[ "${actual_bindings}" == "${expected_bindings}" ]] || \
+      fail "Campus public nginx bindings differ from the exact public and loopback set"
   else
     [[ "${published}" == "${campus_bind}:${campus_port}" ]] || \
       fail "Campus Dify bind differs from protected configuration"
   fi
-  published="$("${COMPOSE[@]}" port nginx 8081)"
+  published="$(docker port "${container_id}" 8081/tcp)"
   [[ "${published}" == "127.0.0.1:${admin_port}" ]] || fail "Campus administration listener is not loopback-only"
   nginx_location="$(sed -n '/^[[:space:]]*location ~ /{s/^[[:space:]]*//;p;q;}' \
     "${SCRIPT_DIR}/nginx/default.conf.template")"
