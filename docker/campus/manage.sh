@@ -514,7 +514,7 @@ verify_demo_accounts() {
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
     "SELECT student_number || chr(32) || display_name FROM campus_students WHERE status=\$\$active\$\$ AND cohort=\$\$demo\$\$ ORDER BY student_number;"')"
   virtual_names="$("${COMPOSE[@]}" exec -T api python -c \
-    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print("\\n".join(sorted("{0} {1}".format(row.get("student_number"), row.get("display_name")) for row in rows if row.get("cohort") == "demo")))')"
+    'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print("\n".join(sorted("{0} {1}".format(row.get("student_number"), row.get("display_name")) for row in rows if row.get("cohort") == "demo")))')"
   [[ "${student_names}" == "${virtual_names}" ]] || fail "active students do not match the protected virtual demo roster"
   printf 'Named administrators:\n%s\nDemo students:\n%s\n' "${admin_names}" "${student_names}"
 }

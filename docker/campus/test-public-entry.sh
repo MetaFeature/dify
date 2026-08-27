@@ -128,6 +128,14 @@ grep -Fq 'campus_portal_sessions' "${manager}" || {
   echo "Campus demo verification must scope protected identities to the demo cohort" >&2
   exit 1
 }
+if grep -Fq 'print("\\n".join' "${manager}"; then
+  echo "Campus demo verification uses a literal backslash-n instead of a line separator" >&2
+  exit 1
+fi
+grep -Fq 'print("\n".join' "${manager}" || {
+  echo "Campus demo verification must compare one configured identity per line" >&2
+  exit 1
+}
 grep -Fq -- '-Action Verify' "${manager}" || {
   echo "Campus promotion does not enforce the Windows and Hyper-V firewall gate" >&2
   exit 1
