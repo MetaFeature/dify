@@ -151,11 +151,15 @@ require_running_service() {
 }
 
 assert_service_healthy() {
-  local service="$1" container_id health
+  local service="$1" container_id health attempt
   container_id="$("${COMPOSE[@]}" ps -q "${service}")"
   [[ -n "${container_id}" ]] || fail "${service} container is missing"
-  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${container_id}")"
-  [[ "${health}" == "healthy" ]] || fail "${service} is not healthy"
+  for attempt in {1..30}; do
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${container_id}")"
+    [[ "${health}" == "healthy" ]] && return
+    sleep 2
+  done
+  fail "${service} did not become healthy within 60 seconds"
 }
 
 assert_service_never_restarted() {
