@@ -8,6 +8,8 @@ BACKUP_ROOT="${CAMPUS_BACKUP_ROOT:-${SCRIPT_DIR}/backups}"
 PUBLIC_COMPOSE_FILE="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 UPSTREAM_LOOPBACK_FILE="${SCRIPT_DIR}/upstream-loopback.yaml"
 APPROVED_PROVIDER_PLUGIN_FILE="${SCRIPT_DIR}/approved-provider-plugin.txt"
+BRANDING_LOGO_FILE="${SCRIPT_DIR}/branding/njit-logo.png"
+BRANDING_LOGO_SHA256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"
 
 env_value() {
   local key="$1"
@@ -64,6 +66,26 @@ local_curl() {
   command curl --noproxy '*' "$@"
 }
 
+validate_branding_logo_source() {
+  local actual_sha256
+  command -v sha256sum >/dev/null || fail "sha256sum is required"
+  [[ -f "${BRANDING_LOGO_FILE}" ]] || fail "missing Campus Dify branding logo"
+  actual_sha256="$(sha256sum "${BRANDING_LOGO_FILE}" | awk '{print $1}')"
+  [[ "${actual_sha256}" == "${BRANDING_LOGO_SHA256}" ]] || \
+    fail "Campus Dify branding logo does not match the approved asset"
+}
+
+assert_branding_logo() {
+  local url="$1" content_type actual_sha256
+  content_type="$(local_curl --fail --silent --show-error --max-time 10 \
+    --output /dev/null --write-out '%{content_type}' "${url}")"
+  [[ "${content_type}" == "image/png" ]] || fail "${url} does not serve the Campus Dify logo as PNG"
+  actual_sha256="$(local_curl --fail --silent --show-error --max-time 10 "${url}" | \
+    sha256sum | awk '{print $1}')"
+  [[ "${actual_sha256}" == "${BRANDING_LOGO_SHA256}" ]] || \
+    fail "${url} does not serve the approved Campus Dify logo"
+}
+
 set_env_value() {
   local key="$1" value="$2" env_tmp
   [[ "${key}" =~ ^[A-Z0-9_]+$ ]] || fail "invalid environment key"
@@ -114,6 +136,7 @@ validate() {
   if grep -Ev '^[[:space:]]*#' "${CAMPUS_ENV_FILE}" | grep -Fq 'change-me'; then
     fail "replace all change-me placeholders in the Campus environment file"
   fi
+  validate_branding_logo_source
   validate_gateway_build_images
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
@@ -331,6 +354,8 @@ verify() {
     require_running_service "${service}"
   done
   wait_for_campus_health "${campus_port}"
+  assert_branding_logo "http://127.0.0.1:${campus_port}/logo/logo.svg"
+  assert_branding_logo "http://127.0.0.1:${admin_port}/logo/logo.svg"
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
@@ -627,8 +652,18 @@ deploy() {
   verify
 }
 
+deploy_branding() {
+  local backup_destination
+  validate
+  project_has_state || fail "branding deployment requires an existing Campus project"
+  backup_destination="$(backup)"
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+  verify
+  echo "Campus Dify branding deployed; rollback backup: ${backup_destination}"
+}
+
 usage() {
-  echo "usage: $0 {gateway-up|validate|backup|deploy|verify|verify-demo-accounts|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {gateway-up|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|open-bootstrap|promote|rollback-promotion|stop}" >&2
   exit 2
 }
 
@@ -645,6 +680,7 @@ case "${1:-}" in
   validate) validate ;;
   backup) backup ;;
   deploy) deploy ;;
+  deploy-branding) deploy_branding ;;
   verify) verify ;;
   verify-demo-accounts) verify_demo_accounts ;;
   open-bootstrap) open_bootstrap ;;

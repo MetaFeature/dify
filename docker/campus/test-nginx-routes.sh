@@ -4,8 +4,57 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 template="${SCRIPT_DIR}/nginx/default.conf.template"
 compose_overlay="${SCRIPT_DIR}/../docker-compose.campus.yaml"
+branding_dir="${SCRIPT_DIR}/branding"
+branding_locations="${branding_dir}/logo-locations.conf"
+branding_response="${branding_dir}/logo-response.conf"
+branding_logo="${branding_dir}/njit-logo.png"
+branding_logo_sha256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"
 grep -Eq '^[[:space:]]+volumes: !override$' "${compose_overlay}" || {
   echo "Campus nginx volumes must replace, not merge with, the upstream conf.d directory mount" >&2
+  exit 1
+}
+
+[[ -f "${branding_locations}" && -f "${branding_response}" && -f "${branding_logo}" ]] || {
+  echo "Campus Dify branding assets are missing" >&2
+  exit 1
+}
+actual_branding_logo_sha256="$(sha256sum "${branding_logo}" | awk '{print $1}')"
+[[ "${actual_branding_logo_sha256}" == "${branding_logo_sha256}" ]] || {
+  echo "Campus Dify branding logo does not match the approved user asset" >&2
+  exit 1
+}
+grep -Fq './campus/branding:/etc/nginx/campus-branding:ro' "${compose_overlay}" || {
+  echo "Campus nginx does not mount the branding overlay read-only" >&2
+  exit 1
+}
+[[ "$(grep -Fc 'include /etc/nginx/campus-branding/logo-locations.conf;' "${template}")" == "2" ]] || {
+  echo "Campus and administrator listeners must both include the Dify logo overlay" >&2
+  exit 1
+}
+for logo_path in \
+  /logo/logo.svg \
+  /logo/logo-monochrome-white.svg \
+  /logo/logo-site.png \
+  /logo/logo-site-dark.png \
+  /logo/logo-embedded-chat-avatar.png \
+  /logo/logo-embedded-chat-header.png \
+  /logo/logo-embedded-chat-header@2x.png \
+  /logo/logo-embedded-chat-header@3x.png; do
+  grep -Fq "location = ${logo_path} {" "${branding_locations}" || {
+    echo "Campus Dify branding overlay omits ${logo_path}" >&2
+    exit 1
+  }
+done
+[[ "$(grep -Fc 'include /etc/nginx/campus-branding/logo-response.conf;' "${branding_locations}")" == "8" ]] || {
+  echo "Campus Dify logo routes do not share the reviewed branding response" >&2
+  exit 1
+}
+grep -Fq 'alias /etc/nginx/campus-branding/njit-logo.png;' "${branding_response}" || {
+  echo "Campus Dify logo routes do not serve the approved branding asset" >&2
+  exit 1
+}
+grep -Fq 'default_type image/png;' "${branding_response}" || {
+  echo "Campus Dify logo routes do not declare the PNG media type" >&2
   exit 1
 }
 

@@ -2,6 +2,8 @@ server {
     listen ${NGINX_PORT};
     server_name ${NGINX_SERVER_NAME};
 
+    include /etc/nginx/campus-branding/logo-locations.conf;
+
     location = /_campus_access_check {
       internal;
       proxy_pass http://api:5001/console/api/campus/session/access-check;
@@ -133,6 +135,8 @@ server {
 server {
     listen 8081;
     server_name _;
+
+    include /etc/nginx/campus-branding/logo-locations.conf;
 
     location /console/api {
       proxy_pass http://api:5001;

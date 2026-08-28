@@ -96,6 +96,24 @@ dynamic portal copy is owned by `portal/assets/messages.js`. This is the
 localization boundary for the isolated portal rather than Dify's
 `web/i18n/*` catalogs.
 
+The active Campus route has one user-authorized presentation exception: nginx
+serves `campus/branding/njit-logo.png` in place of the bundled Dify logo assets
+for both the gated Campus listener and the loopback-only administrator
+listener. The source asset is digest-pinned and mounted read-only; the stock
+Dify web image and the `dify-mian-20260725` rollback deployment remain
+unchanged. Apply only this overlay to an existing Campus project with:
+
+```sh
+docker/campus/manage.sh deploy-branding
+```
+
+The command validates the asset and Compose configuration, creates a protected
+backup, recreates only Campus nginx, and verifies the live logo bytes together
+with the normal Campus runtime gates. It prints the protected rollback-backup
+directory after success. To roll back the presentation exception, restore the
+prior tracked Campus configuration and run the same command; do not change the
+upstream rollback project or any persistent volume.
+
 Use an SSH tunnel to the host-loopback administration listener at
 `127.0.0.1:18081` while creating the initial Dify administrators. Do not bind
 the Campus route to a campus interface until setup

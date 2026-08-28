@@ -56,6 +56,24 @@ printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
   exit 1
 }
 
+grep -Fq 'BRANDING_LOGO_SHA256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"' \
+  "${manager}" || {
+  echo "Campus validation does not pin the approved Dify branding asset" >&2
+  exit 1
+}
+branding_source_function="$(sed -n '/^validate_branding_logo_source() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${branding_source_function}" | grep -Fq 'sha256sum' || {
+  echo "Campus validation does not verify the Dify branding source digest" >&2
+  exit 1
+}
+branding_response_function="$(sed -n '/^assert_branding_logo() {$/,/^}/p' "${manager}")"
+for contract in local_curl '%{content_type}' sha256sum BRANDING_LOGO_SHA256; do
+  printf '%s\n' "${branding_response_function}" | grep -Fq "${contract}" || {
+    echo "Campus runtime verification does not enforce Dify logo contract: ${contract}" >&2
+    exit 1
+  }
+done
+
 verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${verify_function}" | grep -Fq 'docker port "${container_id}" 80/tcp' || {
   echo "Campus verification does not inspect every nginx host binding" >&2
@@ -71,6 +89,14 @@ health_line="$(printf '%s\n' "${verify_function}" | grep -n -m1 'assert_service_
   echo "Campus verification must wait for API health before asserting container health" >&2
   exit 1
 }
+for logo_url in \
+  'http://127.0.0.1:${campus_port}/logo/logo.svg' \
+  'http://127.0.0.1:${admin_port}/logo/logo.svg'; do
+  printf '%s\n' "${verify_function}" | grep -Fq "${logo_url}" || {
+    echo "Campus verification does not check Dify branding at ${logo_url}" >&2
+    exit 1
+  }
+done
 
 deploy_function="$(sed -n '/^deploy() {$/,/^}/p' "${manager}")"
 build_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'up -d --build' || true)"
@@ -80,6 +106,21 @@ deploy_verify_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'verify' 
    "${build_line%%:*}" -lt "${nginx_recreate_line%%:*}" && \
    "${nginx_recreate_line%%:*}" -lt "${deploy_verify_line%%:*}" ]] || {
   echo "Campus deployment must recreate nginx after application containers and before verification" >&2
+  exit 1
+}
+
+grep -Eq '^[[:space:]]*deploy-branding\)' "${manager}" || {
+  echo "Campus manager does not expose scoped Dify branding deployment" >&2
+  exit 1
+}
+deploy_branding_function="$(sed -n '/^deploy_branding() {$/,/^}/p' "${manager}")"
+branding_backup_line="$(printf '%s\n' "${deploy_branding_function}" | grep -n -m1 'backup' || true)"
+branding_recreate_line="$(printf '%s\n' "${deploy_branding_function}" | grep -n -m1 -- '--force-recreate nginx' || true)"
+branding_verify_line="$(printf '%s\n' "${deploy_branding_function}" | grep -n -m1 'verify' || true)"
+[[ -n "${branding_backup_line}" && -n "${branding_recreate_line}" && -n "${branding_verify_line}" && \
+   "${branding_backup_line%%:*}" -lt "${branding_recreate_line%%:*}" && \
+   "${branding_recreate_line%%:*}" -lt "${branding_verify_line%%:*}" ]] || {
+  echo "Campus branding deployment must back up, recreate only nginx, then verify" >&2
   exit 1
 }
 
