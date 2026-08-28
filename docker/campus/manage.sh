@@ -8,8 +8,9 @@ BACKUP_ROOT="${CAMPUS_BACKUP_ROOT:-${SCRIPT_DIR}/backups}"
 PUBLIC_COMPOSE_FILE="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 UPSTREAM_LOOPBACK_FILE="${SCRIPT_DIR}/upstream-loopback.yaml"
 APPROVED_PROVIDER_PLUGIN_FILE="${SCRIPT_DIR}/approved-provider-plugin.txt"
-BRANDING_LOGO_FILE="${SCRIPT_DIR}/branding/njit-logo.png"
-BRANDING_LOGO_SHA256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"
+BRANDING_DIR="${SCRIPT_DIR}/branding"
+BRANDING_LOGO_FILE="${BRANDING_DIR}/njit-logo.png"
+BRANDING_LOGO_MANIFEST="${BRANDING_DIR}/SHA256SUMS"
 
 env_value() {
   local key="$1"
@@ -66,23 +67,32 @@ local_curl() {
   command curl --noproxy '*' "$@"
 }
 
+branding_logo_sha256() {
+  awk '$2 == "njit-logo.png" && length($1) == 64 { print $1; exit }' \
+    "${BRANDING_LOGO_MANIFEST}"
+}
+
 validate_branding_logo_source() {
-  local actual_sha256
+  local expected_sha256 actual_sha256
   command -v sha256sum >/dev/null || fail "sha256sum is required"
   [[ -f "${BRANDING_LOGO_FILE}" ]] || fail "missing Campus Dify branding logo"
+  [[ -f "${BRANDING_LOGO_MANIFEST}" ]] || fail "missing Campus Dify branding manifest"
+  expected_sha256="$(branding_logo_sha256)"
+  [[ "${expected_sha256}" =~ ^[0-9a-f]{64}$ ]] || fail "invalid Campus Dify branding manifest"
   actual_sha256="$(sha256sum "${BRANDING_LOGO_FILE}" | awk '{print $1}')"
-  [[ "${actual_sha256}" == "${BRANDING_LOGO_SHA256}" ]] || \
+  [[ "${actual_sha256}" == "${expected_sha256}" ]] || \
     fail "Campus Dify branding logo does not match the approved asset"
 }
 
 assert_branding_logo() {
-  local url="$1" content_type actual_sha256
+  local url="$1" content_type expected_sha256 actual_sha256
   content_type="$(local_curl --fail --silent --show-error --max-time 10 \
     --output /dev/null --write-out '%{content_type}' "${url}")"
   [[ "${content_type}" == "image/png" ]] || fail "${url} does not serve the Campus Dify logo as PNG"
+  expected_sha256="$(branding_logo_sha256)"
   actual_sha256="$(local_curl --fail --silent --show-error --max-time 10 "${url}" | \
     sha256sum | awk '{print $1}')"
-  [[ "${actual_sha256}" == "${BRANDING_LOGO_SHA256}" ]] || \
+  [[ "${actual_sha256}" == "${expected_sha256}" ]] || \
     fail "${url} does not serve the approved Campus Dify logo"
 }
 

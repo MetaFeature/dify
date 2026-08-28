@@ -56,18 +56,19 @@ printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
   exit 1
 }
 
-grep -Fq 'BRANDING_LOGO_SHA256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"' \
-  "${manager}" || {
-  echo "Campus validation does not pin the approved Dify branding asset" >&2
+grep -Fq 'BRANDING_LOGO_MANIFEST=' "${manager}" || {
+  echo "Campus validation does not consume the approved Dify branding manifest" >&2
   exit 1
 }
 branding_source_function="$(sed -n '/^validate_branding_logo_source() {$/,/^}/p' "${manager}")"
-printf '%s\n' "${branding_source_function}" | grep -Fq 'sha256sum' || {
-  echo "Campus validation does not verify the Dify branding source digest" >&2
-  exit 1
-}
+for contract in sha256sum BRANDING_LOGO_MANIFEST branding_logo_sha256; do
+  printf '%s\n' "${branding_source_function}" | grep -Fq "${contract}" || {
+    echo "Campus validation does not verify the Dify branding source contract: ${contract}" >&2
+    exit 1
+  }
+done
 branding_response_function="$(sed -n '/^assert_branding_logo() {$/,/^}/p' "${manager}")"
-for contract in local_curl '%{content_type}' sha256sum BRANDING_LOGO_SHA256; do
+for contract in local_curl '%{content_type}' sha256sum branding_logo_sha256; do
   printf '%s\n' "${branding_response_function}" | grep -Fq "${contract}" || {
     echo "Campus runtime verification does not enforce Dify logo contract: ${contract}" >&2
     exit 1

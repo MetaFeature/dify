@@ -8,18 +8,18 @@ branding_dir="${SCRIPT_DIR}/branding"
 branding_locations="${branding_dir}/logo-locations.conf"
 branding_response="${branding_dir}/logo-response.conf"
 branding_logo="${branding_dir}/njit-logo.png"
-branding_logo_sha256="47ff48489c56a59aac4c867585eb16a441d2e29c0a3c17259bf80e89619eb35f"
+branding_manifest="${branding_dir}/SHA256SUMS"
 grep -Eq '^[[:space:]]+volumes: !override$' "${compose_overlay}" || {
   echo "Campus nginx volumes must replace, not merge with, the upstream conf.d directory mount" >&2
   exit 1
 }
 
-[[ -f "${branding_locations}" && -f "${branding_response}" && -f "${branding_logo}" ]] || {
+[[ -f "${branding_locations}" && -f "${branding_response}" && -f "${branding_logo}" && \
+   -f "${branding_manifest}" ]] || {
   echo "Campus Dify branding assets are missing" >&2
   exit 1
 }
-actual_branding_logo_sha256="$(sha256sum "${branding_logo}" | awk '{print $1}')"
-[[ "${actual_branding_logo_sha256}" == "${branding_logo_sha256}" ]] || {
+(cd "${branding_dir}" && sha256sum --check --status "$(basename -- "${branding_manifest}")") || {
   echo "Campus Dify branding logo does not match the approved user asset" >&2
   exit 1
 }
