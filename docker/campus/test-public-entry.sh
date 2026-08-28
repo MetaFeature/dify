@@ -98,6 +98,16 @@ for logo_url in \
     exit 1
   }
 done
+if [[ "${verify_function}" != *'assert_portal_root_redirect'*\
+'http://127.0.0.1:${campus_port}/signin?redirect_url=%2F'* ]]; then
+  echo "Campus verification does not exercise the post-logout student redirect" >&2
+  exit 1
+fi
+printf '%s\n' "${verify_function}" | \
+  grep -Fq 'http://127.0.0.1:${admin_port}/signin' || {
+  echo "Campus verification does not exercise the administrator sign-in page" >&2
+  exit 1
+}
 
 deploy_function="$(sed -n '/^deploy() {$/,/^}/p' "${manager}")"
 build_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'up -d --build' || true)"

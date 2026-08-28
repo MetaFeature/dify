@@ -39,6 +39,10 @@ server {
       return 302 /portal/;
     }
 
+    location = /signin {
+      return 302 /portal/;
+    }
+
     # Student authentication is available only through the Access portal.
     # Named administrators use the host-loopback-only listener below.
     location ~ ^/(activate|forgot-password|reset-password|signin|signup)(/|$) {

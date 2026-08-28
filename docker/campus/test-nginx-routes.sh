@@ -86,6 +86,12 @@ printf '%s\n' "${portal_entry_location}" | grep -Fq 'return 302 /portal/;' || {
   exit 1
 }
 
+signin_location="$(sed -n '/^[[:space:]]*location = \/signin {$/,/^[[:space:]]*}/p' "${template}")"
+printf '%s\n' "${signin_location}" | grep -Fq 'return 302 /portal/;' || {
+  echo "Post-logout Campus sign-in does not return students to the Access portal" >&2
+  exit 1
+}
+
 grep -Eq '^[[:space:]]{2}portal:$' "${compose_overlay}" || {
   echo "Campus Compose does not define the Access portal container" >&2
   exit 1
@@ -126,7 +132,7 @@ sed -n '/^[[:space:]]*location \/console\/api {$/,/^[[:space:]]*}/p' "${template
   }
 
 for route in \
-  /signin \
+  /signin/check-code \
   /signup \
   /console/api/login \
   /console/api/email-code-login \

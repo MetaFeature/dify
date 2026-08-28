@@ -84,11 +84,13 @@ credentials or durable business state and is attached only to the internal
 network, so browsers call `/console/api/campus/*` with same-origin cookies while
 the portal container has no host port and no direct API-network access.
 
-The campus-facing listener blocks stock Dify sign-in, signup, password-reset,
-activation, and login APIs. Named administrators use the separate
-host-loopback-only listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally
-through an SSH tunnel). This preserves the upstream administration surface
-without exposing a second student authentication path.
+The campus-facing listener sends the exact stock Dify `/signin` route back to
+`/portal/` so upstream logout cannot strand a student on an unavailable page.
+It continues to block nested sign-in routes, signup, password-reset, activation,
+and login APIs. Named administrators use the separate host-loopback-only
+listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally through an SSH
+tunnel). This preserves the upstream administration surface without exposing a
+second student authentication path.
 
 The portal is intentionally a Chinese-only, framework-independent static
 surface. It does not modify or import the upstream Dify `web/` application;

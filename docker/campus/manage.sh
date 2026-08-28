@@ -411,9 +411,12 @@ verify() {
       fail "upstream Dify rollback route is not loopback-only"
   fi
 
+  assert_portal_root_redirect \
+    "http://127.0.0.1:${campus_port}/signin?redirect_url=%2F"
+
   status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
-    "http://127.0.0.1:${campus_port}/signin")"
-  [[ "${status}" == "404" ]] || fail "public Dify sign-in route was not blocked (HTTP ${status})"
+    "http://127.0.0.1:${admin_port}/signin")"
+  [[ "${status}" == "200" ]] || fail "Campus administrator sign-in is unavailable (HTTP ${status})"
 
   container_id="$("${COMPOSE[@]}" ps -q portal)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
