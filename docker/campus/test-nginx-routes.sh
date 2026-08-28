@@ -131,13 +131,36 @@ sed -n '/^[[:space:]]*location \/console\/api {$/,/^[[:space:]]*}/p' "${template
     exit 1
   }
 
+blocked_auth_patterns="$(awk '
+  /^[[:space:]]*location ~ / {
+    pattern = $0
+    sub(/^[[:space:]]*location ~ /, "", pattern)
+    sub(/[[:space:]]*\{[[:space:]]*$/, "", pattern)
+    in_location = 1
+    next
+  }
+  in_location && /return 404;/ { print pattern }
+  in_location && /^[[:space:]]*}/ { in_location = 0 }
+' "${template}")"
+[[ -n "${blocked_auth_patterns}" ]] || {
+  echo "Campus nginx does not define blocked student authentication routes" >&2
+  exit 1
+}
+
 for route in \
   /signin/check-code \
   /signup \
   /console/api/login \
   /console/api/email-code-login \
   /console/api/oauth/login/github; do
-  printf '%s\n' "${route}" | grep -Eq '^/(activate|forgot-password|reset-password|signin|signup)(/|$)|^/console/api/(activate|email-code-login|forgot-password|login|oauth/(authorize|login)|reset-password)(/|$)' || {
+  route_is_blocked=false
+  while IFS= read -r blocked_auth_pattern; do
+    if printf '%s\n' "${route}" | grep -Eq "${blocked_auth_pattern}"; then
+      route_is_blocked=true
+      break
+    fi
+  done <<<"${blocked_auth_patterns}"
+  [[ "${route_is_blocked}" == "true" ]] || {
     echo "student Dify authentication route is not blocked: ${route}" >&2
     exit 1
   }

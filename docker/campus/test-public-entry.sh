@@ -108,6 +108,11 @@ printf '%s\n' "${verify_function}" | \
   echo "Campus verification does not exercise the administrator sign-in page" >&2
   exit 1
 }
+if [[ "${verify_function}" != *'for blocked_route in /signin/check-code /console/api/login'*\
+'http://127.0.0.1:${campus_port}${blocked_route}'* ]]; then
+  echo "Campus verification does not exercise blocked student authentication routes" >&2
+  exit 1
+fi
 
 deploy_function="$(sed -n '/^deploy() {$/,/^}/p' "${manager}")"
 build_line="$(printf '%s\n' "${deploy_function}" | grep -n -m1 'up -d --build' || true)"

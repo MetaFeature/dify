@@ -337,7 +337,7 @@ backup() {
 verify() {
   validate
   local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
-  local actual_bindings expected_bindings
+  local actual_bindings blocked_route expected_bindings
   local public_enabled public_bind public_port upstream_port
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
@@ -417,6 +417,13 @@ verify() {
   status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${admin_port}/signin")"
   [[ "${status}" == "200" ]] || fail "Campus administrator sign-in is unavailable (HTTP ${status})"
+
+  for blocked_route in /signin/check-code /console/api/login; do
+    status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+      "http://127.0.0.1:${campus_port}${blocked_route}")"
+    [[ "${status}" == "404" ]] || \
+      fail "student Dify authentication route is not blocked: ${blocked_route} (HTTP ${status})"
+  done
 
   container_id="$("${COMPOSE[@]}" ps -q portal)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
