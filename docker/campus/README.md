@@ -111,8 +111,10 @@ The command validates the asset and Compose configuration, creates a protected
 backup, recreates only Campus nginx, and verifies the live logo bytes together
 with the normal Campus runtime gates. It prints the protected rollback-backup
 directory after success. To roll back the presentation exception, restore the
-prior tracked Campus configuration and run the same command; do not change the
-upstream rollback project or any persistent volume.
+pre-change tracked Campus source backup and run the restored manager's full
+`deploy` command; the earlier manager does not contain `deploy-branding`. This
+recreates and verifies the prior Campus configuration without changing the
+upstream rollback project or deleting any persistent volume.
 
 Use an SSH tunnel to the host-loopback administration listener at
 `127.0.0.1:18081` while creating the initial Dify administrators. Do not bind
