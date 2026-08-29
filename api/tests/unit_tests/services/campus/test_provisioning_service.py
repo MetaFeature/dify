@@ -15,7 +15,7 @@ from models.campus import (
     StudentStatus,
 )
 from services.campus.domain import ManagedGatewayToken, ProvisionedWorkspace
-from services.campus.errors import CampusProvisioningError, StudentSuspendedError
+from services.campus.errors import CampusProvisioningError, CampusProvisioningLockError, StudentSuspendedError
 from services.campus.provisioning_service import PlatformProvisioningService
 
 
@@ -157,59 +157,80 @@ def test_provisioning_translates_a_concurrent_binding_uniqueness_failure(
     assert isinstance(raised.value.__cause__, IntegrityError)
 
 
-def test_postgresql_provisioning_lock_survives_service_commits() -> None:
-    statements: list[str] = []
+class RecordingLockConnection:
+    def __init__(self, events: list[str], *, release_result: int = 1, release_error: Exception | None = None) -> None:
+        self.events = events
+        self.release_result = release_result
+        self.release_error = release_error
+        self.invalidated = False
 
-    class LockTransaction:
-        active = False
+    def __enter__(self):
+        return self
 
-        def __enter__(self):
-            self.active = True
-            return self
+    def __exit__(self, *_: object) -> None:
+        return None
 
-        def __exit__(self, *_: object) -> None:
-            self.active = False
+    def execute(self, statement, parameters) -> None:
+        self.events.append(str(statement))
 
-    class LockConnection:
-        def __init__(self) -> None:
-            self.transaction = LockTransaction()
+    def scalar(self, statement, parameters) -> int:
+        rendered = str(statement)
+        self.events.append(rendered)
+        if "RELEASE" in rendered:
+            if self.release_error is not None:
+                raise self.release_error
+            return self.release_result
+        return 1
 
-        def __enter__(self):
-            return self
+    def commit(self) -> None:
+        self.events.append("lock.commit")
 
-        def __exit__(self, *_: object) -> None:
-            return None
+    def invalidate(self) -> None:
+        self.invalidated = True
+        self.events.append("lock.invalidate")
 
-        def begin(self) -> LockTransaction:
-            return self.transaction
 
-        def execute(self, statement, parameters) -> None:
-            statements.append(str(statement))
+class RecordingLockEngine:
+    def __init__(
+        self,
+        dialect: str,
+        events: list[str],
+        *,
+        release_result: int = 1,
+        release_error: Exception | None = None,
+    ) -> None:
+        self.dialect = SimpleNamespace(name=dialect)
+        self.connection = RecordingLockConnection(
+            events,
+            release_result=release_result,
+            release_error=release_error,
+        )
 
-    class LockEngine:
-        dialect = SimpleNamespace(name="postgresql")
+    def connect(self) -> RecordingLockConnection:
+        return self.connection
 
-        def __init__(self) -> None:
-            self.connection = LockConnection()
 
-        def connect(self) -> LockConnection:
-            return self.connection
+class RecordingSession:
+    def __init__(self, engine: RecordingLockEngine, events: list[str]) -> None:
+        self.engine = engine
+        self.bind = engine
+        self.events = events
+        self.commits = 0
+        self.rollbacks = 0
 
-    class CommittingSession:
-        def __init__(self) -> None:
-            self.engine = LockEngine()
-            self.commits = 0
+    def get_bind(self):
+        return self.engine
 
-        def get_bind(self) -> LockEngine:
-            return self.engine
+    def commit(self) -> None:
+        self.commits += 1
+        self.events.append("session.commit")
 
-        def commit(self) -> None:
-            self.commits += 1
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        self.events.append("session.rollback")
 
-        def rollback(self) -> None:
-            return None
 
-    session = CommittingSession()
+def _recording_lock_service(session: RecordingSession) -> PlatformProvisioningService:
     service = PlatformProvisioningService(
         session=cast(Session, session),
         workspace_provisioner=FakeWorkspaceProvisioner(),
@@ -217,16 +238,71 @@ def test_postgresql_provisioning_lock_survives_service_commits() -> None:
         model_configurator=FakeModelConfigurator(calls=[]),
         quota_units_per_usd=100,
     )
+    return service
+
+
+def test_postgresql_provisioning_lock_pins_the_session_connection_across_commits() -> None:
+    events: list[str] = []
+    engine = RecordingLockEngine("postgresql", events)
+    session = RecordingSession(engine, events)
+    service = _recording_lock_service(session)
 
     with service._provisioning_lock("student-1"):
-        self_transaction = session.engine.connection.transaction
-        assert self_transaction.active is True
+        assert session.bind is engine.connection
         session.commit()
-        assert self_transaction.active is True
+        assert session.bind is engine.connection
 
-    assert session.commits == 1
-    assert session.engine.connection.transaction.active is False
-    assert statements == ["SELECT pg_advisory_xact_lock(:key)"]
+    assert session.bind is engine
+    assert session.rollbacks == 1
+    assert session.commits == 2
+    assert events == [
+        "session.rollback",
+        "SELECT pg_advisory_lock(:key)",
+        "lock.commit",
+        "session.commit",
+        "session.commit",
+        "SELECT pg_advisory_unlock(:key)",
+        "lock.commit",
+    ]
+
+
+def test_mysql_provisioning_lock_starts_after_the_caller_snapshot() -> None:
+    events: list[str] = []
+    engine = RecordingLockEngine("mysql", events)
+    session = RecordingSession(engine, events)
+    service = _recording_lock_service(session)
+
+    with service._provisioning_lock("student-1"):
+        assert session.bind is engine.connection
+
+    assert events[0] == "session.rollback"
+    assert "SELECT GET_LOCK(:key, 30)" in events
+    assert "SELECT RELEASE_LOCK(:key)" in events
+    assert engine.connection.invalidated is False
+
+
+def test_mysql_failed_unlock_invalidates_the_pooled_connection() -> None:
+    events: list[str] = []
+    engine = RecordingLockEngine("mysql", events, release_result=0)
+    service = _recording_lock_service(RecordingSession(engine, events))
+
+    with pytest.raises(CampusProvisioningLockError, match="could not release"):
+        with service._provisioning_lock("student-1"):
+            pass
+
+    assert engine.connection.invalidated is True
+
+
+def test_mysql_unlock_error_preserves_the_body_error_and_invalidates_connection() -> None:
+    events: list[str] = []
+    engine = RecordingLockEngine("mysql", events, release_error=RuntimeError("database unavailable"))
+    service = _recording_lock_service(RecordingSession(engine, events))
+
+    with pytest.raises(ValueError, match="provisioning failed"):
+        with service._provisioning_lock("student-1"):
+            raise ValueError("provisioning failed")
+
+    assert engine.connection.invalidated is True
 
 
 def test_gateway_token_is_compensated_when_dify_configuration_fails(campus_session: Session):
