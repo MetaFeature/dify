@@ -139,3 +139,35 @@ def test_administrators_can_read_one_chapter_with_its_body() -> None:
     source = inspect.getsource(campus_admin.CampusAdminLabManualChapterApi)
     assert "def get(" in source
     assert "body_html" in source
+
+
+def test_manual_images_are_uploaded_by_administrators_and_served_to_students() -> None:
+    assert "/campus/admin/lab-manuals/<string:track>/images" in _routes()
+    assert "/campus/lab-manuals/images/<string:image_id>" in _routes()
+
+
+def test_served_images_cannot_act_as_documents() -> None:
+    # An image route that echoes caller-supplied bytes is a stored-content
+    # channel; the headers are what stop a browser from treating one as a page.
+    import inspect
+
+    from controllers.console import campus
+
+    source = inspect.getsource(campus.CampusLabManualImageApi)
+
+    assert "X-Content-Type-Options" in source
+    assert "nosniff" in source
+    assert "Content-Security-Policy" in source
+    assert "sandbox" in source
+
+
+def test_image_upload_is_administrator_only_and_attributed() -> None:
+    import inspect
+
+    from controllers.console import campus_admin
+
+    source = inspect.getsource(campus_admin.CampusAdminLabManualImageApi)
+
+    assert "require_admin(current_user)" in source
+    assert "@login_required" in source
+    assert "actor_account_id=current_user.id" in source

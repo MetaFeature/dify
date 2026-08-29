@@ -78,3 +78,19 @@ test('chapter titles reach the table escaped', () => {
   assert.match(body, /escapeHtml\(chapter\.title\)/)
   assert.doesNotMatch(body, /\$\{chapter\.title\}/)
 })
+
+test('images are uploaded to the platform, because remote ones are blocked', () => {
+  const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
+
+  assert.match(panel, /id="manual-image"/)
+  assert.match(panel, /accept="image\/png,image\/jpeg,image\/gif,image\/webp"/)
+  assert.doesNotMatch(panel, /image\/svg/)
+})
+
+test('an uploaded image is referenced by the url the platform returned', () => {
+  const handler = script.slice(script.indexOf("elements.manualImage.addEventListener('change'"))
+  const body = handler.slice(0, handler.indexOf('\n})'))
+
+  assert.match(body, /uploaded\.url/)
+  assert.match(body, /escapeHtml\(alt\)/)
+})

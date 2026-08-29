@@ -528,3 +528,31 @@ def _chapter_error(error: CampusValidationError) -> Exception:
     if "was not found" in str(error):
         return NotFound(str(error))
     return BadRequest(str(error))
+
+
+@console_ns.route("/campus/admin/lab-manuals/<string:track>/images")
+class CampusAdminLabManualImageApi(Resource):
+    @setup_required
+    @login_required
+    @with_current_user
+    def post(self, current_user: Account, track: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        upload = request.files.get("file")
+        if upload is None:
+            raise BadRequest("An image file is required")
+        try:
+            uploaded = lab_manuals().add_image(
+                _track_or_404(track),
+                data=upload.read(),
+                mime_type=upload.mimetype or "",
+                actor_account_id=current_user.id,
+            )
+        except CampusValidationError as error:
+            raise BadRequest(str(error)) from error
+        return {
+            "id": uploaded.id,
+            "url": uploaded.url,
+            "mime_type": uploaded.mime_type,
+            "size_bytes": uploaded.size_bytes,
+        }, 201

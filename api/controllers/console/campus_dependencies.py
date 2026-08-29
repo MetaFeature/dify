@@ -7,6 +7,7 @@ from werkzeug.exceptions import Forbidden, NotFound, Unauthorized
 
 from configs import dify_config
 from extensions.ext_database import db
+from extensions.ext_storage import storage
 from models import Account
 from models.campus import CampusStudent
 from services.campus.administrator_service import AdministratorService
@@ -68,7 +69,7 @@ def identity_source() -> IdentitySource:
 
 
 def lab_manuals() -> LabManualService:
-    return LabManualService(session=db.session())
+    return LabManualService(session=db.session(), storage=storage)
 
 
 def newapi_client() -> NewApiClient:

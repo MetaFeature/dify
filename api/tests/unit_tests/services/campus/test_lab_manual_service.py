@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from models.campus import (
     CampusAuditEvent,
     CampusLabManualChapter,
+    CampusLabManualImage,
     ExperimentTrack,
     LabManualChapterStatus,
 )
@@ -216,3 +217,124 @@ def test_one_chapter_can_be_read_back_by_id(manuals: LabManualService) -> None:
     assert manuals.chapter(created.id).title == "装环境"
     with pytest.raises(CampusValidationError, match="chapter was not found"):
         manuals.chapter("00000000-0000-0000-0000-000000000000")
+
+
+class FakeStorage:
+    """Stands in for the Dify storage extension."""
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+
+    def save(self, filename: str, data: bytes) -> None:
+        self.files[filename] = data
+
+    def load_once(self, filename: str) -> bytes:
+        return self.files[filename]
+
+    def delete(self, filename: str) -> None:
+        self.files.pop(filename, None)
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
+GIF = b"GIF89a" + b"0" * 64
+WEBP = b"RIFF" + b"0" * 64
+
+#: Real leading bytes per type, because the service checks them.
+IMAGE_BYTES = {"image/png": PNG, "image/jpeg": JPEG, "image/gif": GIF, "image/webp": WEBP}
+
+
+@pytest.fixture
+def image_session(sqlite_engine) -> Session:
+    CampusLabManualChapter.metadata.create_all(
+        sqlite_engine,
+        tables=[CampusLabManualChapter.__table__, CampusLabManualImage.__table__, CampusAuditEvent.__table__],
+    )
+    with Session(sqlite_engine, expire_on_commit=False) as session:
+        yield session
+
+
+@pytest.fixture
+def images(image_session: Session) -> tuple[LabManualService, FakeStorage]:
+    storage = FakeStorage()
+    return LabManualService(session=image_session, storage=storage), storage
+
+
+def test_an_uploaded_image_is_stored_and_addressed_by_a_same_origin_url(images) -> None:
+    manuals, storage = images
+
+    uploaded = manuals.add_image(TRACK, data=PNG, mime_type="image/png", actor_account_id="admin-1")
+
+    assert uploaded.url == f"/console/api/campus/lab-manuals/images/{uploaded.id}"
+    assert uploaded.url.startswith("/"), "img-src is 'self', so the URL must be same-origin"
+    assert len(storage.files) == 1
+
+
+def test_an_uploaded_image_can_be_read_back(images) -> None:
+    manuals, _ = images
+    uploaded = manuals.add_image(TRACK, data=PNG, mime_type="image/png")
+
+    found = manuals.image(uploaded.id)
+
+    assert found.data == PNG
+    assert found.mime_type == "image/png"
+
+
+def test_reading_an_image_that_does_not_exist_fails_clearly(images) -> None:
+    manuals, _ = images
+
+    with pytest.raises(CampusValidationError, match="image was not found"):
+        manuals.image("00000000-0000-0000-0000-000000000000")
+
+
+@pytest.mark.parametrize("mime_type", ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"])
+def test_only_raster_image_types_are_accepted(images, mime_type: str) -> None:
+    # SVG is a document that can carry script, so it is not an image for this
+    # purpose even though browsers render it as one.
+    manuals, _ = images
+
+    if mime_type == "image/svg+xml":
+        with pytest.raises(CampusValidationError, match="image type"):
+            manuals.add_image(TRACK, data=b"<svg onload='x()'></svg>", mime_type=mime_type)
+    else:
+        assert manuals.add_image(TRACK, data=IMAGE_BYTES[mime_type], mime_type=mime_type).id
+
+
+def test_a_declared_type_that_the_bytes_contradict_is_rejected(images) -> None:
+    # The declared content type is caller-supplied; the magic bytes are not.
+    manuals, _ = images
+
+    with pytest.raises(CampusValidationError, match="does not match"):
+        manuals.add_image(TRACK, data=JPEG, mime_type="image/png")
+
+
+def test_an_oversized_image_is_rejected(images) -> None:
+    manuals, _ = images
+
+    with pytest.raises(CampusValidationError, match="larger than"):
+        manuals.add_image(TRACK, data=PNG + b"0" * (5 * 1024 * 1024), mime_type="image/png")
+
+
+def test_an_empty_upload_is_rejected(images) -> None:
+    manuals, _ = images
+
+    with pytest.raises(CampusValidationError, match="empty"):
+        manuals.add_image(TRACK, data=b"", mime_type="image/png")
+
+
+def test_uploading_an_image_is_attributable(image_session: Session, images) -> None:
+    manuals, _ = images
+
+    manuals.add_image(TRACK, data=PNG, mime_type="image/png", actor_account_id="admin-1")
+
+    event = image_session.scalar(select(CampusAuditEvent))
+    assert event is not None
+    assert event.action == "lab_manual.image_added"
+    assert event.target_type == "lab_manual_image"
+
+
+def test_the_large_model_track_takes_no_images(images) -> None:
+    manuals, _ = images
+
+    with pytest.raises(CampusValidationError, match="no lab manual"):
+        manuals.add_image(ExperimentTrack.LARGE_MODEL, data=PNG, mime_type="image/png")

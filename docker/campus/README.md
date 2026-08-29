@@ -285,8 +285,25 @@ page, and the content security policy would drop it silently anyway. The tab
 says so, and every save reports what was removed rather than leaving the author
 with a page that quietly lost its formatting.
 
+Images are uploaded to the platform from the same tab, which appends an `<img>`
+to the chapter body and stores the file through Dify's storage extension. A
+remote image cannot work: the portal serves `img-src 'self'`, so the browser
+would block it silently. Uploads accept PNG, JPEG, GIF, and WebP up to 4 MB, and
+the declared content type must match the file's leading bytes -- the type is
+caller-supplied, the bytes are not. SVG is refused: browsers render it as an
+image, but it is a document that can carry script, and it would arrive through
+the one path that does not sanitize.
+
+Images are served from `/console/api/campus/lab-manuals/images/<id>` to any
+signed-in student, and to an administrator's console session for previewing.
+That route echoes stored bytes, so it sends `X-Content-Type-Options: nosniff`
+and a `default-src 'none'; sandbox` policy: an image must never be able to act
+as a page.
+
 A chapter is a draft until it is published; only published chapters reach
 students. Reordering renumbers the track, and never crosses into another track.
+Deleting a chapter does not delete images it referenced; there is no reference
+count, and an orphaned image is cheaper than a chapter with a broken figure.
 
 Authoring writes `lab_manual.chapter_*` audit events. The chapter body is
 deliberately absent from them: the trail records what happened, not a second

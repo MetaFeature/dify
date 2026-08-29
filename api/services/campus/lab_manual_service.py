@@ -9,6 +9,7 @@ untrusted markup.
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from models.campus import (
     MANUAL_TRACKS,
     CampusAuditEvent,
     CampusLabManualChapter,
+    CampusLabManualImage,
     ExperimentTrack,
     LabManualChapterStatus,
 )
@@ -24,6 +26,44 @@ from services.campus.errors import CampusValidationError
 from services.campus.lab_manual_html import sanitize_lab_manual_html
 
 MAX_TITLE_LENGTH = 255
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+IMAGE_URL_PREFIX = "/console/api/campus/lab-manuals/images"
+
+# Raster formats only, keyed by the bytes that begin the file. SVG is absent on
+# purpose: browsers render it as an image, but it is a document that can carry
+# script, and it would arrive through the one path that does not sanitize.
+IMAGE_SIGNATURES: Mapping[str, tuple[bytes, ...]] = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "image/webp": (b"RIFF",),
+}
+
+
+class ManualImageStorage(Protocol):
+    def save(self, filename: str, data: bytes) -> None: ...
+
+    def load_once(self, filename: str) -> bytes: ...
+
+    def delete(self, filename: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class UploadedImage:
+    """A stored image and the same-origin URL a chapter references it by."""
+
+    id: str
+    url: str
+    mime_type: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ManualImage:
+    """One image's bytes, ready to serve."""
+
+    data: bytes
+    mime_type: str
 
 
 @dataclass(frozen=True)
@@ -41,9 +81,87 @@ class ChapterOutcome:
 
 class LabManualService:
     _session: Session
+    _storage: ManualImageStorage | None
 
-    def __init__(self, *, session: Session) -> None:
+    def __init__(self, *, session: Session, storage: ManualImageStorage | None = None) -> None:
         self._session = session
+        self._storage = storage
+
+    def add_image(
+        self,
+        track: ExperimentTrack,
+        *,
+        data: bytes,
+        mime_type: str,
+        actor_account_id: str | None = None,
+    ) -> UploadedImage:
+        """Store one image for a track's manual and return how to reference it."""
+        self._require_manual_track(track)
+        declared = mime_type.split(";", 1)[0].strip().lower()
+        if not data:
+            raise CampusValidationError("Image upload is empty")
+        if len(data) > MAX_IMAGE_BYTES:
+            raise CampusValidationError(f"Image upload is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+        signatures = IMAGE_SIGNATURES.get(declared)
+        if signatures is None:
+            raise CampusValidationError(f"Unsupported image type: {declared}")
+        if not any(data.startswith(signature) for signature in signatures):
+            raise CampusValidationError(f"Image content does not match the declared type {declared}")
+
+        image = CampusLabManualImage(
+            track=track,
+            storage_key="",
+            mime_type=declared,
+            size_bytes=len(data),
+        )
+        self._session.add(image)
+        self._session.flush()
+        image.storage_key = f"campus/lab-manuals/{track.value}/{image.id}{self._extension(declared)}"
+        self._store().save(image.storage_key, data)
+        self._record_image(
+            actor_account_id,
+            image.id,
+            {"track": track.value, "mime_type": declared, "size_bytes": len(data)},
+        )
+        self._session.commit()
+        return UploadedImage(
+            id=image.id,
+            url=f"{IMAGE_URL_PREFIX}/{image.id}",
+            mime_type=declared,
+            size_bytes=len(data),
+        )
+
+    def image(self, image_id: str) -> ManualImage:
+        """Read one stored image."""
+        image = self._session.scalar(select(CampusLabManualImage).where(CampusLabManualImage.id == image_id))
+        if image is None:
+            raise CampusValidationError("Lab manual image was not found")
+        return ManualImage(data=self._store().load_once(image.storage_key), mime_type=image.mime_type)
+
+    def _record_image(self, actor_account_id: str | None, image_id: str, details: Mapping[str, object]) -> None:
+        """Record an image upload without committing; see _record for the why."""
+        if actor_account_id is None:
+            return
+        self._session.add(
+            CampusAuditEvent(
+                actor_account_id=actor_account_id,
+                action="lab_manual.image_added",
+                target_type="lab_manual_image",
+                target_id=image_id,
+                details_json=json.dumps(dict(details), separators=(",", ":"), ensure_ascii=False),
+            )
+        )
+
+    def _store(self) -> ManualImageStorage:
+        if self._storage is None:
+            raise CampusValidationError("Lab manual image storage is not configured")
+        return self._storage
+
+    @staticmethod
+    def _extension(mime_type: str) -> str:
+        return {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(
+            mime_type, ""
+        )
 
     def create_chapter(
         self, track: ExperimentTrack, *, title: str, raw_html: str, actor_account_id: str | None = None

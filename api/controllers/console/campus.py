@@ -323,3 +323,45 @@ class CampusLabManualApi(Resource):
                 ],
             },
         )
+
+
+@console_ns.route("/campus/lab-manuals/images/<string:image_id>")
+class CampusLabManualImageApi(Resource):
+    @setup_required
+    def get(self, image_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        # A manual is readable by any signed-in student, and so are its images.
+        # An administrator previewing a chapter reaches this through the same
+        # route on the loopback listener, where a console session stands in.
+        _require_manual_reader()
+        try:
+            image = lab_manuals().image(image_id)
+        except CampusValidationError as error:
+            raise NotFound(str(error)) from error
+        response = make_response(image.data)
+        response.headers["Content-Type"] = image.mime_type
+        # Same-origin only, never inline-rendered as a document, and cacheable
+        # because an image is addressed by an immutable id.
+        response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return response
+
+
+def _require_manual_reader() -> None:
+    """Accept a portal session, or a console session belonging to an administrator.
+
+    Students read manuals through the portal session. An administrator previewing
+    a chapter on the loopback listener has a console session instead and no
+    portal session at all, so both are accepted here -- the same shape the access
+    check above uses.
+    """
+    account, _ = current_account_with_tenant_optional()
+    if account is not None:
+        try:
+            admin_service().require_admin(account.id, display_name=account.name)
+        except CampusAdministratorRequiredError:
+            pass
+        else:
+            return
+    portal_student()

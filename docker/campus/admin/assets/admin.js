@@ -31,6 +31,7 @@ const elements = {
   manualChapterId: requiredElement('#manual-chapter-id', HTMLInputElement),
   manualTitle: requiredElement('#manual-title', HTMLInputElement),
   manualFile: requiredElement('#manual-file', HTMLInputElement),
+  manualImage: requiredElement('#manual-image', HTMLInputElement),
   manualHtml: requiredElement('#manual-html', HTMLTextAreaElement),
   manualCancel: requiredElement('#manual-cancel', HTMLButtonElement),
   manualReport: requiredElement('#manual-report', HTMLElement),
@@ -635,3 +636,25 @@ async function loadManualChapters() {
     elements.manualTable.textContent = messageFor(error)
   }
 }
+
+elements.manualImage.addEventListener('change', async () => {
+  const file = elements.manualImage.files && elements.manualImage.files[0]
+  if (!file)
+    return
+  elements.manualImage.disabled = true
+  try {
+    const uploaded = await api.uploadManualImage(elements.manualTrack.value, file)
+    // Appended rather than inserted at the caret: the body is plain HTML text,
+    // and guessing a position inside markup would break the document.
+    const alt = file.name.replace(/\.[^.]+$/, '')
+    elements.manualHtml.value += `\n<p><img src="${uploaded.url}" alt="${escapeHtml(alt)}"></p>\n`
+    showMessage('图片已上传，<img> 已追加到正文末尾。', false)
+  }
+  catch (error) {
+    showMessage(messageFor(error), true)
+  }
+  finally {
+    elements.manualImage.disabled = false
+    elements.manualImage.value = ''
+  }
+})

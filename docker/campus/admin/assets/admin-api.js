@@ -134,6 +134,23 @@ export class AdminApi {
     })
   }
 
+  /**
+   * Upload one image for a track's manual and get the URL to reference it by.
+   *
+   * @param {string} track
+   * @param {File} file
+   * @returns {Promise<{ id: string, url: string }>}
+   */
+  async uploadManualImage(track, file) {
+    const body = new FormData()
+    body.append('file', file)
+    // No content-type header: the browser must set the multipart boundary.
+    return this.#send(`${CONSOLE_API_BASE}/admin/lab-manuals/${encodeURIComponent(track)}/images`, {
+      method: 'POST',
+      body,
+    })
+  }
+
   /** @param {string} chapterId @returns {Promise<ManualChapter & { body_html: string }>} */
   async manualChapter(chapterId) {
     return this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}`)
@@ -220,7 +237,9 @@ export class AdminApi {
    */
   async #send(url, options) {
     const headers = new Headers(options.headers)
-    if (options.body)
+    // FormData must keep the boundary the browser generates, so its content
+    // type is left alone; everything else this client sends is JSON.
+    if (options.body && !(options.body instanceof FormData))
       headers.set('content-type', 'application/json')
     const csrfToken = csrfTokenFromCookie(this.cookieSource())
     if (csrfToken)

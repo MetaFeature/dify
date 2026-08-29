@@ -107,6 +107,11 @@
             </div>
           </form>
           <p class="muted">上传的 HTML 会先清洗：脚本、内联样式、表单、外链图片一律移除，只保留结构。手册外观由平台统一控制，所以你的排版不会生效。</p>
+          <div class="manual-images">
+            <label for="manual-image">插入图片</label>
+            <input id="manual-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp" aria-label="上传图片">
+            <p class="muted">上传后会把 <code>&lt;img&gt;</code> 追加到正文末尾。只支持 PNG / JPEG / GIF / WebP，单张不超过 4 MB；外链图片会被浏览器拦掉，所以图片必须上传到平台。</p>
+          </div>
           <div id="manual-report" aria-live="polite"></div>
           <div id="manual-table" aria-live="polite"></div>
         </section>

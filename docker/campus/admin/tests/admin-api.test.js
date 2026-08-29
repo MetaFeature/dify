@@ -49,3 +49,23 @@ test('backend validation messages are surfaced to the administrator', async () =
   await assert.rejects(api.syncRoster({ students: [] }), error =>
     error instanceof AdminApiError && /20260009/.test(error.message))
 })
+
+test('a multipart upload keeps the browser boundary instead of a json content type', async () => {
+  // Forcing application/json on FormData drops the multipart boundary, and the
+  // upload fails at the server with a parse error that names nothing useful.
+  let seen
+  const api = new AdminApi(async (url, options) => {
+    seen = options
+    return new Response(JSON.stringify({ id: 'i1', url: '/console/api/campus/lab-manuals/images/i1' }), {
+      headers: { 'content-type': 'application/json' },
+    })
+  }, () => 'csrf_token=tok')
+
+  const file = new File([new Uint8Array([1, 2, 3])], 'figure.png', { type: 'image/png' })
+  const result = await api.uploadManualImage('deep-learning', file)
+
+  assert.equal(result.url, '/console/api/campus/lab-manuals/images/i1')
+  assert.ok(seen.body instanceof FormData)
+  assert.equal(seen.headers.get('content-type'), null)
+  assert.equal(seen.headers.get('X-CSRF-Token'), 'tok')
+})
