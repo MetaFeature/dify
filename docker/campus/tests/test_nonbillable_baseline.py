@@ -7,7 +7,6 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import cast
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -53,7 +52,7 @@ class NonbillableBaselineTest(unittest.TestCase):
         self.server.server_close()
         self.server_thread.join(timeout=2)
 
-    def run_baseline(self) -> tuple[dict[str, object], bool]:
+    def run_baseline(self) -> tuple[nonbillable_baseline.BaselineReport, bool]:
         return nonbillable_baseline.run_baseline(
             base_url=f"http://127.0.0.1:{self.server.server_port}",
             concurrency=4,
@@ -75,7 +74,7 @@ class NonbillableBaselineTest(unittest.TestCase):
         report, passed = self.run_baseline()
 
         self.assertFalse(passed)
-        self.assertGreater(cast(int, report["failures"]), 0)
+        self.assertGreater(report["failures"], 0)
 
     def test_ninety_five_percent_of_required_attempts_fails(self) -> None:
         self.assertFalse(

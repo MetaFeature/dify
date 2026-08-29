@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
 from threading import Event
+from typing import TypedDict
 from urllib.parse import SplitResult, urlsplit
 
 ROUTES = (
@@ -30,6 +31,32 @@ class WorkerResult:
     latencies_ms: dict[str, list[float]] = field(
         default_factory=lambda: {path: [] for path, _ in ROUTES}
     )
+
+
+class EndpointMetrics(TypedDict):
+    attempts: int
+    latency_p50_ms: float
+    latency_p95_ms: float
+    latency_p99_ms: float
+    latency_max_ms: float
+
+
+class BaselineReport(TypedDict):
+    concurrency: int
+    duration_seconds: int
+    requests_per_user: float
+    target_rps: float
+    response_rps: float
+    attempts: int
+    expected_attempts: int
+    failures: int
+    failure_rate_pct: float
+    max_p99_ms: float
+    worst_p99_ms: float
+    statuses: dict[str, int]
+    failure_types: dict[str, int]
+    endpoints: dict[str, EndpointMetrics]
+    passed: bool
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -138,7 +165,7 @@ def run_baseline(
     requests_per_user: float,
     duration_seconds: int,
     max_p99_ms: float,
-) -> tuple[dict[str, object], bool]:
+) -> tuple[BaselineReport, bool]:
     target = urlsplit(base_url)
     if target.scheme not in {"http", "https"} or target.hostname is None:
         raise ValueError("base_url must be an absolute HTTP or HTTPS URL")
@@ -183,7 +210,7 @@ def run_baseline(
         for path, _ in ROUTES:
             latencies_ms[path].extend(worker_result.latencies_ms[path])
 
-    endpoint_metrics: dict[str, dict[str, float | int]] = {}
+    endpoint_metrics: dict[str, EndpointMetrics] = {}
     worst_p99_ms = 0.0
     for path, _ in ROUTES:
         values = latencies_ms[path]
@@ -212,7 +239,7 @@ def run_baseline(
         worst_p99_ms=worst_p99_ms,
         max_p99_ms=max_p99_ms,
     )
-    report: dict[str, object] = {
+    report: BaselineReport = {
         "concurrency": concurrency,
         "duration_seconds": duration_seconds,
         "requests_per_user": requests_per_user,
