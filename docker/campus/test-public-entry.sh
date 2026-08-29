@@ -12,6 +12,7 @@ credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
 workspace_isolation_sql="${SCRIPT_DIR}/verify-workspace-isolation.sql"
 baseline_runner="${SCRIPT_DIR}/nonbillable_baseline.py"
+baseline_runner_test="${SCRIPT_DIR}/tests/test_nonbillable_baseline.py"
 campus_env_example="${DOCKER_DIR}/envs/campus.env.example"
 approved_openai_plugin="$(sed -n '1p' "${approved_plugin_file}")"
 
@@ -44,10 +45,24 @@ grep -Fq 'verify-workspace-isolation.sql' "${manager}" || {
   echo "Campus manager does not consume the workspace isolation verifier" >&2
   exit 1
 }
+grep -Fq 'service_principal_email' "${workspace_isolation_sql}" || {
+  echo "Campus workspace isolation does not identify the configured service principal" >&2
+  exit 1
+}
+workspace_isolation_function="$(sed -n '/^verify_workspace_isolation() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${workspace_isolation_function}" | grep -Fq 'CAMPUS_SERVICE_PRINCIPAL_EMAIL' || {
+  echo "Campus workspace verification does not pass the configured service principal" >&2
+  exit 1
+}
 [[ -f "${baseline_runner}" ]] || {
   echo "Campus non-billable baseline runner is missing" >&2
   exit 1
 }
+[[ -f "${baseline_runner_test}" ]] || {
+  echo "Campus non-billable baseline tests are missing" >&2
+  exit 1
+}
+python3 "${baseline_runner_test}"
 
 redirect_function="$(sed -n '/^assert_portal_root_redirect() {$/,/^}/p' "${manager}")"
 printf '%s\n' "${redirect_function}" | grep -Fq -- "--write-out '%{http_code} %{redirect_url}\\n'" || {
@@ -217,6 +232,7 @@ api_service="$(sed -n '/^[[:space:]]\{2\}api:$/,/^[[:space:]]\{2\}[a-zA-Z0-9_-]*
   "${DOCKER_DIR}/docker-compose.campus.yaml")"
 for setting in \
   'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-2}' \
+  'SERVER_WORKER_CLASS: ${CAMPUS_API_WORKER_CLASS:-gevent}' \
   'SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}'; do
   printf '%s\n' "${api_service}" | grep -Fq "${setting}" || {
     echo "Campus API omits concurrency setting: ${setting}" >&2
@@ -225,6 +241,7 @@ for setting in \
 done
 for setting in \
   'CAMPUS_API_WORKER_AMOUNT=2' \
+  'CAMPUS_API_WORKER_CLASS=gevent' \
   'CAMPUS_API_WORKER_CONNECTIONS=200' \
   'CAMPUS_BASELINE_CONCURRENCY=100' \
   'CAMPUS_BASELINE_REQUESTS_PER_USER=1' \

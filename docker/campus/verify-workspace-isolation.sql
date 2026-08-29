@@ -2,6 +2,12 @@ WITH bindings AS (
   SELECT student_id, dify_account_id, dify_tenant_id
   FROM campus_workspace_bindings
 ),
+service_principal AS (
+  SELECT id
+  FROM accounts
+  WHERE lower(email) = lower(:'service_principal_email')
+    AND status = 'active'
+),
 topology AS (
   SELECT
     binding.student_id,
@@ -59,7 +65,13 @@ summary AS (
       JOIN campus_administrators administrator
         ON administrator.account_id = membership.account_id
     ) AS administrator_membership_count,
-    COUNT(*) FILTER (WHERE student.id IS NULL) AS orphan_binding_count
+    COUNT(*) FILTER (WHERE student.id IS NULL) AS orphan_binding_count,
+    (SELECT COUNT(*) FROM service_principal) AS service_principal_count,
+    (
+      SELECT COUNT(*)
+      FROM owners
+      WHERE account_id NOT IN (SELECT id FROM service_principal)
+    ) AS unexpected_owner_count
   FROM bindings binding
   LEFT JOIN campus_students student ON student.id = binding.student_id
 )
@@ -72,5 +84,7 @@ SELECT
   invalid_student_membership_count,
   distinct_owner_count,
   administrator_membership_count,
-  orphan_binding_count
+  orphan_binding_count,
+  service_principal_count,
+  unexpected_owner_count
 FROM summary;

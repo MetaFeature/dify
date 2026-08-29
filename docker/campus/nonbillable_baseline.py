@@ -53,6 +53,24 @@ def _request_path(target: SplitResult, route: str) -> str:
     return f"{prefix}{route}" or "/"
 
 
+def meets_baseline_contract(
+    *,
+    expected_attempts: int,
+    total_attempts: int,
+    response_count: int,
+    total_failures: int,
+    worst_p99_ms: float,
+    max_p99_ms: float,
+) -> bool:
+    """Require the exact workload, successful responses, and latency budget."""
+    return (
+        total_attempts == expected_attempts
+        and response_count == expected_attempts
+        and total_failures == 0
+        and worst_p99_ms <= max_p99_ms
+    )
+
+
 def _run_worker(
     worker_id: int,
     *,
@@ -183,12 +201,16 @@ def run_baseline(
     total_failures = sum(failures.values())
     response_count = sum(statuses.values())
     target_rps = concurrency * requests_per_user
+    expected_attempts = concurrency * math.ceil(duration_seconds * requests_per_user)
     measured_seconds = max(duration_seconds, elapsed - 1.0)
     response_rps = response_count / measured_seconds
-    passed = (
-        total_failures == 0
-        and worst_p99_ms <= max_p99_ms
-        and response_rps >= target_rps * 0.95
+    passed = meets_baseline_contract(
+        expected_attempts=expected_attempts,
+        total_attempts=total_attempts,
+        response_count=response_count,
+        total_failures=total_failures,
+        worst_p99_ms=worst_p99_ms,
+        max_p99_ms=max_p99_ms,
     )
     report: dict[str, object] = {
         "concurrency": concurrency,
@@ -197,6 +219,7 @@ def run_baseline(
         "target_rps": round(target_rps, 2),
         "response_rps": round(response_rps, 2),
         "attempts": total_attempts,
+        "expected_attempts": expected_attempts,
         "failures": total_failures,
         "failure_rate_pct": round(100 * total_failures / max(1, total_attempts), 5),
         "max_p99_ms": max_p99_ms,

@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models.campus import (
@@ -129,6 +130,29 @@ def test_provisioning_rejects_account_already_bound_to_another_student(campus_se
 
     assert gateway.calls == 1
     assert campus_session.query(CampusWorkspaceBinding).count() == 1
+
+
+def test_provisioning_translates_a_concurrent_binding_uniqueness_failure(
+    campus_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = PlatformProvisioningService(
+        session=campus_session,
+        workspace_provisioner=FakeWorkspaceProvisioner(),
+        gateway_provisioner=FakeGatewayProvisioner(),
+        model_configurator=FakeModelConfigurator(calls=[]),
+        quota_units_per_usd=100,
+    )
+    student = campus_session.query(CampusStudent).one()
+
+    def reject_binding_commit() -> None:
+        raise IntegrityError("INSERT campus_workspace_bindings", {}, Exception("unique conflict"))
+
+    monkeypatch.setattr(campus_session, "commit", reject_binding_commit)
+
+    with pytest.raises(CampusProvisioningError, match="already bound to another Campus student") as raised:
+        service.ensure_ready(student.id)
+
+    assert isinstance(raised.value.__cause__, IntegrityError)
 
 
 def test_gateway_token_is_compensated_when_dify_configuration_fails(campus_session: Session):

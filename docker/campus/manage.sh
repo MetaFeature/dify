@@ -377,18 +377,25 @@ assert_static_surface_is_consistent() {
 verify_workspace_isolation() {
   local summary binding_count student_count account_count tenant_count
   local invalid_topology_count invalid_student_membership_count distinct_owner_count
-  local administrator_membership_count orphan_binding_count expected_owner_count
+  local administrator_membership_count orphan_binding_count service_principal_count
+  local unexpected_owner_count expected_owner_count service_principal_email
   [[ -f "${WORKSPACE_ISOLATION_SQL}" ]] || fail "missing Campus workspace isolation verifier"
+  service_principal_email="$(env_value CAMPUS_SERVICE_PRINCIPAL_EMAIL)"
+  [[ -n "${service_principal_email}" ]] || fail "Campus service principal email is not configured"
   summary="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
-    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -F "|" -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -F "|" -v ON_ERROR_STOP=1 \
+      -v service_principal_email="$1" -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    _ "${service_principal_email}" \
     <"${WORKSPACE_ISOLATION_SQL}")"
   IFS='|' read -r binding_count student_count account_count tenant_count \
     invalid_topology_count invalid_student_membership_count distinct_owner_count \
-    administrator_membership_count orphan_binding_count <<<"${summary}"
+    administrator_membership_count orphan_binding_count service_principal_count \
+    unexpected_owner_count <<<"${summary}"
   for value in \
     "${binding_count}" "${student_count}" "${account_count}" "${tenant_count}" \
     "${invalid_topology_count}" "${invalid_student_membership_count}" "${distinct_owner_count}" \
-    "${administrator_membership_count}" "${orphan_binding_count}"; do
+    "${administrator_membership_count}" "${orphan_binding_count}" "${service_principal_count}" \
+    "${unexpected_owner_count}"; do
     [[ "${value}" =~ ^[0-9]+$ ]] || fail "workspace isolation verifier returned an invalid summary"
   done
   [[ "${binding_count}" == "${student_count}" && \
@@ -402,6 +409,10 @@ verify_workspace_isolation() {
   [[ "${administrator_membership_count}" == "0" ]] || \
     fail "a named administrator is a member of a student workspace"
   [[ "${orphan_binding_count}" == "0" ]] || fail "a Campus workspace binding has no student identity"
+  [[ "${service_principal_count}" == "1" ]] || \
+    fail "the configured Campus service principal is missing or inactive"
+  [[ "${unexpected_owner_count}" == "0" ]] || \
+    fail "a Campus workspace is not owned by the configured service principal"
   expected_owner_count=0
   [[ "${binding_count}" == "0" ]] || expected_owner_count=1
   [[ "${distinct_owner_count}" == "${expected_owner_count}" ]] || \
@@ -411,22 +422,24 @@ verify_workspace_isolation() {
 }
 
 assert_api_concurrency_capacity() {
-  local required_concurrency="${1:-100}" container_id environment worker_amount worker_connections
+  local required_concurrency="${1:-100}" container_id environment worker_amount worker_class worker_connections
   local configured_capacity
   container_id="$("${COMPOSE[@]}" ps -q api)"
   [[ -n "${container_id}" ]] || fail "Campus API container is missing"
   environment="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container_id}")"
   worker_amount="$(awk -F= '$1 == "SERVER_WORKER_AMOUNT" { print $2; exit }' <<<"${environment}")"
+  worker_class="$(awk -F= '$1 == "SERVER_WORKER_CLASS" { print $2; exit }' <<<"${environment}")"
   worker_connections="$(awk -F= '$1 == "SERVER_WORKER_CONNECTIONS" { print $2; exit }' <<<"${environment}")"
   [[ "${required_concurrency}" =~ ^[1-9][0-9]*$ && \
      "${worker_amount}" =~ ^[1-9][0-9]*$ && \
      "${worker_connections}" =~ ^[1-9][0-9]*$ ]] || \
     fail "Campus API concurrency configuration is invalid"
+  [[ "${worker_class}" == "gevent" ]] || fail "Campus API concurrency requires the gevent worker class"
   configured_capacity=$((worker_amount * worker_connections))
   [[ "${configured_capacity}" -ge "${required_concurrency}" ]] || \
     fail "Campus API concurrency capacity is below ${required_concurrency}"
-  printf 'API concurrency: workers=%s worker_connections=%s capacity=%s\n' \
-    "${worker_amount}" "${worker_connections}" "${configured_capacity}"
+  printf 'API concurrency: workers=%s class=%s worker_connections=%s capacity=%s\n' \
+    "${worker_amount}" "${worker_class}" "${worker_connections}" "${configured_capacity}"
 }
 
 verify() {
