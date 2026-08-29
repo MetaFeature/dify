@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from sqlalchemy import select
@@ -153,6 +155,78 @@ def test_provisioning_translates_a_concurrent_binding_uniqueness_failure(
         service.ensure_ready(student.id)
 
     assert isinstance(raised.value.__cause__, IntegrityError)
+
+
+def test_postgresql_provisioning_lock_survives_service_commits() -> None:
+    statements: list[str] = []
+
+    class LockTransaction:
+        active = False
+
+        def __enter__(self):
+            self.active = True
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            self.active = False
+
+    class LockConnection:
+        def __init__(self) -> None:
+            self.transaction = LockTransaction()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def begin(self) -> LockTransaction:
+            return self.transaction
+
+        def execute(self, statement, parameters) -> None:
+            statements.append(str(statement))
+
+    class LockEngine:
+        dialect = SimpleNamespace(name="postgresql")
+
+        def __init__(self) -> None:
+            self.connection = LockConnection()
+
+        def connect(self) -> LockConnection:
+            return self.connection
+
+    class CommittingSession:
+        def __init__(self) -> None:
+            self.engine = LockEngine()
+            self.commits = 0
+
+        def get_bind(self) -> LockEngine:
+            return self.engine
+
+        def commit(self) -> None:
+            self.commits += 1
+
+        def rollback(self) -> None:
+            return None
+
+    session = CommittingSession()
+    service = PlatformProvisioningService(
+        session=cast(Session, session),
+        workspace_provisioner=FakeWorkspaceProvisioner(),
+        gateway_provisioner=FakeGatewayProvisioner(),
+        model_configurator=FakeModelConfigurator(calls=[]),
+        quota_units_per_usd=100,
+    )
+
+    with service._provisioning_lock("student-1"):
+        self_transaction = session.engine.connection.transaction
+        assert self_transaction.active is True
+        session.commit()
+        assert self_transaction.active is True
+
+    assert session.commits == 1
+    assert session.engine.connection.transaction.active is False
+    assert statements == ["SELECT pg_advisory_xact_lock(:key)"]
 
 
 def test_gateway_token_is_compensated_when_dify_configuration_fails(campus_session: Session):

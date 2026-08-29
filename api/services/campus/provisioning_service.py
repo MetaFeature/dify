@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import override
 
 from sqlalchemy import or_, select, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -161,26 +162,50 @@ class PlatformProvisioningService(PlatformProvisioner):
 
     @contextmanager
     def _provisioning_lock(self, student_id: str) -> Iterator[None]:
-        """Serialize provisioning across commits made by Dify's account services."""
-        dialect = self._session.get_bind().dialect.name
+        """Serialize provisioning on a dedicated connection across service commits.
+
+        The main ORM session commits workspace and gateway bindings separately.
+        A session-level lock on that session can therefore return its connection
+        to the pool before unlock and leak the lock onto an idle connection.
+        """
+        bind = self._session.get_bind()
+        dialect = bind.dialect.name
         lock_key = int.from_bytes(hashlib.sha256(student_id.encode()).digest()[:8], "big", signed=True)
         mysql_lock_name = f"campus:{hashlib.sha256(student_id.encode()).hexdigest()[:40]}"
+        engine = bind.engine if isinstance(bind, Connection) else bind
         if dialect == "postgresql":
-            self._session.execute(text("SELECT pg_advisory_lock(:key)"), {"key": lock_key})
-        elif dialect == "mysql":
-            acquired = self._session.scalar(text("SELECT GET_LOCK(:key, 30)"), {"key": mysql_lock_name})
-            if acquired != 1:
-                raise CampusProvisioningLockError("timed out waiting for Campus provisioning lock")
+            with engine.connect() as lock_connection:
+                with lock_connection.begin():
+                    lock_connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+                    try:
+                        yield
+                    except Exception:
+                        self._session.rollback()
+                        raise
+            return
+        if dialect == "mysql":
+            with engine.connect() as lock_connection:
+                acquired = lock_connection.scalar(text("SELECT GET_LOCK(:key, 30)"), {"key": mysql_lock_name})
+                if acquired != 1:
+                    raise CampusProvisioningLockError("timed out waiting for Campus provisioning lock")
+                body_error: Exception | None = None
+                try:
+                    yield
+                except Exception as error:
+                    body_error = error
+                    self._session.rollback()
+                    raise
+                finally:
+                    released = lock_connection.scalar(text("SELECT RELEASE_LOCK(:key)"), {"key": mysql_lock_name})
+                    lock_connection.commit()
+                    if released != 1 and body_error is None:
+                        raise CampusProvisioningLockError("could not release Campus provisioning lock")
+            return
         try:
             yield
         except Exception:
             self._session.rollback()
             raise
-        finally:
-            if dialect == "postgresql":
-                self._session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
-            elif dialect == "mysql":
-                self._session.execute(text("SELECT RELEASE_LOCK(:key)"), {"key": mysql_lock_name})
 
     def _allowance_quota(self, allowance_usd: Decimal) -> int:
         raw_quota = allowance_usd * self._quota_units_per_usd
