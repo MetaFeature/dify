@@ -27,6 +27,7 @@ from services.campus.errors import (
     StudentSuspendedError,
 )
 from services.campus.identity_source import UnconfiguredIdentitySource, VirtualIdentitySource
+from services.campus.lab_manual_service import LabManualService
 from services.campus.load_admission import SystemLoadAdmission
 from services.campus.newapi_client import NewApiClient
 from services.campus.portal_session_service import PortalSessionService
@@ -64,6 +65,10 @@ def identity_source() -> IdentitySource:
             UnconfiguredIdentitySource() if configured is None else VirtualIdentitySource(configured.get_secret_value())
         )
     return ManagedFirstIdentitySource(credential_service(), fallback)
+
+
+def lab_manuals() -> LabManualService:
+    return LabManualService(session=db.session())
 
 
 def newapi_client() -> NewApiClient:

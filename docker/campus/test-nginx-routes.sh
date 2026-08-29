@@ -186,6 +186,24 @@ for route in \
   }
 done
 
+# Administration routes must not be published on a campus interface: named
+# administrators reach them through the host-loopback listener instead.
+admin_api_block="$(sed -n '/^[[:space:]]*location \^~ \/console\/api\/campus\/admin\/ {$/,/^[[:space:]]*}$/p' "${template}")"
+printf '%s\n' "${admin_api_block}" | grep -Fq 'return 404;' || {
+  echo "Campus administration API is published on the campus listener" >&2
+  exit 1
+}
+campus_listener="$(sed -n '1,/^# The stock Dify administration surface/p' "${template}")"
+printf '%s\n' "${campus_listener}" | grep -Fq 'location ^~ /console/api/campus/admin/' || {
+  echo "the administration API block is not on the campus listener" >&2
+  exit 1
+}
+admin_listener="$(sed -n '/^# The stock Dify administration surface/,$p' "${template}")"
+if printf '%s\n' "${admin_listener}" | grep -Fq '/console/api/campus/admin/'; then
+  echo "the administration listener must keep the administration API reachable" >&2
+  exit 1
+fi
+
 model_provider_location="$(sed -n '/^[[:space:]]*location \^~ \/console\/api\/workspaces\/current\/model-providers {$/,/^[[:space:]]*}$/p' "${template}")"
 [[ -n "${model_provider_location}" ]] || {
   echo "Campus nginx does not guard the workspace model-provider routes" >&2

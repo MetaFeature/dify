@@ -11,6 +11,7 @@ from controllers.console import console_ns
 from controllers.console.campus_dependencies import (
     admin_service,
     credential_service,
+    lab_manuals,
     launch_service,
     newapi_client,
     portal_sessions,
@@ -22,6 +23,8 @@ from controllers.console.campus_dependencies import (
 from controllers.console.campus_schemas import (
     AccessDecisionResponse,
     AllowanceResponse,
+    ExperimentTrackListResponse,
+    LabManualResponse,
     PortalLoginResponse,
     PortalPasswordChangePayload,
     ReservationCreatePayload,
@@ -38,6 +41,7 @@ from libs.exception import BaseHTTPException
 from libs.helper import dump_response, extract_remote_ip
 from libs.login import current_account_with_tenant_optional
 from libs.token import set_access_token_to_cookie, set_csrf_token_to_cookie, set_refresh_token_to_cookie
+from models.campus import MANUAL_TRACKS, ExperimentTrack
 from services.campus.allowance_service import AllowanceService
 from services.campus.domain import AllowanceSummary, ReservationResult
 from services.campus.errors import (
@@ -258,3 +262,64 @@ class CampusAllowanceApi(Resource):
         except GatewayBindingNotFoundError as error:
             raise Conflict("Student model allowance is not provisioned") from error
         return _allowance_response(summary)
+
+
+@console_ns.route("/campus/experiment-tracks")
+class CampusExperimentTrackListApi(Resource):
+    @console_ns.response(200, "Experiment tracks", console_ns.models[ExperimentTrackListResponse.__name__])
+    @setup_required
+    def get(self) -> ResponseReturnValue:
+        require_campus_enabled()
+        portal_student()
+        manuals = lab_manuals()
+        tracks = []
+        for track in ExperimentTrack:
+            if track in MANUAL_TRACKS:
+                tracks.append(
+                    {
+                        "track": track,
+                        "kind": "manual",
+                        "chapters": len(manuals.published_chapters(track)),
+                    }
+                )
+            else:
+                # Completed in Dify behind the reservation gate, so it has no
+                # chapter count of its own.
+                tracks.append({"track": track, "kind": "dify", "chapters": 0})
+        return dump_response(ExperimentTrackListResponse, {"data": tracks})
+
+
+@console_ns.route("/campus/lab-manuals/<string:track>")
+class CampusLabManualApi(Resource):
+    @console_ns.response(200, "Published lab manual", console_ns.models[LabManualResponse.__name__])
+    @setup_required
+    def get(self, track: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        # Signing in is enough: a manual carries no student data, no credential,
+        # and no allowance, and the two manual tracks are not gated by a
+        # reservation because they run on the student's own machine (ADR-0018).
+        portal_student()
+        try:
+            experiment_track = ExperimentTrack(track)
+        except ValueError as error:
+            raise NotFound("Unknown experiment track") from error
+        if experiment_track not in MANUAL_TRACKS:
+            raise NotFound("This experiment track has no lab manual")
+        chapters = lab_manuals().published_chapters(experiment_track)
+        return dump_response(
+            LabManualResponse,
+            {
+                "track": experiment_track,
+                "data": [
+                    {
+                        "id": chapter.id,
+                        "track": chapter.track,
+                        "title": chapter.title,
+                        "position": chapter.position,
+                        "status": chapter.status,
+                        "body_html": chapter.body_html,
+                    }
+                    for chapter in chapters
+                ],
+            },
+        )

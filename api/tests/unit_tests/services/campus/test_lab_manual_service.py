@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models.campus import (
+    CampusAuditEvent,
     CampusLabManualChapter,
     ExperimentTrack,
     LabManualChapterStatus,
@@ -15,7 +16,9 @@ TRACK = ExperimentTrack.DEEP_LEARNING
 
 @pytest.fixture
 def manual_session(sqlite_engine) -> Session:
-    CampusLabManualChapter.metadata.create_all(sqlite_engine, tables=[CampusLabManualChapter.__table__])
+    CampusLabManualChapter.metadata.create_all(
+        sqlite_engine, tables=[CampusLabManualChapter.__table__, CampusAuditEvent.__table__]
+    )
     with Session(sqlite_engine, expire_on_commit=False) as session:
         yield session
 
@@ -173,3 +176,43 @@ def test_a_published_body_is_stored_sanitized_not_sanitized_on_read(
     stored = manual_session.scalar(select(CampusLabManualChapter.body_html))
 
     assert stored == "<p>hi</p>"
+
+
+def test_authoring_actions_are_attributable(manual_session: Session, manuals: LabManualService) -> None:
+    # ADR-0009: a platform administrator's management actions are attributable.
+    # Publishing decides what every student sees, so it belongs in the trail.
+    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>x</p>", actor_account_id="admin-1")
+    manuals.update_chapter(created.id, title="装环境（修订）", raw_html="<p>y</p>", actor_account_id="admin-1")
+    manuals.set_chapter_status(created.id, LabManualChapterStatus.PUBLISHED, actor_account_id="admin-2")
+    manuals.move_chapter(created.id, position=1, actor_account_id="admin-1")
+    manuals.delete_chapter(created.id, actor_account_id="admin-2")
+
+    events = list(manual_session.scalars(select(CampusAuditEvent).order_by(CampusAuditEvent.created_at)))
+
+    assert [event.action for event in events] == [
+        "lab_manual.chapter_created",
+        "lab_manual.chapter_updated",
+        "lab_manual.chapter_status_changed",
+        "lab_manual.chapter_moved",
+        "lab_manual.chapter_deleted",
+    ]
+    assert {event.actor_account_id for event in events} == {"admin-1", "admin-2"}
+    assert {event.target_type for event in events} == {"lab_manual_chapter"}
+
+
+def test_the_audit_trail_never_stores_chapter_html(manual_session: Session, manuals: LabManualService) -> None:
+    # The trail records what happened, not a second copy of the document.
+    manuals.create_chapter(TRACK, title="装环境", raw_html="<p>秘密正文</p>", actor_account_id="admin-1")
+
+    event = manual_session.scalar(select(CampusAuditEvent))
+
+    assert event is not None
+    assert "秘密正文" not in (event.details_json or "")
+
+
+def test_one_chapter_can_be_read_back_by_id(manuals: LabManualService) -> None:
+    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>x</p>")
+
+    assert manuals.chapter(created.id).title == "装环境"
+    with pytest.raises(CampusValidationError, match="chapter was not found"):
+        manuals.chapter("00000000-0000-0000-0000-000000000000")

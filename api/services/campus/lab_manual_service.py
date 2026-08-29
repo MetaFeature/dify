@@ -6,6 +6,7 @@ is sanitized once here, on the way in, so reading a chapter never re-parses
 untrusted markup.
 """
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from models.campus import (
     MANUAL_TRACKS,
+    CampusAuditEvent,
     CampusLabManualChapter,
     ExperimentTrack,
     LabManualChapterStatus,
@@ -43,7 +45,9 @@ class LabManualService:
     def __init__(self, *, session: Session) -> None:
         self._session = session
 
-    def create_chapter(self, track: ExperimentTrack, *, title: str, raw_html: str) -> ChapterOutcome:
+    def create_chapter(
+        self, track: ExperimentTrack, *, title: str, raw_html: str, actor_account_id: str | None = None
+    ) -> ChapterOutcome:
         """Append a draft chapter to one track's manual."""
         self._require_manual_track(track)
         clean_title = self._require_title(title)
@@ -56,43 +60,67 @@ class LabManualService:
             status=LabManualChapterStatus.DRAFT,
         )
         self._session.add(chapter)
+        self._session.flush()
+        self._record(
+            actor_account_id,
+            "lab_manual.chapter_created",
+            chapter,
+            {"track": track.value, "position": chapter.position, "removed": dict(sanitized.removed)},
+        )
         self._session.commit()
         return self._outcome(chapter, sanitized.removed)
 
-    def update_chapter(self, chapter_id: str, *, title: str, raw_html: str) -> ChapterOutcome:
+    def update_chapter(
+        self, chapter_id: str, *, title: str, raw_html: str, actor_account_id: str | None = None
+    ) -> ChapterOutcome:
         """Replace a chapter's title and body, leaving its place and status alone."""
         chapter = self._require_chapter(chapter_id)
         clean_title = self._require_title(title)
         sanitized = sanitize_lab_manual_html(raw_html)
         chapter.title = clean_title
         chapter.body_html = sanitized.html
+        self._record(
+            actor_account_id,
+            "lab_manual.chapter_updated",
+            chapter,
+            {"removed": dict(sanitized.removed)},
+        )
         self._session.commit()
         return self._outcome(chapter, sanitized.removed)
 
-    def set_chapter_status(self, chapter_id: str, status: LabManualChapterStatus) -> ChapterOutcome:
+    def set_chapter_status(
+        self, chapter_id: str, status: LabManualChapterStatus, *, actor_account_id: str | None = None
+    ) -> ChapterOutcome:
         """Publish a chapter to students, or withdraw it back to a draft."""
         chapter = self._require_chapter(chapter_id)
         chapter.status = status
+        self._record(actor_account_id, "lab_manual.chapter_status_changed", chapter, {"status": status.value})
         self._session.commit()
         return self._outcome(chapter, {})
 
-    def move_chapter(self, chapter_id: str, *, position: int) -> None:
+    def move_chapter(self, chapter_id: str, *, position: int, actor_account_id: str | None = None) -> None:
         """Move one chapter within its own track and renumber that track."""
         chapter = self._require_chapter(chapter_id)
         siblings = [other for other in self._chapters(chapter.track) if other.id != chapter.id]
         target = max(1, min(position, len(siblings) + 1))
         siblings.insert(target - 1, chapter)
         self._renumber(siblings)
+        self._record(actor_account_id, "lab_manual.chapter_moved", chapter, {"position": chapter.position})
         self._session.commit()
 
-    def delete_chapter(self, chapter_id: str) -> None:
+    def delete_chapter(self, chapter_id: str, *, actor_account_id: str | None = None) -> None:
         """Remove a chapter and close the gap in its track's numbering."""
         chapter = self._require_chapter(chapter_id)
         track = chapter.track
+        self._record(actor_account_id, "lab_manual.chapter_deleted", chapter, {"track": track.value})
         self._session.delete(chapter)
         self._session.flush()
         self._renumber(self._chapters(track))
         self._session.commit()
+
+    def chapter(self, chapter_id: str) -> CampusLabManualChapter:
+        """Read one chapter, whatever its status."""
+        return self._require_chapter(chapter_id)
 
     def all_chapters(self, track: ExperimentTrack) -> Sequence[CampusLabManualChapter]:
         """Every chapter of one track, drafts included, in reading order."""
@@ -113,6 +141,32 @@ class LabManualService:
 
     def _next_position(self, track: ExperimentTrack) -> int:
         return len(self._chapters(track)) + 1
+
+    def _record(
+        self,
+        actor_account_id: str | None,
+        action: str,
+        chapter: CampusLabManualChapter,
+        details: Mapping[str, object],
+    ) -> None:
+        """Record one authoring action without committing.
+
+        Publishing decides what every student sees, so it belongs in the same
+        attributable trail as roster and allowance changes (ADR-0009). Chapter
+        HTML is deliberately absent: the trail records what happened, not a
+        second copy of the document.
+        """
+        if actor_account_id is None:
+            return
+        self._session.add(
+            CampusAuditEvent(
+                actor_account_id=actor_account_id,
+                action=action,
+                target_type="lab_manual_chapter",
+                target_id=chapter.id,
+                details_json=json.dumps(dict(details), separators=(",", ":"), ensure_ascii=False),
+            )
+        )
 
     @staticmethod
     def _renumber(chapters: Sequence[CampusLabManualChapter]) -> None:

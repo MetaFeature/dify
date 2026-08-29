@@ -13,6 +13,7 @@ from controllers.console import console_ns
 from controllers.console.campus_dependencies import (
     admin_service,
     credential_service,
+    lab_manuals,
     newapi_client,
     require_admin,
     require_campus_enabled,
@@ -26,6 +27,12 @@ from controllers.console.campus_schemas import (
     AdminSlotListResponse,
     AllowanceAdjustmentPayload,
     AllowanceResponse,
+    LabManualChapterListResponse,
+    LabManualChapterPayload,
+    LabManualChapterPositionPayload,
+    LabManualChapterResponse,
+    LabManualChapterSavedResponse,
+    LabManualChapterStatusPayload,
     ResultResponse,
     RosterSyncResponse,
     SlotCapacityPayload,
@@ -46,6 +53,7 @@ from extensions.ext_database import db
 from libs.helper import dump_response
 from libs.login import login_required
 from models import Account
+from models.campus import ExperimentTrack
 from services.campus.administration_query_service import CampusAdministrationQueryService
 from services.campus.allowance_service import AllowanceService
 from services.campus.domain import AllowanceSummary, StudentIdentity
@@ -363,3 +371,143 @@ class CampusAdministratorDeleteApi(Resource):
         except CampusConflictError as error:
             raise Conflict(str(error)) from error
         return Response(status=204)
+
+
+def _track_or_404(track: str) -> ExperimentTrack:
+    try:
+        return ExperimentTrack(track)
+    except ValueError as error:
+        raise NotFound("Unknown experiment track") from error
+
+
+def _chapter_payload(chapter) -> dict[str, object]:
+    return {
+        "id": chapter.id,
+        "track": chapter.track,
+        "title": chapter.title,
+        "position": chapter.position,
+        "status": chapter.status,
+    }
+
+
+@console_ns.route("/campus/admin/lab-manuals/<string:track>/chapters")
+class CampusAdminLabManualChapterListApi(Resource):
+    @console_ns.response(200, "Lab manual chapters", console_ns.models[LabManualChapterListResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def get(self, current_user: Account, track: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        chapters = lab_manuals().all_chapters(_track_or_404(track))
+        return dump_response(
+            LabManualChapterListResponse,
+            {"data": [_chapter_payload(chapter) for chapter in chapters]},
+        )
+
+    @console_ns.expect(console_ns.models[LabManualChapterPayload.__name__])
+    @console_ns.response(201, "Chapter created", console_ns.models[LabManualChapterSavedResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def post(self, current_user: Account, track: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = LabManualChapterPayload.model_validate(console_ns.payload or {})
+        try:
+            outcome = lab_manuals().create_chapter(
+                _track_or_404(track),
+                title=payload.title,
+                raw_html=payload.body_html,
+                actor_account_id=current_user.id,
+            )
+        except CampusValidationError as error:
+            raise BadRequest(str(error)) from error
+        return dump_response(LabManualChapterSavedResponse, _saved_chapter(outcome)), 201
+
+
+@console_ns.route("/campus/admin/lab-manuals/chapters/<string:chapter_id>")
+class CampusAdminLabManualChapterApi(Resource):
+    @console_ns.expect(console_ns.models[LabManualChapterPayload.__name__])
+    @console_ns.response(200, "Chapter updated", console_ns.models[LabManualChapterSavedResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def put(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = LabManualChapterPayload.model_validate(console_ns.payload or {})
+        try:
+            outcome = lab_manuals().update_chapter(
+                chapter_id,
+                title=payload.title,
+                raw_html=payload.body_html,
+                actor_account_id=current_user.id,
+            )
+        except CampusValidationError as error:
+            raise _chapter_error(error)
+        return dump_response(LabManualChapterSavedResponse, _saved_chapter(outcome))
+
+    @setup_required
+    @login_required
+    @with_current_user
+    def delete(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        try:
+            lab_manuals().delete_chapter(chapter_id, actor_account_id=current_user.id)
+        except CampusValidationError as error:
+            raise _chapter_error(error)
+        return Response(status=204)
+
+
+@console_ns.route("/campus/admin/lab-manuals/chapters/<string:chapter_id>/status")
+class CampusAdminLabManualChapterStatusApi(Resource):
+    @console_ns.expect(console_ns.models[LabManualChapterStatusPayload.__name__])
+    @console_ns.response(200, "Chapter status changed", console_ns.models[LabManualChapterResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def patch(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = LabManualChapterStatusPayload.model_validate(console_ns.payload or {})
+        try:
+            outcome = lab_manuals().set_chapter_status(chapter_id, payload.status, actor_account_id=current_user.id)
+        except CampusValidationError as error:
+            raise _chapter_error(error)
+        return dump_response(LabManualChapterResponse, _chapter_payload(outcome))
+
+
+@console_ns.route("/campus/admin/lab-manuals/chapters/<string:chapter_id>/position")
+class CampusAdminLabManualChapterPositionApi(Resource):
+    @console_ns.expect(console_ns.models[LabManualChapterPositionPayload.__name__])
+    @console_ns.response(200, "Chapter moved", console_ns.models[LabManualChapterListResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def put(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = LabManualChapterPositionPayload.model_validate(console_ns.payload or {})
+        manuals = lab_manuals()
+        try:
+            manuals.move_chapter(chapter_id, position=payload.position, actor_account_id=current_user.id)
+            chapter = manuals.chapter(chapter_id)
+        except CampusValidationError as error:
+            raise _chapter_error(error)
+        return dump_response(
+            LabManualChapterListResponse,
+            {"data": [_chapter_payload(sibling) for sibling in manuals.all_chapters(chapter.track)]},
+        )
+
+
+def _saved_chapter(outcome) -> dict[str, object]:
+    return {**_chapter_payload(outcome), "body_html": outcome.body_html, "removed": dict(outcome.removed)}
+
+
+def _chapter_error(error: CampusValidationError) -> Exception:
+    """A missing chapter is a 404; anything else the service rejected is a 400."""
+    if "was not found" in str(error):
+        return NotFound(str(error))
+    return BadRequest(str(error))

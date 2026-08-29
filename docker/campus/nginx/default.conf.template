@@ -13,6 +13,14 @@ server {
       include proxy.conf;
     }
 
+    # Administration lives on the host-loopback listener below, and the portal
+    # page there calls these routes on its own origin. Nothing on a campus
+    # interface needs them, so they are not published here. The backend still
+    # requires a named administrator; this only removes the surface.
+    location ^~ /console/api/campus/admin/ {
+      return 404;
+    }
+
     location ^~ /console/api/campus/ {
       proxy_pass http://api:5001;
       include proxy.conf;

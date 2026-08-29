@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from controllers.common.schema import register_response_schema_models, register_schema_models
 from controllers.console import console_ns
 from fields.base import ResponseModel
-from models.campus import StudentStatus
+from models.campus import ExperimentTrack, LabManualChapterStatus, StudentStatus
 
 
 class CampusRequestModel(BaseModel):
@@ -254,6 +254,67 @@ class ResultResponse(CampusResponseModel):
     result: str
 
 
+class LabManualChapterPayload(CampusRequestModel):
+    title: str = Field(min_length=1, max_length=255)
+    body_html: str = Field(min_length=1, max_length=2_000_000)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title_not_whitespace(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("title cannot be whitespace-only")
+        return normalized
+
+
+class LabManualChapterStatusPayload(CampusRequestModel):
+    status: LabManualChapterStatus
+
+
+class LabManualChapterPositionPayload(CampusRequestModel):
+    position: int = Field(ge=1, le=1000)
+
+
+class LabManualChapterResponse(CampusResponseModel):
+    id: str
+    track: ExperimentTrack
+    title: str
+    position: int
+    status: LabManualChapterStatus
+
+
+class LabManualChapterDetailResponse(LabManualChapterResponse):
+    body_html: str
+
+
+class LabManualChapterSavedResponse(LabManualChapterDetailResponse):
+    #: What sanitizing removed from the upload, so the administrator is told
+    #: rather than left with a page that silently lost its formatting.
+    removed: dict[str, int]
+
+
+class LabManualChapterListResponse(CampusResponseModel):
+    data: list[LabManualChapterResponse]
+
+
+class LabManualResponse(CampusResponseModel):
+    """One track's manual as a student reads it: published chapters, in order."""
+
+    track: ExperimentTrack
+    data: list[LabManualChapterDetailResponse]
+
+
+class ExperimentTrackResponse(CampusResponseModel):
+    track: ExperimentTrack
+    #: Whether the platform serves this track through Dify or through a manual.
+    kind: str
+    chapters: int
+
+
+class ExperimentTrackListResponse(CampusResponseModel):
+    data: list[ExperimentTrackResponse]
+
+
 register_schema_models(
     console_ns,
     VirtualLoginPayload,
@@ -268,6 +329,9 @@ register_schema_models(
     StudentListQuery,
     AllowanceAdjustmentPayload,
     AdministratorPayload,
+    LabManualChapterPayload,
+    LabManualChapterStatusPayload,
+    LabManualChapterPositionPayload,
 )
 register_response_schema_models(
     console_ns,
@@ -288,4 +352,11 @@ register_response_schema_models(
     AllowanceResponse,
     StudentDetailResponse,
     ResultResponse,
+    LabManualChapterResponse,
+    LabManualChapterDetailResponse,
+    LabManualChapterSavedResponse,
+    LabManualChapterListResponse,
+    LabManualResponse,
+    ExperimentTrackResponse,
+    ExperimentTrackListResponse,
 )
