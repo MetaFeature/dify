@@ -25,6 +25,16 @@ class FakeWorkspaceProvisioner:
         return ProvisionedWorkspace(dify_account_id="account-1", dify_tenant_id="tenant-1")
 
 
+class SharedAccountWorkspaceProvisioner:
+    """Simulate a broken Dify boundary returning one account for two students."""
+
+    def provision(self, student_number: str, display_name: str) -> ProvisionedWorkspace:
+        return ProvisionedWorkspace(
+            dify_account_id="shared-account",
+            dify_tenant_id=f"tenant-{student_number}",
+        )
+
+
 class FakeGatewayProvisioner:
     def __init__(self) -> None:
         self.calls = 0
@@ -92,6 +102,33 @@ def test_lazy_provisioning_creates_one_workspace_and_one_gateway_token(campus_se
     assert configurator.calls == [("tenant-1", "secret-for-dify-only")]
     assert campus_session.query(CampusWorkspaceBinding).count() == 1
     assert campus_session.query(CampusGatewayBinding).count() == 1
+
+
+def test_provisioning_rejects_account_already_bound_to_another_student(campus_session: Session) -> None:
+    gateway = FakeGatewayProvisioner()
+    service = PlatformProvisioningService(
+        session=campus_session,
+        workspace_provisioner=SharedAccountWorkspaceProvisioner(),
+        gateway_provisioner=gateway,
+        model_configurator=FakeModelConfigurator(calls=[]),
+        quota_units_per_usd=100,
+    )
+    first_student = campus_session.query(CampusStudent).one()
+    service.ensure_ready(first_student.id)
+    second_student = CampusStudent(
+        student_number="20260002",
+        display_name="Student Two",
+        status=StudentStatus.ACTIVE,
+        initial_allowance_usd=Decimal(20),
+    )
+    campus_session.add(second_student)
+    campus_session.commit()
+
+    with pytest.raises(CampusProvisioningError, match="already bound to another Campus student"):
+        service.ensure_ready(second_student.id)
+
+    assert gateway.calls == 1
+    assert campus_session.query(CampusWorkspaceBinding).count() == 1
 
 
 def test_gateway_token_is_compensated_when_dify_configuration_fails(campus_session: Session):

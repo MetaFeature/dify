@@ -84,6 +84,35 @@ roster/SSO data remain outside the implemented boundary.
    administrator account ID in `CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS`.
 7. Run `docker/campus/manage.sh deploy`, then `docker/campus/manage.sh verify`.
 
+## Non-billable 100-user baseline
+
+Campus runs two gevent API workers with 200 worker connections each and nginx
+uses bounded keepalive pools for its API, Portal, Web, and plugin upstreams.
+This leaves headroom above 100 clients and prevents short-lived proxied requests
+from exhausting the WSL ephemeral-port range while leaving WebSocket and SSE
+connections long-lived.
+
+Run the operational baseline after deployment:
+
+```sh
+docker/campus/manage.sh baseline
+```
+
+The command first validates every current workspace binding: each student,
+Dify account, and tenant must be unique; every tenant must contain exactly the
+shared service principal as Owner and its student as Editor; a student account
+must belong to no other tenant; and named administrators must not be members.
+It then exercises only credential-free Campus routes with synchronized bursts
+from 100 virtual users at one request per second each for five minutes. It invokes no model and
+fails on an unexpected response, p99 above 100 ms, container restart, unhealthy
+canary, or a new nginx `Cannot assign requested address` error.
+
+The API capacity is controlled by `CAMPUS_API_WORKER_AMOUNT` and
+`CAMPUS_API_WORKER_CONNECTIONS`; the baseline defaults are controlled by `CAMPUS_BASELINE_CONCURRENCY`,
+`CAMPUS_BASELINE_REQUESTS_PER_USER`, `CAMPUS_BASELINE_DURATION_SECONDS`, and
+`CAMPUS_BASELINE_MAX_P99_MS`. Treat this as an HTTP/gate baseline, not evidence
+for provider latency, model throughput, or campus Wi-Fi reachability.
+
 The Access portal is served at `/portal/` on the Campus origin. It holds no
 credentials or durable business state and is attached only to the internal
 `campus_portal` network. Campus nginx bridges that network to the existing Dify

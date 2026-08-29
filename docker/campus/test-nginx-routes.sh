@@ -63,8 +63,25 @@ grep -Eq '^[[:space:]]*location \^~ /portal/ \{' "${template}" || {
   exit 1
 }
 
-grep -Fq 'proxy_pass http://portal:8080/;' "${template}" || {
-  echo "Access portal is not routed to its frontend container" >&2
+for upstream in campus_api campus_portal campus_web campus_plugin_daemon; do
+  upstream_block="$(sed -n "/^upstream ${upstream} {$/,/^}$/p" "${template}")"
+  [[ -n "${upstream_block}" ]] || {
+    echo "Campus nginx does not define the ${upstream} connection pool" >&2
+    exit 1
+  }
+  printf '%s\n' "${upstream_block}" | grep -Eq '^[[:space:]]+keepalive [1-9][0-9]*;' || {
+    echo "Campus nginx ${upstream} does not reuse upstream connections" >&2
+    exit 1
+  }
+done
+
+if grep -Eq 'proxy_pass http://(api:5001|portal:8080|web:3000|plugin_daemon:5002)' "${template}"; then
+  echo "Campus nginx still bypasses its bounded upstream connection pools" >&2
+  exit 1
+fi
+
+grep -Fq 'proxy_pass http://campus_portal/;' "${template}" || {
+  echo "Access portal is not routed through its pooled frontend upstream" >&2
   exit 1
 }
 
@@ -93,7 +110,7 @@ for directive in \
   'auth_request /_campus_access_check;' \
   'error_page 401 = @campus_portal_entry;' \
   'error_page 403 = @campus_portal_entry;' \
-  'proxy_pass http://web:3000;'; do
+  'proxy_pass http://campus_web;'; do
   printf '%s\n' "${root_location}" | grep -Fq "${directive}" || {
     echo "Campus root does not preserve authenticated Dify home access: ${directive}" >&2
     exit 1

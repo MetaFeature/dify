@@ -4,7 +4,8 @@ from contextlib import contextmanager
 from decimal import Decimal
 from typing import override
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models.campus import (
@@ -72,13 +73,20 @@ class PlatformProvisioningService(PlatformProvisioner):
         )
         if workspace_binding is None:
             workspace = self._workspace_provisioner.provision(student.student_number, student.display_name)
+            self._require_unbound_workspace(student.id, workspace)
             workspace_binding = CampusWorkspaceBinding(
                 student_id=student.id,
                 dify_account_id=workspace.dify_account_id,
                 dify_tenant_id=workspace.dify_tenant_id,
             )
             self._session.add(workspace_binding)
-            self._session.commit()
+            try:
+                self._session.commit()
+            except IntegrityError as error:
+                self._session.rollback()
+                raise CampusProvisioningError(
+                    "Dify account or workspace is already bound to another Campus student"
+                ) from error
         else:
             workspace = ProvisionedWorkspace(
                 dify_account_id=workspace_binding.dify_account_id,
@@ -108,6 +116,25 @@ class PlatformProvisioningService(PlatformProvisioner):
             self._reconcile_models(student, workspace.dify_tenant_id, gateway_binding.gateway_token_id)
 
         return ProvisionedPlatform(workspace=workspace, gateway_token_id=gateway_binding.gateway_token_id)
+
+    def _require_unbound_workspace(self, student_id: str, workspace: ProvisionedWorkspace) -> None:
+        """Reject cross-student account or tenant reuse before persisting a binding.
+
+        Database uniqueness remains the race-safe backstop. This explicit check
+        turns an already-visible conflict into a stable domain error before model
+        or gateway configuration can touch another student's workspace.
+        """
+        conflict = self._session.scalar(
+            select(CampusWorkspaceBinding).where(
+                CampusWorkspaceBinding.student_id != student_id,
+                or_(
+                    CampusWorkspaceBinding.dify_account_id == workspace.dify_account_id,
+                    CampusWorkspaceBinding.dify_tenant_id == workspace.dify_tenant_id,
+                ),
+            )
+        )
+        if conflict is not None:
+            raise CampusProvisioningError("Dify account or workspace is already bound to another Campus student")
 
     def _reconcile_models(self, student: CampusStudent, dify_tenant_id: str, gateway_token_id: str) -> None:
         """Bring an already-provisioned workspace up to the configured model list.

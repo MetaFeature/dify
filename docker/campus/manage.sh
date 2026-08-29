@@ -11,6 +11,7 @@ APPROVED_PROVIDER_PLUGIN_FILE="${SCRIPT_DIR}/approved-provider-plugin.txt"
 BRANDING_DIR="${SCRIPT_DIR}/branding"
 BRANDING_LOGO_FILE="${BRANDING_DIR}/njit-logo.png"
 BRANDING_LOGO_MANIFEST="${BRANDING_DIR}/SHA256SUMS"
+WORKSPACE_ISOLATION_SQL="${SCRIPT_DIR}/verify-workspace-isolation.sql"
 
 env_value() {
   local key="$1"
@@ -373,6 +374,61 @@ assert_static_surface_is_consistent() {
     fail "${page_url} serves a page missing required elements:${missing} (stale static container?)"
 }
 
+verify_workspace_isolation() {
+  local summary binding_count student_count account_count tenant_count
+  local invalid_topology_count invalid_student_membership_count distinct_owner_count
+  local administrator_membership_count orphan_binding_count expected_owner_count
+  [[ -f "${WORKSPACE_ISOLATION_SQL}" ]] || fail "missing Campus workspace isolation verifier"
+  summary="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -F "|" -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+    <"${WORKSPACE_ISOLATION_SQL}")"
+  IFS='|' read -r binding_count student_count account_count tenant_count \
+    invalid_topology_count invalid_student_membership_count distinct_owner_count \
+    administrator_membership_count orphan_binding_count <<<"${summary}"
+  for value in \
+    "${binding_count}" "${student_count}" "${account_count}" "${tenant_count}" \
+    "${invalid_topology_count}" "${invalid_student_membership_count}" "${distinct_owner_count}" \
+    "${administrator_membership_count}" "${orphan_binding_count}"; do
+    [[ "${value}" =~ ^[0-9]+$ ]] || fail "workspace isolation verifier returned an invalid summary"
+  done
+  [[ "${binding_count}" == "${student_count}" && \
+     "${binding_count}" == "${account_count}" && \
+     "${binding_count}" == "${tenant_count}" ]] || \
+    fail "Campus students do not have one-to-one account and workspace bindings"
+  [[ "${invalid_topology_count}" == "0" ]] || \
+    fail "Campus workspace membership topology is not isolated"
+  [[ "${invalid_student_membership_count}" == "0" ]] || \
+    fail "a Campus student Dify account belongs to more than one workspace"
+  [[ "${administrator_membership_count}" == "0" ]] || \
+    fail "a named administrator is a member of a student workspace"
+  [[ "${orphan_binding_count}" == "0" ]] || fail "a Campus workspace binding has no student identity"
+  expected_owner_count=0
+  [[ "${binding_count}" == "0" ]] || expected_owner_count=1
+  [[ "${distinct_owner_count}" == "${expected_owner_count}" ]] || \
+    fail "Campus workspaces do not share exactly one service-principal owner"
+  printf 'Workspace isolation: bindings=%s distinct_accounts=%s distinct_tenants=%s topology=valid\n' \
+    "${binding_count}" "${account_count}" "${tenant_count}"
+}
+
+assert_api_concurrency_capacity() {
+  local required_concurrency="${1:-100}" container_id environment worker_amount worker_connections
+  local configured_capacity
+  container_id="$("${COMPOSE[@]}" ps -q api)"
+  [[ -n "${container_id}" ]] || fail "Campus API container is missing"
+  environment="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${container_id}")"
+  worker_amount="$(awk -F= '$1 == "SERVER_WORKER_AMOUNT" { print $2; exit }' <<<"${environment}")"
+  worker_connections="$(awk -F= '$1 == "SERVER_WORKER_CONNECTIONS" { print $2; exit }' <<<"${environment}")"
+  [[ "${required_concurrency}" =~ ^[1-9][0-9]*$ && \
+     "${worker_amount}" =~ ^[1-9][0-9]*$ && \
+     "${worker_connections}" =~ ^[1-9][0-9]*$ ]] || \
+    fail "Campus API concurrency configuration is invalid"
+  configured_capacity=$((worker_amount * worker_connections))
+  [[ "${configured_capacity}" -ge "${required_concurrency}" ]] || \
+    fail "Campus API concurrency capacity is below ${required_concurrency}"
+  printf 'API concurrency: workers=%s worker_connections=%s capacity=%s\n' \
+    "${worker_amount}" "${worker_connections}" "${configured_capacity}"
+}
+
 verify() {
   validate
   local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
@@ -408,6 +464,8 @@ verify() {
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
+  assert_api_concurrency_capacity "$(env_value CAMPUS_BASELINE_CONCURRENCY || true)"
+  verify_workspace_isolation
   assert_current_slot_load_signal
   for service in worker worker_beat; do
     assert_service_never_restarted "${service}"
@@ -673,6 +731,7 @@ restore_upstream_public_entry() {
 
 verify_demo_accounts() {
   validate
+  verify_workspace_isolation
   local admin_summary admin_count admin_name_count student_count student_login_count virtual_count admin_names student_names virtual_names line
   admin_summary="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
@@ -711,6 +770,54 @@ verify_demo_accounts() {
     'import json, os; rows=json.loads(os.environ["CAMPUS_VIRTUAL_IDENTITIES_JSON"]); print("\n".join(sorted("{0} {1}".format(row.get("student_number"), row.get("display_name")) for row in rows if row.get("cohort") == "demo")))')"
   [[ "${student_names}" == "${virtual_names}" ]] || fail "active students do not match the protected virtual demo roster"
   printf 'Named administrators:\n%s\nDemo students:\n%s\n' "${admin_names}" "${student_names}"
+}
+
+run_baseline() {
+  validate
+  local campus_port concurrency requests_per_user duration_seconds max_p99_ms
+  local started_at nginx_container_id restart_snapshot_before restart_snapshot_after baseline_failed
+  campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  concurrency="$(env_value CAMPUS_BASELINE_CONCURRENCY)"
+  requests_per_user="$(env_value CAMPUS_BASELINE_REQUESTS_PER_USER)"
+  duration_seconds="$(env_value CAMPUS_BASELINE_DURATION_SECONDS)"
+  max_p99_ms="$(env_value CAMPUS_BASELINE_MAX_P99_MS)"
+  campus_port="${campus_port:-18080}"
+  concurrency="${concurrency:-100}"
+  requests_per_user="${requests_per_user:-1}"
+  duration_seconds="${duration_seconds:-300}"
+  max_p99_ms="${max_p99_ms:-100}"
+
+  for service in api portal nginx db_postgres; do
+    require_running_service "${service}"
+  done
+  wait_for_campus_health "${campus_port}"
+  assert_api_concurrency_capacity "${concurrency}"
+  verify_workspace_isolation
+  nginx_container_id="$("${COMPOSE[@]}" ps -q nginx)"
+  [[ -n "${nginx_container_id}" ]] || fail "Campus nginx container is missing"
+  restart_snapshot_before="$(docker inspect --format '{{.Name}}={{.RestartCount}}' \
+    $("${COMPOSE[@]}" ps -q) | sort)"
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  baseline_failed=false
+  python3 "${SCRIPT_DIR}/nonbillable_baseline.py" \
+    --base-url "http://127.0.0.1:${campus_port}" \
+    --concurrency "${concurrency}" \
+    --requests-per-user "${requests_per_user}" \
+    --duration-seconds "${duration_seconds}" \
+    --max-p99-ms "${max_p99_ms}" || baseline_failed=true
+
+  local_curl --fail --silent --show-error --max-time 10 \
+    "http://127.0.0.1:${campus_port}/health" >/dev/null || \
+    fail "Campus health failed after the concurrency baseline"
+  restart_snapshot_after="$(docker inspect --format '{{.Name}}={{.RestartCount}}' \
+    $("${COMPOSE[@]}" ps -q) | sort)"
+  [[ "${restart_snapshot_before}" == "${restart_snapshot_after}" ]] || \
+    fail "a Campus container RestartCount changed during the concurrency baseline"
+  if docker logs --since "${started_at}" "${nginx_container_id}" 2>&1 | \
+    grep -Fq 'Cannot assign requested address'; then
+    fail "Campus nginx exhausted an upstream address during the concurrency baseline"
+  fi
+  [[ "${baseline_failed}" == "false" ]] || fail "Campus non-billable concurrency baseline failed"
 }
 
 promote() {
@@ -817,7 +924,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {gateway-up|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
   exit 2
 }
 
@@ -837,6 +944,7 @@ case "${1:-}" in
   deploy-branding) deploy_branding ;;
   verify) verify ;;
   verify-demo-accounts) verify_demo_accounts ;;
+  baseline) run_baseline ;;
   open-bootstrap) open_bootstrap ;;
   promote) promote ;;
   rollback-promotion) rollback_promotion ;;

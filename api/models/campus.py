@@ -81,6 +81,7 @@ class CampusWorkspaceBinding(DefaultFieldsMixin, Base):
     __tablename__ = "campus_workspace_bindings"
     __table_args__ = (
         sa.UniqueConstraint("student_id", name="campus_workspace_bindings_student_id_key"),
+        sa.UniqueConstraint("dify_account_id", name="campus_workspace_bindings_dify_account_id_key"),
         sa.UniqueConstraint("dify_tenant_id", name="campus_workspace_bindings_dify_tenant_id_key"),
     )
 

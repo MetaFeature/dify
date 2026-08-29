@@ -1,3 +1,31 @@
+upstream campus_api {
+    server api:5001;
+    keepalive 32;
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
+upstream campus_portal {
+    server portal:8080;
+    keepalive 16;
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
+upstream campus_web {
+    server web:3000;
+    keepalive 32;
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
+upstream campus_plugin_daemon {
+    server plugin_daemon:5002;
+    keepalive 8;
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
 server {
     listen ${NGINX_PORT};
     server_name ${NGINX_SERVER_NAME};
@@ -6,7 +34,7 @@ server {
 
     location = /_campus_access_check {
       internal;
-      proxy_pass http://api:5001/console/api/campus/session/access-check;
+      proxy_pass http://campus_api/console/api/campus/session/access-check;
       proxy_pass_request_body off;
       proxy_set_header Content-Length "";
       proxy_set_header X-Original-URI $request_uri;
@@ -22,7 +50,7 @@ server {
     }
 
     location ^~ /console/api/campus/ {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
@@ -31,7 +59,7 @@ server {
     }
 
     location ^~ /portal/ {
-      proxy_pass http://portal:8080/;
+      proxy_pass http://campus_portal/;
       include proxy.conf;
     }
 
@@ -39,7 +67,7 @@ server {
       auth_request /_campus_access_check;
       error_page 401 = @campus_portal_entry;
       error_page 403 = @campus_portal_entry;
-      proxy_pass http://web:3000;
+      proxy_pass http://campus_web;
       include proxy.conf;
     }
 
@@ -69,19 +97,19 @@ server {
       limit_except GET {
         deny all;
       }
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /console/api {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /api {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
@@ -98,55 +126,55 @@ server {
 
     location /v1 {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /openapi {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /files {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /explore {
       auth_request /_campus_access_check;
-      proxy_pass http://web:3000;
+      proxy_pass http://campus_web;
       include proxy.conf;
     }
 
     # Plugin callbacks must remain service-to-service accessible.
     location /e/ {
-      proxy_pass http://plugin_daemon:5002;
+      proxy_pass http://campus_plugin_daemon;
       proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
       include proxy.conf;
     }
 
     location / {
       auth_request /_campus_access_check;
-      proxy_pass http://web:3000;
+      proxy_pass http://campus_web;
       include proxy.conf;
     }
 
     location /mcp {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /triggers {
       auth_request /_campus_access_check;
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location = /health {
-      proxy_pass http://api:5001/health;
+      proxy_pass http://campus_api/health;
       include proxy.conf;
     }
 
@@ -177,12 +205,12 @@ server {
     }
 
     location /console/api {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /api {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
@@ -197,48 +225,48 @@ server {
     }
 
     location /v1 {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /openapi {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /files {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /explore {
-      proxy_pass http://web:3000;
+      proxy_pass http://campus_web;
       include proxy.conf;
     }
 
     location /e/ {
-      proxy_pass http://plugin_daemon:5002;
+      proxy_pass http://campus_plugin_daemon;
       proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
       include proxy.conf;
     }
 
     location / {
-      proxy_pass http://web:3000;
+      proxy_pass http://campus_web;
       include proxy.conf;
     }
 
     location /mcp {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location /triggers {
-      proxy_pass http://api:5001;
+      proxy_pass http://campus_api;
       include proxy.conf;
     }
 
     location = /health {
-      proxy_pass http://api:5001/health;
+      proxy_pass http://campus_api/health;
       include proxy.conf;
     }
 }

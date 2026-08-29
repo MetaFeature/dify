@@ -10,6 +10,8 @@ firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
 credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
+workspace_isolation_sql="${SCRIPT_DIR}/verify-workspace-isolation.sql"
+baseline_runner="${SCRIPT_DIR}/nonbillable_baseline.py"
 campus_env_example="${DOCKER_DIR}/envs/campus.env.example"
 approved_openai_plugin="$(sed -n '1p' "${approved_plugin_file}")"
 
@@ -32,6 +34,18 @@ fi
 python3 "${credential_validator_test}"
 grep -Fq 'validate_compose_credentials.py' "${manager}" || {
   echo "Campus validation does not enforce Redis/Celery credential consistency" >&2
+  exit 1
+}
+[[ -f "${workspace_isolation_sql}" ]] || {
+  echo "Campus workspace isolation verifier is missing" >&2
+  exit 1
+}
+grep -Fq 'verify-workspace-isolation.sql' "${manager}" || {
+  echo "Campus manager does not consume the workspace isolation verifier" >&2
+  exit 1
+}
+[[ -f "${baseline_runner}" ]] || {
+  echo "Campus non-billable baseline runner is missing" >&2
   exit 1
 }
 
@@ -76,6 +90,14 @@ for contract in local_curl '%{content_type}' sha256sum branding_logo_sha256; do
 done
 
 verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${verify_function}" | grep -Fq 'verify_workspace_isolation' || {
+  echo "Campus runtime verification does not enforce every workspace binding" >&2
+  exit 1
+}
+printf '%s\n' "${verify_function}" | grep -Fq 'assert_api_concurrency_capacity' || {
+  echo "Campus runtime verification does not enforce API concurrency capacity" >&2
+  exit 1
+}
 printf '%s\n' "${verify_function}" | grep -Fq 'docker port "${container_id}" 80/tcp' || {
   echo "Campus verification does not inspect every nginx host binding" >&2
   exit 1
@@ -175,8 +197,51 @@ grep -Eq '^[[:space:]]*rollback-promotion\)' "${manager}" || {
   echo "Campus manager does not expose deterministic promotion rollback" >&2
   exit 1
 }
+grep -Eq '^[[:space:]]*baseline\)' "${manager}" || {
+  echo "Campus manager does not expose the 100-user baseline" >&2
+  exit 1
+}
+baseline_function="$(sed -n '/^run_baseline() {$/,/^}/p' "${manager}")"
+for contract in \
+  'verify_workspace_isolation' \
+  'assert_api_concurrency_capacity' \
+  'nonbillable_baseline.py' \
+  'RestartCount' \
+  'Cannot assign requested address'; do
+  printf '%s\n' "${baseline_function}" | grep -Fq "${contract}" || {
+    echo "Campus baseline omits required safety contract: ${contract}" >&2
+    exit 1
+  }
+done
+api_service="$(sed -n '/^[[:space:]]\{2\}api:$/,/^[[:space:]]\{2\}[a-zA-Z0-9_-]*:$/p' \
+  "${DOCKER_DIR}/docker-compose.campus.yaml")"
+for setting in \
+  'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-2}' \
+  'SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}'; do
+  printf '%s\n' "${api_service}" | grep -Fq "${setting}" || {
+    echo "Campus API omits concurrency setting: ${setting}" >&2
+    exit 1
+  }
+done
+for setting in \
+  'CAMPUS_API_WORKER_AMOUNT=2' \
+  'CAMPUS_API_WORKER_CONNECTIONS=200' \
+  'CAMPUS_BASELINE_CONCURRENCY=100' \
+  'CAMPUS_BASELINE_REQUESTS_PER_USER=1' \
+  'CAMPUS_BASELINE_DURATION_SECONDS=300' \
+  'CAMPUS_BASELINE_MAX_P99_MS=100'; do
+  grep -Fq "${setting}" "${campus_env_example}" || {
+    echo "Campus environment example omits baseline setting: ${setting}" >&2
+    exit 1
+  }
+done
 grep -Eq '^[[:space:]]*verify-demo-accounts\)' "${manager}" || {
   echo "Campus manager does not expose redacted demo-account verification" >&2
+  exit 1
+}
+verify_demo_function="$(sed -n '/^verify_demo_accounts() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${verify_demo_function}" | grep -Fq 'verify_workspace_isolation' || {
+  echo "Campus demo verification does not enforce workspace isolation" >&2
   exit 1
 }
 promote_function="$(sed -n '/^promote() {$/,/^}/p' "${manager}")"
