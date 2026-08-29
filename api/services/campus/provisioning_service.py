@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from decimal import Decimal
+from types import MethodType
 from typing import override
 
 from sqlalchemy import or_, select, text
@@ -182,10 +183,16 @@ class PlatformProvisioningService(PlatformProvisioner):
             return
 
         engine = bind.engine if isinstance(bind, Connection) else bind
-        original_bind = self._session.bind
         self._session.rollback()
         with engine.connect() as lock_connection:
-            self._session.bind = lock_connection
+            missing_get_bind = object()
+            session_attributes = self._session.__dict__
+            previous_get_bind = session_attributes.get("get_bind", missing_get_bind)
+
+            def pinned_get_bind(_session: Session, *args: object, **kwargs: object) -> Connection:
+                return lock_connection
+
+            session_attributes["get_bind"] = MethodType(pinned_get_bind, self._session)
             acquired = False
             body_error: BaseException | None = None
             release_error: BaseException | None = None
@@ -226,7 +233,10 @@ class PlatformProvisioningService(PlatformProvisioner):
                     release_failed = release_error is not None or released != 1
                     if release_failed:
                         lock_connection.invalidate()
-                self._session.bind = original_bind
+                if previous_get_bind is missing_get_bind:
+                    session_attributes.pop("get_bind", None)
+                else:
+                    session_attributes["get_bind"] = previous_get_bind
                 if acquired and release_failed and body_error is None:
                     raise CampusProvisioningLockError("could not release Campus provisioning lock") from release_error
 

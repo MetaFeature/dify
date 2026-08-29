@@ -218,7 +218,7 @@ class RecordingSession:
         self.commits = 0
         self.rollbacks = 0
 
-    def get_bind(self):
+    def get_bind(self, *args: object, **kwargs: object):
         return self.engine
 
     def commit(self) -> None:
@@ -248,11 +248,11 @@ def test_postgresql_provisioning_lock_pins_the_session_connection_across_commits
     service = _recording_lock_service(session)
 
     with service._provisioning_lock("student-1"):
-        assert session.bind is engine.connection
+        assert session.get_bind(mapper=object(), clause=object()) is engine.connection
         session.commit()
-        assert session.bind is engine.connection
+        assert session.get_bind(mapper=object(), clause=object()) is engine.connection
 
-    assert session.bind is engine
+    assert session.get_bind(mapper=object(), clause=object()) is engine
     assert session.rollbacks == 1
     assert session.commits == 2
     assert events == [
@@ -273,7 +273,9 @@ def test_mysql_provisioning_lock_starts_after_the_caller_snapshot() -> None:
     service = _recording_lock_service(session)
 
     with service._provisioning_lock("student-1"):
-        assert session.bind is engine.connection
+        assert session.get_bind(mapper=object(), clause=object()) is engine.connection
+
+    assert session.get_bind(mapper=object(), clause=object()) is engine
 
     assert events[0] == "session.rollback"
     assert "SELECT GET_LOCK(:key, 30)" in events
