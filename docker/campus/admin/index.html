@@ -31,6 +31,7 @@
           <button class="tab" type="button" data-tab="students">学生管理</button>
           <button class="tab" type="button" data-tab="roster">名单导入</button>
           <button class="tab" type="button" data-tab="administrators">管理员</button>
+          <button class="tab" type="button" data-tab="gateway">模型与 API</button>
         </nav>
         <p id="admin-message" class="message" role="status" hidden></p>
 
@@ -84,6 +85,21 @@
             <button class="secondary compact" type="submit">授权为管理员</button>
           </form>
           <div id="admin-table" aria-live="polite"></div>
+        </section>
+
+        <section id="tab-gateway" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>模型与 API 配置</h2><p class="muted">上游供应商的地址与密钥、学生可用的模型、以及计费倍率，都在模型网关里配置。</p></div>
+          </div>
+          <p>模型网关和本后台一样只在服务器本机监听，默认地址 <code>http://127.0.0.1:13000</code>（端口由 <code>CAMPUS_GATEWAY_ADMIN_PORT</code> 决定）。从自己的电脑访问时，请先建立 SSH 隧道 —— 与访问本后台的方式相同。</p>
+          <p><a class="primary" href="http://127.0.0.1:13000/" target="_blank" rel="noopener noreferrer">打开模型网关</a></p>
+          <h3>在网关里做什么</h3>
+          <ul class="gateway-notes">
+            <li><b>换上游或改密钥</b>：渠道 → 选择上游渠道 → 改「代理地址」和「密钥」。密钥只填进这里，不要写进聊天、脚本或日志。</li>
+            <li><b>开放新模型</b>：先在「运营设置 → 模型倍率」为它配好 <code>ModelRatio</code>／<code>CompletionRatio</code>，<b>再</b>把模型名加进渠道的模型列表。</li>
+            <li><b>模型改名</b>：渠道的「模型重定向」把学生看到的名字翻译成上游的真名，学生侧和倍率表都不用动。</li>
+          </ul>
+          <p class="muted">未定价的模型一律不要加进渠道 —— 网关对没有倍率的模型会按兜底价计费，比真实价高约五百倍。<code>manage.sh verify</code> 会因此失败，这是刻意设计的护栏。</p>
         </section>
       </section>
     </main>

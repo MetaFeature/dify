@@ -238,6 +238,29 @@ the upstream currently calls the model, for example
 `{"deepseek-v4-flash": "DeepSeek-V4-Flash"}`. Renaming upstream therefore costs
 one mapping edit and touches neither the ratio table nor any student workspace.
 
+### Who configures it, and from where
+
+Upstream credentials, the student-visible model list, and ratios are all
+configured in the gateway's own interface. The gateway listens on host loopback
+only, exactly like the administration portal, so an administrator reaches it the
+same way they reach the portal: on the server itself, or through an SSH tunnel.
+The portal's "模型与 API" tab links to it and restates the pricing guardrail.
+
+Nothing about this is exposed on a campus interface. Adding a model to a channel
+before giving it a ratio is the one mistake that bills silently, so the order is
+always ratio first, model list second.
+
+### Reconciling existing workspaces
+
+A workspace is configured at the student's first sign-in, so widening
+`CAMPUS_MODEL_PROVIDER_MODELS` does not by itself reach students who already
+have one. The provisioner compares each workspace's registered models against
+the configured list on every sign-in and reconciles when they differ, which
+costs one query in the common case. The gateway token is fetched again through
+create-or-get, which returns the existing token untouched; if it reports having
+created a new one, the bound token is gone and provisioning fails rather than
+silently restoring the student's spent allowance.
+
 ## Acceptance flow
 
 Use a virtual identity from the protected environment file:

@@ -17,3 +17,21 @@ test('the auth recovery control is a button, not a bare sign-in link that can bo
   assert.match(page, /<button id="auth-action"/)
   assert.doesNotMatch(page, /<a[^>]+class="primary-link"[^>]+href="\/signin"/)
 })
+
+test('every tab button has the panel the switcher will look for', () => {
+  const tabs = [...page.matchAll(/data-tab="([a-z-]+)"/g)].map(match => match[1])
+
+  assert.ok(tabs.length > 0, 'index.html must declare tab buttons')
+  const missing = tabs.filter(name => !page.includes(`id="tab-${name}"`))
+  assert.deepEqual(missing, [], `index.html is missing tab panels: ${missing.join(', ')}`)
+})
+
+test('the model gateway tab keeps the pricing guardrail in front of the administrator', () => {
+  // Adding a model without a ratio makes the gateway bill at its fallback,
+  // roughly five hundred times the real price. The tab that sends an
+  // administrator to the gateway must say so.
+  const panel = page.slice(page.indexOf('id="tab-gateway"'))
+
+  assert.match(panel, /倍率/)
+  assert.match(panel, /manage\.sh verify/)
+})

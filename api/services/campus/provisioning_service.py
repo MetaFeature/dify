@@ -21,7 +21,12 @@ from services.campus.domain import (
     ProvisionedWorkspace,
     WorkspaceProvisioner,
 )
-from services.campus.errors import CampusProvisioningLockError, StudentNotFoundError, StudentSuspendedError
+from services.campus.errors import (
+    CampusProvisioningError,
+    CampusProvisioningLockError,
+    StudentNotFoundError,
+    StudentSuspendedError,
+)
 
 
 class PlatformProvisioningService(PlatformProvisioner):
@@ -99,8 +104,33 @@ class PlatformProvisioningService(PlatformProvisioner):
             )
             self._session.add(gateway_binding)
             self._session.commit()
+        else:
+            self._reconcile_models(student, workspace.dify_tenant_id, gateway_binding.gateway_token_id)
 
         return ProvisionedPlatform(workspace=workspace, gateway_token_id=gateway_binding.gateway_token_id)
+
+    def _reconcile_models(self, student: CampusStudent, dify_tenant_id: str, gateway_token_id: str) -> None:
+        """Bring an already-provisioned workspace up to the configured model list.
+
+        Widening the deployment's model list otherwise leaves existing students
+        unable to select the new models: their workspace was configured once, at
+        first sign-in, under the list in force back then.
+        """
+        if not self._model_configurator.needs_configuration(dify_tenant_id):
+            return
+        allowance_quota = self._allowance_quota(student.initial_allowance_usd)
+        managed_token = self._gateway_provisioner.create_managed_token(student.id, allowance_quota)
+        if managed_token.created:
+            # The bound token is gone, so this is a brand-new one carrying the
+            # initial allowance again. Adopting it would silently refund whatever
+            # the student had already spent.
+            if managed_token.token_id != gateway_token_id:
+                self._gateway_provisioner.delete_managed_token(managed_token.token_id)
+            raise CampusProvisioningError(
+                f"Campus gateway no longer holds the token bound to student {student.student_number}"
+            )
+        self._model_configurator.configure(dify_tenant_id, managed_token.secret)
+        self._session.commit()
 
     @contextmanager
     def _provisioning_lock(self, student_id: str) -> Iterator[None]:

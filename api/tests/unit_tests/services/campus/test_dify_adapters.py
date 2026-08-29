@@ -621,3 +621,99 @@ def test_model_configurator_updates_only_the_models_already_registered(sqlite_en
 
     assert updated == ["deepseek-v4-flash"]
     assert created == ["bge-m3"]
+
+
+def _configurator(session: Session, spec: str) -> DifyModelConfigurator:
+    return DifyModelConfigurator(
+        session=session,
+        provider="langgenius/openai/openai",
+        provider_plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+        credential_name="Campus managed",
+        api_key_field="openai_api_key",
+        base_url_field="openai_api_base",
+        base_url="http://model-gateway:3000/v1",
+        models=parse_campus_models(spec),
+        api_protocol="chat",
+        plugin_installer=SimpleNamespace(ensure_installed=lambda *_: None),
+        provider_service=SimpleNamespace(),
+    )
+
+
+def _registered(session: Session, model_name: str, model_type: ModelType) -> ProviderModelCredential:
+    return ProviderModelCredential(
+        tenant_id="tenant-1",
+        provider_name="langgenius/openai/openai",
+        model_name=model_name,
+        model_type=model_type,
+        credential_name="Campus managed",
+        encrypted_config="{}",
+    )
+
+
+def test_configuration_is_needed_when_a_configured_model_is_not_registered(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    with Session(sqlite_engine) as session:
+        session.add(_registered(session, "deepseek-v4-flash", ModelType.LLM))
+        session.commit()
+
+        # The workspace was configured under a narrower list than the one in force.
+        assert _configurator(session, "llm:deepseek-v4-flash,text-embedding:bge-m3").needs_configuration("tenant-1")
+
+
+def test_configuration_is_not_needed_when_every_configured_model_is_registered(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    with Session(sqlite_engine) as session:
+        session.add_all(
+            [
+                _registered(session, "deepseek-v4-flash", ModelType.LLM),
+                _registered(session, "bge-m3", ModelType.TEXT_EMBEDDING),
+            ]
+        )
+        session.commit()
+
+        configurator = _configurator(session, "llm:deepseek-v4-flash,text-embedding:bge-m3")
+        assert not configurator.needs_configuration("tenant-1")
+
+
+def test_configuration_is_needed_when_a_model_is_registered_under_the_wrong_type(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    with Session(sqlite_engine) as session:
+        # bge-m3 registered as a chat model is not the embedding slot a knowledge
+        # base needs, so the workspace still has to be reconfigured.
+        session.add_all(
+            [
+                _registered(session, "deepseek-v4-flash", ModelType.LLM),
+                _registered(session, "bge-m3", ModelType.LLM),
+            ]
+        )
+        session.commit()
+
+        configurator = _configurator(session, "llm:deepseek-v4-flash,text-embedding:bge-m3")
+        assert configurator.needs_configuration("tenant-1")
+
+
+def test_configuration_is_scoped_to_the_workspace_being_asked_about(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    with Session(sqlite_engine) as session:
+        session.add_all(
+            [
+                _registered(session, "deepseek-v4-flash", ModelType.LLM),
+                _registered(session, "bge-m3", ModelType.TEXT_EMBEDDING),
+            ]
+        )
+        session.commit()
+
+        configurator = _configurator(session, "llm:deepseek-v4-flash,text-embedding:bge-m3")
+        assert configurator.needs_configuration("tenant-2")

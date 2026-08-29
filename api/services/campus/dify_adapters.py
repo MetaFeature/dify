@@ -378,8 +378,34 @@ class DifyModelConfigurator:
             self._base_url_field: self._base_url,
             "api_protocol": self._api_protocol,
         }
+        registered = self._registered_models(dify_tenant_id)
         for model in self._models:
-            self._upsert_model_credential(dify_tenant_id, model, model_credentials)
+            self._upsert_model_credential(model, model_credentials, dify_tenant_id, registered)
+
+    def needs_configuration(self, dify_tenant_id: str) -> bool:
+        """Report whether this workspace is missing any configured model.
+
+        Answering in one query keeps this cheap enough to ask on every sign-in,
+        which is what lets a widened model list reach existing workspaces without
+        a migration step.
+        """
+        registered = self._registered_models(dify_tenant_id)
+        return any((model.name, model.model_type) not in registered for model in self._models)
+
+    def _registered_models(self, dify_tenant_id: str) -> dict[tuple[str, ModelType], str]:
+        """Map this workspace's managed model registrations to their credential ids."""
+        rows = self._session.execute(
+            select(
+                ProviderModelCredential.model_name,
+                ProviderModelCredential.model_type,
+                ProviderModelCredential.id,
+            ).where(
+                ProviderModelCredential.tenant_id == dify_tenant_id,
+                ProviderModelCredential.provider_name == self._provider,
+                ProviderModelCredential.credential_name == self._credential_name,
+            )
+        ).all()
+        return {(name, ModelType(model_type)): credential_id for name, model_type, credential_id in rows}
 
     def _validate_model(self) -> str:
         """Name the LLM the plugin probes when validating the credential."""
@@ -389,18 +415,14 @@ class DifyModelConfigurator:
         raise CampusProvisioningError("Campus model list has no llm to validate credentials against")
 
     def _upsert_model_credential(
-        self, dify_tenant_id: str, model: CampusModel, model_credentials: ModelCredentialPayload
+        self,
+        model: CampusModel,
+        model_credentials: ModelCredentialPayload,
+        dify_tenant_id: str,
+        registered: dict[tuple[str, ModelType], str],
     ) -> None:
-        existing_model = self._session.scalar(
-            select(ProviderModelCredential).where(
-                ProviderModelCredential.tenant_id == dify_tenant_id,
-                ProviderModelCredential.provider_name == self._provider,
-                ProviderModelCredential.model_name == model.name,
-                ProviderModelCredential.model_type == model.model_type,
-                ProviderModelCredential.credential_name == self._credential_name,
-            )
-        )
-        if existing_model is None:
+        credential_id = registered.get((model.name, model.model_type))
+        if credential_id is None:
             self._provider_service.create_model_credential(
                 tenant_id=dify_tenant_id,
                 provider=self._provider,
@@ -416,7 +438,7 @@ class DifyModelConfigurator:
                 model_type=model.model_type.value,
                 model=model.name,
                 credentials=model_credentials,
-                credential_id=existing_model.id,
+                credential_id=credential_id,
                 credential_name=self._credential_name,
             )
 

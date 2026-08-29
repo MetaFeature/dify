@@ -30,9 +30,7 @@ def upsert_credential(session: Session, student_id: str, password: str) -> None:
     salt = secrets.token_bytes(16)
     password_hashed = base64.b64encode(hash_password(password, salt)).decode()
     password_salt = base64.b64encode(salt).decode()
-    credential = session.scalar(
-        select(CampusStudentCredential).where(CampusStudentCredential.student_id == student_id)
-    )
+    credential = session.scalar(select(CampusStudentCredential).where(CampusStudentCredential.student_id == student_id))
     if credential is None:
         session.add(
             CampusStudentCredential(
@@ -75,9 +73,7 @@ class StudentCredentialService:
             PortalSessionError: A row exists and the password does not match;
                 this fails closed without fallback.
         """
-        student = self._session.scalar(
-            select(CampusStudent).where(CampusStudent.student_number == subject.strip())
-        )
+        student = self._session.scalar(select(CampusStudent).where(CampusStudent.student_number == subject.strip()))
         if student is None:
             raise CredentialNotFoundError("student has no platform credential")
         row = self._session.scalar(
@@ -132,9 +128,7 @@ class StudentCredentialService:
             return set()
         return set(
             self._session.scalars(
-                select(CampusStudentCredential.student_id).where(
-                    CampusStudentCredential.student_id.in_(student_ids)
-                )
+                select(CampusStudentCredential.student_id).where(CampusStudentCredential.student_id.in_(student_ids))
             ).all()
         )
 

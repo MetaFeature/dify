@@ -86,9 +86,7 @@ class AdministratorService:
         """Return every active named administrator, ordered by display name."""
         return list(
             self._session.scalars(
-                select(CampusAdministrator)
-                .where(CampusAdministrator.active)
-                .order_by(CampusAdministrator.display_name)
+                select(CampusAdministrator).where(CampusAdministrator.active).order_by(CampusAdministrator.display_name)
             ).all()
         )
 

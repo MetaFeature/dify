@@ -93,6 +93,4 @@ class AllowanceService:
         )
 
     def _usd(self, quota: int) -> Decimal:
-        return (Decimal(quota) / Decimal(self._quota_units_per_usd)).quantize(
-            Decimal("0.0001"), rounding=ROUND_HALF_UP
-        )
+        return (Decimal(quota) / Decimal(self._quota_units_per_usd)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)

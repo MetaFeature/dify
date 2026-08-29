@@ -168,7 +168,8 @@ def test_roster_sync_sets_and_resets_credentials(campus_session: Session):
     assert credentials.authenticate("20260001", "Ngc0001").student_number == "20260001"
     assert credentials.authenticate("20260002", "Ngc0002").student_number == "20260002"
     revoked = campus_session.scalar(select(CampusPortalSession))
-    assert revoked is not None and revoked.revoked_at is not None
+    assert revoked is not None
+    assert revoked.revoked_at is not None
 
 
 def test_roster_sync_keeps_credentials_when_password_is_omitted(campus_session: Session):
@@ -210,6 +211,4 @@ def test_preview_sync_reports_counts_without_writing(campus_session: Session):
 
     assert preview == SyncResult(created=1, updated=1, password_resets=1)
     assert campus_session.scalar(select(CampusStudentCredential)) is None
-    assert (
-        campus_session.scalar(select(CampusStudent).where(CampusStudent.student_number == "20260002")) is None
-    )
+    assert campus_session.scalar(select(CampusStudent).where(CampusStudent.student_number == "20260002")) is None

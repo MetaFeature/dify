@@ -412,9 +412,7 @@ class ReservationService:
             for reservation, slot in rows
         )
 
-    def _grants_immediate_access(
-        self, slot: CampusAccessSlot, *, is_current_slot: bool, confirmed_count: int
-    ) -> bool:
+    def _grants_immediate_access(self, slot: CampusAccessSlot, *, is_current_slot: bool, confirmed_count: int) -> bool:
         """Return whether a new claim on this slot would confirm with immediate access.
 
         Only a current-slot claim can confirm immediately, and only when confirmed

@@ -76,3 +76,11 @@ textarea { width: 100%; padding: 12px; border: 1px solid #d7deea; border-radius:
   .tabs { flex-wrap: wrap; }
   table { display: block; overflow-x: auto; }
 }
+
+/* Model gateway tab: prose rather than a data table. */
+#tab-gateway h3 { margin: 20px 0 8px; font-size: 15px; }
+#tab-gateway p { margin: 0 0 12px; line-height: 1.6; }
+#tab-gateway code { padding: 1px 5px; border-radius: 4px; background: #f1f2f4; font-size: 12px; }
+#tab-gateway a.primary { display: inline-block; text-decoration: none; }
+.gateway-notes { margin: 0 0 12px; padding-left: 20px; line-height: 1.7; }
+.gateway-notes li { margin-bottom: 6px; }

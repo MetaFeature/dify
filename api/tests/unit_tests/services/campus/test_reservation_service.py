@@ -623,8 +623,10 @@ def test_raising_capacity_before_start_promotes_waiters_in_fifo_order(campus_ses
 
     promoted = campus_session.get(CampusReservation, first_waiter.id)
     still_waiting = campus_session.get(CampusReservation, second_waiter.id)
-    assert promoted is not None and promoted.status is ReservationStatus.CONFIRMED
-    assert still_waiting is not None and still_waiting.status is ReservationStatus.WAITLISTED
+    assert promoted is not None
+    assert promoted.status is ReservationStatus.CONFIRMED
+    assert still_waiting is not None
+    assert still_waiting.status is ReservationStatus.WAITLISTED
     assert change.confirmed == 2
     assert change.waitlisted == 1
 
