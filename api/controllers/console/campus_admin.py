@@ -73,11 +73,7 @@ def _identity_from(student: StudentIdentityPayload) -> StudentIdentity:
 
 
 def _passwords_from(students: list[StudentIdentityPayload]) -> dict[str, str]:
-    return {
-        student.student_number.strip(): student.password
-        for student in students
-        if student.password
-    }
+    return {student.student_number.strip(): student.password for student in students if student.password}
 
 
 @console_ns.route("/campus/admin/students")
