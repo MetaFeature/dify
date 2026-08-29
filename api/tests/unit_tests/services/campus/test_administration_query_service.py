@@ -38,7 +38,7 @@ def campus_session(sqlite_engine) -> Session:
     ]
     CampusStudent.metadata.create_all(sqlite_engine, tables=tables)
     with Session(sqlite_engine, expire_on_commit=False) as session:
-        students = StudentAdministrationService(session=session, default_allowance_yuan=Decimal(20))
+        students = StudentAdministrationService(session=session, default_allowance_usd=Decimal(20))
         students.sync_students(
             [StudentIdentity(student_number="20260001", display_name="Student One")],
             actor_account_id="admin-1",
@@ -57,12 +57,12 @@ def campus_session(sqlite_engine) -> Session:
 
 
 def test_admin_detail_includes_workspace_and_redacted_allowance(campus_session: Session):
-    students = StudentAdministrationService(session=campus_session, default_allowance_yuan=Decimal(20))
+    students = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     service = CampusAdministrationQueryService(
         session=campus_session,
         students=students,
         gateway=FakeModelGateway(),
-        quota_units_per_yuan=100,
+        quota_units_per_usd=100,
     )
 
     detail = service.get_student_detail("20260001")
@@ -70,5 +70,5 @@ def test_admin_detail_includes_workspace_and_redacted_allowance(campus_session: 
     assert detail.status == StudentStatus.ACTIVE
     assert detail.workspace_id == "tenant-1"
     assert detail.allowance is not None
-    assert detail.allowance.remaining_yuan == Decimal("20.0000")
+    assert detail.allowance.remaining_usd == Decimal("20.0000")
     assert not hasattr(detail, "gateway_token_id")

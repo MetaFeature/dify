@@ -148,11 +148,33 @@ validate() {
   fi
   validate_branding_logo_source
   validate_gateway_build_images
+  validate_campus_model_list
+  "${SCRIPT_DIR}/test-model-list.sh"
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
   "${COMPOSE[@]}" config --quiet
   "${COMPOSE[@]}" config --format json | \
     python3 "${SCRIPT_DIR}/validate_compose_credentials.py"
+}
+
+validate_campus_model_list() {
+  local models entry model_type name seen_llm=false
+  models="$(env_value CAMPUS_MODEL_PROVIDER_MODELS)"
+  [[ -n "${models}" ]] || fail "set CAMPUS_MODEL_PROVIDER_MODELS"
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    model_type="${entry%%:*}"
+    name="${entry#*:}"
+    [[ "${entry}" == *:* && -n "${name}" ]] || \
+      fail "CAMPUS_MODEL_PROVIDER_MODELS entry must be type:name, got '${entry}'"
+    case "${model_type}" in
+      llm) seen_llm=true ;;
+      text-embedding|rerank|speech2text|moderation|tts) ;;
+      *) fail "CAMPUS_MODEL_PROVIDER_MODELS has an unknown model type: '${entry}'" ;;
+    esac
+  done < <(printf '%s\n' "${models}" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  [[ "${seen_llm}" == "true" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER_MODELS must name at least one llm to validate credentials against"
 }
 
 validate_gateway_bootstrap() {
@@ -334,6 +356,23 @@ backup() {
   echo "${destination}"
 }
 
+assert_static_surface_is_consistent() {
+  # A served page and its served script must agree on required element ids.
+  # Their pages are single-file bind mounts, so a stale container can serve an
+  # old page beside a new script: the script then throws during init and every
+  # listener is lost, including the one that keeps credentials out of the URL.
+  local page_url="$1" script_url="$2" page script missing id
+  page="$(local_curl --fail --silent --show-error --max-time 10 "${page_url}")"
+  script="$(local_curl --fail --silent --show-error --max-time 10 "${script_url}")"
+  missing=""
+  while read -r id; do
+    [[ -z "${id}" ]] && continue
+    grep -Fq "id=\"${id}\"" <<<"${page}" || missing+=" #${id}"
+  done < <(grep -oE "requiredElement\('#[a-z-]+'" <<<"${script}" | sed -E "s/.*'#([a-z-]+)'/\1/" | sort -u)
+  [[ -z "${missing}" ]] || \
+    fail "${page_url} serves a page missing required elements:${missing} (stale static container?)"
+}
+
 verify() {
   validate
   local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
@@ -418,6 +457,16 @@ verify() {
     "http://127.0.0.1:${admin_port}/signin")"
   [[ "${status}" == "200" ]] || fail "Campus administrator sign-in is unavailable (HTTP ${status})"
 
+  local_curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${admin_port}/" | \
+    grep -Fq '校园平台管理后台' || fail "Campus administration portal does not own the administrator listener root"
+
+  assert_static_surface_is_consistent \
+    "http://127.0.0.1:${campus_port}/portal/" \
+    "http://127.0.0.1:${campus_port}/portal/assets/portal.js"
+  assert_static_surface_is_consistent \
+    "http://127.0.0.1:${admin_port}/" \
+    "http://127.0.0.1:${admin_port}/campus-admin/assets/admin.js"
+
   for blocked_route in /signin/check-code /console/api/login; do
     status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
       "http://127.0.0.1:${campus_port}${blocked_route}")"
@@ -452,7 +501,88 @@ verify() {
   container_id="$("${COMPOSE[@]}" ps -q plugin_daemon)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
     fail "plugin daemon is published"
+  verify_gateway_pricing "${gateway_port}"
   local_curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
+}
+
+gateway_sql() {
+  "${COMPOSE[@]}" exec -T model-gateway-db sh -ec \
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -qtAX -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' "$1"
+}
+
+# An unpriced model does not fail loudly: the gateway falls back to a ratio of
+# 37.5 (about $75 per million tokens) and, with self-use mode on, bills it
+# silently. These assertions are what keep that from reaching a student.
+verify_gateway_pricing() {
+  local gateway_port="$1"
+  local unpriced self_use probe_model probe_id probe_secret status log_ratio sql
+
+  sql="$(
+    cat <<'SQL'
+select a.model
+from (select distinct model from abilities where enabled) a
+where not exists (select 1 from options o where o.key = 'ModelRatio' and o.value::jsonb ? a.model)
+  and not exists (select 1 from options o where o.key = 'ModelPrice' and o.value::jsonb ? a.model)
+order by a.model
+SQL
+  )"
+  unpriced="$(gateway_sql "${sql}")"
+  [[ -z "${unpriced}" ]] || \
+    fail "gateway routes models with no price: $(printf '%s' "${unpriced}" | tr '\n' ' ')"
+
+  self_use="$(gateway_sql "select value from options where key = 'SelfUseModeEnabled'")"
+  [[ -z "${self_use}" || "${self_use}" == "false" ]] || \
+    fail "gateway self-use mode is on, so an unpriced model would bill at the fallback ratio"
+
+  probe_model="$(campus_probe_model)"
+  [[ -n "${probe_model}" ]] || fail "CAMPUS_MODEL_PROVIDER_MODELS names no llm to probe"
+
+  # A probe token proves the student path end to end: group routing, upstream
+  # reachability, and that metering lands with a sane ratio. Deleting it is a
+  # soft delete, so the row stays but the credential stops authenticating —
+  # verified to return 401 afterwards.
+  gateway_admin_post "${gateway_port}" /api/token/ \
+    "{\"name\":\"campus-verify-probe\",\"remain_quota\":500000,\"expired_time\":-1,\"unlimited_quota\":false,\"model_limits_enabled\":false,\"group\":\"campus\"}" \
+    | grep -q '"success":true' || fail "could not create the gateway probe token"
+  probe_id="$(gateway_sql "select id from tokens where name = 'campus-verify-probe' and deleted_at is null order by id desc limit 1")"
+  [[ -n "${probe_id}" ]] || fail "gateway probe token was not stored"
+  probe_secret="$(gateway_sql "select key from tokens where id = ${probe_id}")"
+  [[ -n "${probe_secret}" ]] || fail "gateway probe token has no secret"
+
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
+    -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${probe_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"1+1=?\"}],\"max_tokens\":8}" \
+    "http://127.0.0.1:${gateway_port}/v1/chat/completions")"
+  log_ratio="$(gateway_sql "select other::jsonb->>'model_ratio' from logs where type = 2 and token_id = ${probe_id} order by id desc limit 1")"
+  gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
+
+  [[ "${status}" == "200" ]] || fail "gateway probe call failed (HTTP ${status})"
+  [[ -n "${log_ratio}" ]] || fail "gateway probe call was not metered"
+  awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 < 1.0) }' || \
+    fail "gateway metered the probe at ratio ${log_ratio}, which is the unpriced fallback"
+}
+
+# The first llm in the configured model list is what a student's workspace is
+# validated against, so it is the right model to probe.
+campus_probe_model() {
+  env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n' | awk -F: '$1 == "llm" { print $2; exit }'
+}
+
+gateway_admin_post() {
+  local gateway_port="$1" path="$2" body="$3"
+  local_curl --silent --show-error --max-time 20 -X POST \
+    -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
+    -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
+    -H 'Content-Type: application/json' -d "${body}" \
+    "http://127.0.0.1:${gateway_port}${path}"
+}
+
+gateway_admin_delete() {
+  local gateway_port="$1" path="$2"
+  local_curl --silent --show-error --max-time 20 -X DELETE \
+    -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
+    -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
+    "http://127.0.0.1:${gateway_port}${path}"
 }
 
 open_bootstrap() {
@@ -668,6 +798,10 @@ deploy() {
     backup >/dev/null
   fi
   "${COMPOSE[@]}" up -d --build
+  # Recreate both static surfaces: their pages are single-file bind mounts, so a
+  # source update that replaces the file's inode leaves a running container
+  # serving the old page while its mounted asset directory serves new scripts.
+  "${COMPOSE[@]}" up -d --no-deps --force-recreate portal
   "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
   verify
 }

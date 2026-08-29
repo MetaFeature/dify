@@ -25,6 +25,7 @@ class StudentIdentity:
 class SyncResult:
     created: int
     updated: int
+    password_resets: int = 0
 
 
 @dataclass(frozen=True)
@@ -47,10 +48,21 @@ class SlotAvailability:
 
 
 @dataclass(frozen=True)
+class SlotCapacityChange:
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int
+    previous_capacity: int
+    confirmed: int
+    waitlisted: int
+
+
+@dataclass(frozen=True)
 class AccessDecision:
     allowed: bool
     reservation_id: str | None = None
     ends_at: datetime | None = None
+    server_now: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -76,15 +88,15 @@ class ModelGateway(Protocol):
 @dataclass(frozen=True)
 class ModelUsageSummary:
     model: str
-    used_yuan: Decimal
+    used_usd: Decimal
     requests: int
 
 
 @dataclass(frozen=True)
 class AllowanceSummary:
-    remaining_yuan: Decimal
-    used_yuan: Decimal
-    total_yuan: Decimal
+    remaining_usd: Decimal
+    used_usd: Decimal
+    total_usd: Decimal
     model_calls_enabled: bool
     by_model: tuple[ModelUsageSummary, ...]
 

@@ -60,7 +60,7 @@ test('dashboard data is loaded from the existing Campus backend contracts', asyn
     if (url.endsWith('/reservations'))
       return response({ data: [] })
     if (url.endsWith('/allowance'))
-      return response({ remaining_yuan: '20', used_yuan: '0', total_yuan: '20', model_calls_enabled: true, by_model: [] })
+      return response({ remaining_usd: '20', used_usd: '0', total_usd: '20', model_calls_enabled: true, by_model: [] })
     throw new Error(`Unexpected request: ${url}`)
   }
   const api = new CampusApi(fetcher)
@@ -69,7 +69,7 @@ test('dashboard data is loaded from the existing Campus backend contracts', asyn
 
   assert.equal(result.access.allowed, false)
   assert.deepEqual(result.reservations, [])
-  assert.equal(result.allowance.remaining_yuan, '20')
+  assert.equal(result.allowance.remaining_usd, '20')
   assert.ok(requested.every(({ options }) => options.credentials === 'same-origin'))
 })
 
@@ -89,4 +89,36 @@ test('current-slot load rejection has a dedicated safe error code', async () => 
     api.reserve('2026-08-12T02:00:00+08:00'),
     error => error instanceof CampusApiError && error.status === 429 && error.code === 'busy',
   )
+})
+
+test('known backend conflict codes are surfaced while unknown bodies stay normalized', async () => {
+  const pendingApi = new CampusApi(async () =>
+    response({ code: 'pending_reservation_exists', message: 'detail' }, { status: 409 }))
+  const unknownApi = new CampusApi(async () =>
+    response({ code: 'internal_secret_state', message: 'detail' }, { status: 409 }))
+
+  await assert.rejects(
+    pendingApi.reserve('2026-08-12T02:00:00+08:00'),
+    error => error instanceof CampusApiError && error.code === 'pending_reservation_exists',
+  )
+  await assert.rejects(
+    unknownApi.reserve('2026-08-12T02:00:00+08:00'),
+    error => error instanceof CampusApiError && error.code === 'conflict',
+  )
+})
+
+test('password change posts both secrets to the campus endpoint', async () => {
+  const requests = []
+  const api = new CampusApi(async (url, options = {}) => {
+    requests.push({ url, options })
+    return response({ result: 'success' })
+  })
+
+  await api.changePassword('old-secret', 'NewPass1234')
+
+  assert.equal(requests[0].url, '/console/api/campus/password')
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    current_password: 'old-secret',
+    new_password: 'NewPass1234',
+  })
 })

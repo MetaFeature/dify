@@ -19,7 +19,7 @@ def campus_session(sqlite_engine) -> Session:
 
 
 def test_roster_sync_is_idempotent_and_updates_metadata(campus_session: Session):
-    service = StudentAdministrationService(session=campus_session, default_allowance_yuan=Decimal(20))
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     initial = StudentIdentity(student_number="20260001", display_name="Old Name", cohort="2026-A")
     changed = StudentIdentity(student_number="20260001", display_name="New Name", cohort="2026-B")
 
@@ -32,11 +32,11 @@ def test_roster_sync_is_idempotent_and_updates_metadata(campus_session: Session)
     assert len(students) == 1
     assert students[0].display_name == "New Name"
     assert students[0].cohort == "2026-B"
-    assert students[0].initial_allowance_yuan == Decimal(20)
+    assert students[0].initial_allowance_usd == Decimal(20)
 
 
 def test_missing_roster_row_does_not_suspend_existing_student(campus_session: Session):
-    service = StudentAdministrationService(session=campus_session, default_allowance_yuan=Decimal(20))
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     service.sync_students(
         [StudentIdentity(student_number="20260001", display_name="Student One")],
         actor_account_id="admin-1",
@@ -50,7 +50,7 @@ def test_missing_roster_row_does_not_suspend_existing_student(campus_session: Se
 
 
 def test_roster_sync_rejects_duplicate_student_numbers_as_domain_validation(campus_session: Session):
-    service = StudentAdministrationService(session=campus_session, default_allowance_yuan=Decimal(20))
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     duplicate = StudentIdentity(student_number="20260001", display_name="Student One")
 
     with pytest.raises(CampusValidationError, match="unique"):
@@ -58,7 +58,7 @@ def test_roster_sync_rejects_duplicate_student_numbers_as_domain_validation(camp
 
 
 def test_suspend_is_explicit_and_audited(campus_session: Session):
-    service = StudentAdministrationService(session=campus_session, default_allowance_yuan=Decimal(20))
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     service.sync_students(
         [StudentIdentity(student_number="20260001", display_name="Student One")],
         actor_account_id="admin-1",

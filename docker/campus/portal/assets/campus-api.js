@@ -4,15 +4,18 @@ const CAMPUS_API_BASE = '/console/api/campus'
 /** @typedef {'confirmed' | 'waitlisted' | 'cancelled' | 'completed' | 'expired'} ReservationStatus */
 /** @typedef {{ id: string, status: ReservationStatus, starts_at: string, ends_at: string, waitlist_position?: number | null }} Reservation */
 /** @typedef {{ starts_at: string, ends_at: string, capacity: number, confirmed: number, waitlisted: number, reservable: boolean }} AccessSlot */
-/** @typedef {{ allowed: boolean, reservation_id: string | null, ends_at: string | null }} AccessDecision */
-/** @typedef {{ model: string, used_yuan: string, requests: number }} ModelUsage */
-/** @typedef {{ remaining_yuan: string, used_yuan: string, total_yuan: string, model_calls_enabled: boolean, by_model: ModelUsage[] }} Allowance */
+/** @typedef {{ allowed: boolean, reservation_id: string | null, ends_at: string | null, server_now?: string | null }} AccessDecision */
+/** @typedef {{ model: string, used_usd: string, requests: number }} ModelUsage */
+/** @typedef {{ remaining_usd: string, used_usd: string, total_usd: string, model_calls_enabled: boolean, by_model: ModelUsage[] }} Allowance */
 /** @typedef {{ access: AccessDecision, reservations: Reservation[], allowance: Allowance }} Dashboard */
+
+/** Backend-issued conflict codes the portal understands beyond plain HTTP statuses. */
+const BODY_ERROR_CODES = new Set(['pending_reservation_exists', 'duplicate_slot_claim'])
 
 export class CampusApiError extends Error {
   /**
    * @param {number} status
-   * @param {'bad-request' | 'unauthorized' | 'forbidden' | 'not-found' | 'conflict' | 'busy' | 'unavailable' | 'network'} code
+   * @param {string} code
    */
   constructor(status, code) {
     super(code)
@@ -92,6 +95,18 @@ export class CampusApi {
   }
 
   /**
+   * @param {string} currentPassword
+   * @param {string} newPassword
+   * @returns {Promise<{ result: string }>}
+   */
+  async changePassword(currentPassword, newPassword) {
+    return this.#request('/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    })
+  }
+
+  /**
    * @template T
    * @param {string} path
    * @param {RequestInit} [options]
@@ -113,10 +128,26 @@ export class CampusApi {
       throw new CampusApiError(0, 'network')
     }
     if (!response.ok)
-      throw new CampusApiError(response.status, errorCode(response.status))
+      throw new CampusApiError(response.status, await bodyErrorCode(response) || errorCode(response.status))
     if (response.status === 204)
       return /** @type {T} */ (undefined)
     return /** @type {Promise<T>} */ (response.json())
+  }
+}
+
+/**
+ * Read a known backend error code from the response body, if any.
+ *
+ * @param {Response} response
+ * @returns {Promise<string | null>}
+ */
+async function bodyErrorCode(response) {
+  try {
+    const body = await response.json()
+    return body && typeof body.code === 'string' && BODY_ERROR_CODES.has(body.code) ? body.code : null
+  }
+  catch {
+    return null
   }
 }
 

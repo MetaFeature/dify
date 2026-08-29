@@ -3,10 +3,20 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.orm import Session
 
-from models.campus import CampusAccessSlot, CampusReservation, CampusStudent, ReservationStatus, StudentStatus
+from models.campus import (
+    CampusAccessSlot,
+    CampusAuditEvent,
+    CampusReservation,
+    CampusStudent,
+    ReservationStatus,
+    StudentStatus,
+)
 from services.campus.errors import (
-    ActiveReservationExistsError,
     CurrentSlotLoadUnavailableError,
+    DuplicateSlotClaimError,
+    PendingReservationExistsError,
+    ReservationCancellationError,
+    ReservationNotFoundError,
     ReservationWindowError,
 )
 from services.campus.reservation_service import ReservationService
@@ -44,6 +54,7 @@ def campus_session(sqlite_engine) -> Session:
         CampusStudent.__table__,
         CampusAccessSlot.__table__,
         CampusReservation.__table__,
+        CampusAuditEvent.__table__,
     ]
     CampusStudent.metadata.create_all(sqlite_engine, tables=tables)
     with Session(sqlite_engine, expire_on_commit=False) as session:
@@ -259,6 +270,51 @@ def test_pre_start_cancellation_promotes_first_waiter(campus_session: Session):
     assert promoted.status is ReservationStatus.CONFIRMED
 
 
+def test_in_progress_cancellation_revokes_access_and_promotes_first_waiter(campus_session: Session):
+    service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    first_student = _student_id(campus_session, "20260001")
+    second_student = _student_id(campus_session, "20260002")
+    confirmed = service.reserve(first_student, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+    waiting = service.reserve(second_student, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+
+    service.cancel(first_student, confirmed.id, now=now)
+
+    promoted = campus_session.get(CampusReservation, waiting.id)
+    assert promoted is not None
+    assert promoted.status is ReservationStatus.CONFIRMED
+    assert service.access_decision(first_student, now=now).allowed is False
+
+
+def test_cancellation_after_slot_end_is_rejected(campus_session: Session):
+    service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    student_id = _student_id(campus_session, "20260001")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    confirmed = service.reserve(student_id, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+
+    with pytest.raises((ReservationCancellationError, ReservationNotFoundError)):
+        service.cancel(student_id, confirmed.id, now=datetime(2026, 8, 11, 4, 0, tzinfo=UTC))
+
+
+def test_student_can_rebook_the_same_slot_after_in_progress_cancellation(campus_session: Session):
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+    first = service.reserve(student_id, starts_at, now=now)
+    service.cancel(student_id, first.id, now=now)
+
+    rebooked = service.reserve(student_id, starts_at, now=now)
+
+    assert rebooked.status is ReservationStatus.CONFIRMED
+
+
 def test_fifo_promotion_uses_monotonic_sequence_when_waiters_share_a_timestamp(campus_session: Session):
     service = ReservationService(session=campus_session, capacity=1, booking_days=7)
     now = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
@@ -279,14 +335,104 @@ def test_fifo_promotion_uses_monotonic_sequence_when_waiters_share_a_timestamp(c
     assert second_waiter.waitlist_position == 2
 
 
-def test_student_cannot_hold_two_unfinished_claims(campus_session: Session):
+def test_student_cannot_hold_two_pending_claims(campus_session: Session):
     service = ReservationService(session=campus_session, capacity=500, booking_days=7)
     student_id = _student_id(campus_session, "20260001")
     now = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
     service.reserve(student_id, datetime(2026, 8, 11, 2, 0, tzinfo=UTC), now=now)
 
-    with pytest.raises(ActiveReservationExistsError):
+    with pytest.raises(PendingReservationExistsError):
         service.reserve(student_id, datetime(2026, 8, 11, 4, 0, tzinfo=UTC), now=now)
+
+
+def test_effective_reservation_allows_booking_the_next_slot(campus_session: Session):
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+    supplemental = service.reserve(student_id, datetime(2026, 8, 11, 2, 0, tzinfo=UTC), now=now)
+
+    upcoming = service.reserve(student_id, datetime(2026, 8, 11, 4, 0, tzinfo=UTC), now=now)
+
+    assert supplemental.status is ReservationStatus.CONFIRMED
+    assert upcoming.status is ReservationStatus.CONFIRMED
+    assert service.access_decision(student_id, now=now).allowed is True
+
+
+def test_duplicate_claim_on_the_same_slot_is_rejected(campus_session: Session):
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+    service.reserve(student_id, starts_at, now=now)
+
+    with pytest.raises(DuplicateSlotClaimError):
+        service.reserve(student_id, starts_at, now=now)
+
+
+def test_current_slot_waitlist_entry_blocks_a_second_pending_claim(campus_session: Session):
+    service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    waitlisted_student = _student_id(campus_session, "20260002")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    service.reserve(
+        _student_id(campus_session, "20260001"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+    service.reserve(waitlisted_student, starts_at, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+
+    with pytest.raises(PendingReservationExistsError):
+        service.reserve(
+            waitlisted_student,
+            datetime(2026, 8, 11, 4, 0, tzinfo=UTC),
+            now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+        )
+
+
+def test_pending_future_claim_allows_a_confirming_supplemental(campus_session: Session):
+    service = ReservationService(
+        session=campus_session,
+        capacity=500,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260001")
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+    service.reserve(student_id, datetime(2026, 8, 11, 4, 0, tzinfo=UTC), now=now)
+
+    supplemental = service.reserve(student_id, datetime(2026, 8, 11, 2, 0, tzinfo=UTC), now=now)
+
+    assert supplemental.status is ReservationStatus.CONFIRMED
+
+
+def test_pending_future_claim_blocks_a_waitlisting_supplemental(campus_session: Session):
+    service = ReservationService(
+        session=campus_session,
+        capacity=1,
+        booking_days=7,
+        current_slot_load_admission=FixedLoadAdmission(allowed=True),
+    )
+    student_id = _student_id(campus_session, "20260002")
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    service.reserve(
+        _student_id(campus_session, "20260001"),
+        starts_at,
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+    now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
+    service.reserve(student_id, datetime(2026, 8, 11, 4, 0, tzinfo=UTC), now=now)
+
+    with pytest.raises(PendingReservationExistsError):
+        service.reserve(student_id, starts_at, now=now)
 
 
 def test_student_can_book_later_slot_after_previous_slot_ends(campus_session: Session):
@@ -379,6 +525,121 @@ def test_slot_listing_expires_elapsed_waiters_before_counting(campus_session: Se
     assert stored.status is ReservationStatus.EXPIRED
 
 
+def test_slot_listing_reports_the_stored_slot_capacity(campus_session: Session) -> None:
+    campus_session.add(
+        CampusAccessSlot(
+            starts_at=datetime(2026, 8, 11, 2, 0),
+            ends_at=datetime(2026, 8, 11, 4, 0),
+            capacity=3,
+        )
+    )
+    campus_session.commit()
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+
+    slots = service.list_slots(datetime(2026, 8, 11).date(), now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+
+    by_start = {slot.starts_at: slot for slot in slots}
+    assert by_start[datetime(2026, 8, 11, 2, 0, tzinfo=UTC)].capacity == 3
+    assert by_start[datetime(2026, 8, 11, 4, 0, tzinfo=UTC)].capacity == 500
+
+
+def test_closed_slot_is_not_reservable_and_rejects_claims(campus_session: Session) -> None:
+    campus_session.add(
+        CampusAccessSlot(
+            starts_at=datetime(2026, 8, 11, 2, 0),
+            ends_at=datetime(2026, 8, 11, 4, 0),
+            capacity=0,
+        )
+    )
+    campus_session.commit()
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+    now = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
+
+    slots = service.list_slots(datetime(2026, 8, 11).date(), now=now)
+
+    by_start = {slot.starts_at: slot for slot in slots}
+    assert by_start[datetime(2026, 8, 11, 2, 0, tzinfo=UTC)].reservable is False
+    with pytest.raises(ReservationWindowError):
+        service.reserve(_student_id(campus_session, "20260001"), datetime(2026, 8, 11, 2, 0, tzinfo=UTC), now=now)
+
+
+def test_set_slot_capacity_materializes_the_slot_and_appends_audit(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+
+    change = service.set_slot_capacity(
+        starts_at,
+        120,
+        actor_account_id="admin-account",
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+
+    assert change.capacity == 120
+    assert change.previous_capacity == 500
+    stored = campus_session.query(CampusAccessSlot).filter_by(starts_at=datetime(2026, 8, 11, 2, 0)).one()
+    assert stored.capacity == 120
+    audit = campus_session.query(CampusAuditEvent).one()
+    assert audit.action == "slot.capacity_changed"
+    assert audit.actor_account_id == "admin-account"
+    assert audit.target_id == stored.id
+
+
+def test_set_slot_capacity_rejects_ended_slots(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+
+    with pytest.raises(ReservationWindowError):
+        service.set_slot_capacity(
+            datetime(2026, 8, 11, 2, 0, tzinfo=UTC),
+            120,
+            actor_account_id="admin-account",
+            now=datetime(2026, 8, 11, 4, 0, tzinfo=UTC),
+        )
+
+
+def test_lowering_capacity_keeps_existing_confirmed_reservations(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=2, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
+    service.reserve(_student_id(campus_session, "20260001"), starts_at, now=now)
+    service.reserve(_student_id(campus_session, "20260002"), starts_at, now=now)
+
+    change = service.set_slot_capacity(starts_at, 1, actor_account_id="admin-account", now=now)
+
+    assert change.capacity == 1
+    assert change.confirmed == 2
+    statuses = [reservation.status for reservation in campus_session.query(CampusReservation).all()]
+    assert statuses == [ReservationStatus.CONFIRMED, ReservationStatus.CONFIRMED]
+
+
+def test_raising_capacity_before_start_promotes_waiters_in_fifo_order(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=1, booking_days=7)
+    starts_at = datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
+    now = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
+    service.reserve(_student_id(campus_session, "20260001"), starts_at, now=now)
+    first_waiter = service.reserve(_student_id(campus_session, "20260002"), starts_at, now=now)
+    second_waiter = service.reserve(_student_id(campus_session, "20260003"), starts_at, now=now)
+
+    change = service.set_slot_capacity(starts_at, 2, actor_account_id="admin-account", now=now)
+
+    promoted = campus_session.get(CampusReservation, first_waiter.id)
+    still_waiting = campus_session.get(CampusReservation, second_waiter.id)
+    assert promoted is not None and promoted.status is ReservationStatus.CONFIRMED
+    assert still_waiting is not None and still_waiting.status is ReservationStatus.WAITLISTED
+    assert change.confirmed == 2
+    assert change.waitlisted == 1
+
+
+def test_admin_slot_listing_covers_days_outside_the_student_booking_window(campus_session: Session) -> None:
+    service = ReservationService(session=campus_session, capacity=500, booking_days=7)
+
+    slots = service.admin_list_slots(
+        datetime(2026, 9, 30).date(),
+        now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC),
+    )
+
+    assert len(slots) == 12
+
+
 def test_slot_listing_keeps_current_slot_reservable_until_its_fixed_end(campus_session: Session) -> None:
     service = ReservationService(session=campus_session, capacity=500, booking_days=7)
     now = datetime(2026, 8, 11, 2, 30, tzinfo=UTC)
@@ -407,6 +668,8 @@ def test_access_is_only_granted_inside_confirmed_slot(campus_session: Session):
     assert before.allowed is False
     assert during.allowed is True
     assert after.allowed is False
+    assert before.server_now == datetime(2026, 8, 11, 1, 59, tzinfo=UTC)
+    assert during.server_now == datetime(2026, 8, 11, 2, 0, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(

@@ -43,14 +43,14 @@ def campus_session(sqlite_engine) -> Session:
 
 def test_student_summary_uses_rmb_and_never_exposes_gateway_credentials(campus_session: Session):
     gateway = FakeModelGateway()
-    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_yuan=100)
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
     student = campus_session.query(CampusStudent).one()
 
     summary = service.get_summary(student.id)
 
-    assert summary.remaining_yuan == Decimal("20.0000")
-    assert summary.used_yuan == Decimal("30.0000")
-    assert summary.total_yuan == Decimal("50.0000")
+    assert summary.remaining_usd == Decimal("20.0000")
+    assert summary.used_usd == Decimal("30.0000")
+    assert summary.total_usd == Decimal("50.0000")
     assert summary.by_model[0].model == "text-model"
     assert not hasattr(summary, "token")
     assert not hasattr(summary, "channel")
@@ -58,37 +58,37 @@ def test_student_summary_uses_rmb_and_never_exposes_gateway_credentials(campus_s
 
 def test_admin_adjustment_is_idempotent_and_audited(campus_session: Session):
     gateway = FakeModelGateway()
-    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_yuan=100)
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
     student = campus_session.query(CampusStudent).one()
 
     first = service.adjust(
         student.id,
-        delta_yuan=Decimal(5),
+        delta_usd=Decimal(5),
         reason="course allocation",
         actor_account_id="admin-1",
         request_id="adjustment-1",
     )
     second = service.adjust(
         student.id,
-        delta_yuan=Decimal(5),
+        delta_usd=Decimal(5),
         reason="course allocation",
         actor_account_id="admin-1",
         request_id="adjustment-1",
     )
 
-    assert first.remaining_yuan == Decimal("25.0000")
-    assert second.remaining_yuan == Decimal("25.0000")
+    assert first.remaining_usd == Decimal("25.0000")
+    assert second.remaining_usd == Decimal("25.0000")
     assert gateway.adjustments == [("42", 500, "adjustment-1")]
     assert campus_session.query(CampusAllowanceAdjustment).count() == 1
 
 
 def test_adjustment_request_id_cannot_be_reused_with_different_parameters(campus_session: Session):
     gateway = FakeModelGateway()
-    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_yuan=100)
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
     student = campus_session.query(CampusStudent).one()
     service.adjust(
         student.id,
-        delta_yuan=Decimal(5),
+        delta_usd=Decimal(5),
         reason="course allocation",
         actor_account_id="admin-1",
         request_id="adjustment-1",
@@ -97,7 +97,7 @@ def test_adjustment_request_id_cannot_be_reused_with_different_parameters(campus
     with pytest.raises(CampusConflictError, match="different parameters"):
         service.adjust(
             student.id,
-            delta_yuan=Decimal(6),
+            delta_usd=Decimal(6),
             reason="course allocation",
             actor_account_id="admin-1",
             request_id="adjustment-1",

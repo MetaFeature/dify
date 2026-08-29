@@ -3,6 +3,9 @@
 import hashlib
 import logging
 import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import select
@@ -17,11 +20,52 @@ from models.account import Account, AccountStatus, Tenant, TenantAccountJoin, Te
 from models.provider import ProviderCredential, ProviderModelCredential
 from services.account_service import AccountService, TenantService, TokenPair
 from services.campus.domain import ProvisionedWorkspace
-from services.campus.errors import CampusProvisioningError
+from services.campus.errors import CampusProvisioningError, CampusValidationError
 from services.enterprise.rbac_service import RBACService
 from services.model_provider_service import ModelProviderService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CampusModel:
+    """One gateway model exposed inside every student workspace."""
+
+    name: str
+    model_type: ModelType
+
+
+def parse_campus_models(spec: str) -> tuple[CampusModel, ...]:
+    """Parse a ``type:name`` comma-separated model spec.
+
+    A deployment lists the gateway models students may use; the type decides
+    which Dify model slot each one fills, so a knowledge base gets a real
+    embedding model instead of a second chat model. Anything unroutable is
+    rejected here rather than at a student's first sign-in.
+    """
+    models: list[CampusModel] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in (part.strip() for part in spec.split(",")):
+        if not entry:
+            continue
+        raw_type, separator, raw_name = entry.partition(":")
+        if not separator or not raw_name.strip():
+            raise CampusValidationError(f"Campus model entry must be written as type:name, got {entry!r}")
+        name = raw_name.strip()
+        try:
+            model_type = ModelType(raw_type.strip().lower())
+        except ValueError:
+            raise CampusValidationError(f"Campus model entry has an unknown model type: {entry!r}") from None
+        key = (model_type.value, name)
+        if key in seen:
+            raise CampusValidationError(f"Campus model list has a duplicate entry: {entry!r}")
+        seen.add(key)
+        models.append(CampusModel(name=name, model_type=model_type))
+    if not models:
+        raise CampusValidationError("Campus model list must name at least one model")
+    if not any(model.model_type is ModelType.LLM for model in models):
+        raise CampusValidationError("Campus model list must name at least one llm to validate credentials against")
+    return tuple(models)
 
 
 class ProviderPluginInstaller(Protocol):
@@ -72,16 +116,31 @@ class ModelProviderCredentialService(Protocol):
 
 
 class MarketplaceProviderPluginInstaller:
-    """Install one pinned Marketplace plugin per tenant and wait for visibility."""
+    """Install one pinned provider plugin per tenant and wait for visibility.
+
+    A student's first sign-in provisions their workspace, so reaching the public
+    Marketplace on that path makes every new student depend on outbound network
+    at the worst possible moment. When a local package is configured it is used
+    instead, and a package that is missing or does not decode to the pinned
+    identifier fails loudly rather than silently falling back to the network.
+    """
 
     _timeout_seconds: float
     _poll_interval_seconds: float
+    _local_package_path: str
 
-    def __init__(self, *, timeout_seconds: float = 120, poll_interval_seconds: float = 2) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 120,
+        poll_interval_seconds: float = 2,
+        local_package_path: str = "",
+    ) -> None:
         if timeout_seconds <= 0 or poll_interval_seconds <= 0:
             raise ValueError("plugin installation timing must be positive")
         self._timeout_seconds = timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
+        self._local_package_path = local_package_path.strip()
 
     def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
         """Install the pinned provider plugin once and wait for the daemon task."""
@@ -92,7 +151,7 @@ class MarketplaceProviderPluginInstaller:
             if self._is_installed(tenant_id, plugin_unique_identifier):
                 return
 
-            PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+            self._install(tenant_id, plugin_unique_identifier)
             deadline = time.monotonic() + self._timeout_seconds
             while time.monotonic() < deadline:
                 if self._is_installed(tenant_id, plugin_unique_identifier):
@@ -114,6 +173,25 @@ class MarketplaceProviderPluginInstaller:
             plugin_id,
         )
         raise CampusProvisioningError("Campus model provider plugin installation timed out")
+
+    def _install(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+        if not self._local_package_path:
+            PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+            return
+        self._install_from_local_package(tenant_id, plugin_unique_identifier)
+
+    def _install_from_local_package(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+        package = Path(self._local_package_path)
+        if not package.is_file():
+            raise CampusProvisioningError(
+                f"Campus local provider plugin package is missing at {self._local_package_path}"
+            )
+        decoded = PluginService.upload_pkg(tenant_id, package.read_bytes())
+        # The identifier embeds the package checksum, so an identifier match is
+        # also an integrity check on the file that was shipped with the deployment.
+        if decoded.unique_identifier != plugin_unique_identifier:
+            raise CampusProvisioningError("Campus local provider plugin package does not match the pinned identifier")
+        PluginService.install_from_local_pkg(tenant_id, [plugin_unique_identifier])
 
     @staticmethod
     def _is_installed(tenant_id: str, plugin_unique_identifier: str) -> bool:
@@ -214,9 +292,9 @@ class DifyModelConfigurator:
     """Install the plugin and upsert the workspace's opaque gateway credentials.
 
     The pinned OpenAI plugin uses a model name to validate provider credentials,
-    but that probe alone does not register a non-catalog model. The same Campus
-    model is therefore saved as a tenant custom LLM, using the API protocol that
-    the isolated gateway actually implements.
+    but that probe alone does not register a non-catalog model. Every configured
+    Campus model is therefore also saved as a tenant custom model under its own
+    type, using the API protocol that the isolated gateway actually implements.
     """
 
     _session: Session
@@ -226,7 +304,7 @@ class DifyModelConfigurator:
     _api_key_field: str
     _base_url_field: str
     _base_url: str
-    _model: str
+    _models: tuple[CampusModel, ...]
     _api_protocol: ModelApiProtocol
     _plugin_installer: ProviderPluginInstaller
     _provider_service: ModelProviderCredentialService
@@ -241,8 +319,9 @@ class DifyModelConfigurator:
         api_key_field: str,
         base_url_field: str,
         base_url: str,
-        model: str,
+        models: Sequence[CampusModel],
         api_protocol: ModelApiProtocol,
+        plugin_package_path: str = "",
         plugin_installer: ProviderPluginInstaller | None = None,
         provider_service: ModelProviderCredentialService | None = None,
     ) -> None:
@@ -253,9 +332,11 @@ class DifyModelConfigurator:
         self._api_key_field = api_key_field
         self._base_url_field = base_url_field
         self._base_url = base_url
-        self._model = model
+        self._models = tuple(models)
         self._api_protocol = api_protocol
-        self._plugin_installer = plugin_installer or MarketplaceProviderPluginInstaller()
+        self._plugin_installer = plugin_installer or MarketplaceProviderPluginInstaller(
+            local_package_path=plugin_package_path
+        )
         self._provider_service = provider_service or ModelProviderService()
 
     def configure(self, dify_tenant_id: str, gateway_secret: str) -> None:
@@ -266,7 +347,7 @@ class DifyModelConfigurator:
         provider_credentials = {
             self._api_key_field: gateway_secret,
             self._base_url_field: self._base_url,
-            "validate_model": self._model,
+            "validate_model": self._validate_model(),
             "api_protocol": self._api_protocol,
         }
         existing = self._session.scalar(
@@ -297,12 +378,25 @@ class DifyModelConfigurator:
             self._base_url_field: self._base_url,
             "api_protocol": self._api_protocol,
         }
+        for model in self._models:
+            self._upsert_model_credential(dify_tenant_id, model, model_credentials)
+
+    def _validate_model(self) -> str:
+        """Name the LLM the plugin probes when validating the credential."""
+        for model in self._models:
+            if model.model_type is ModelType.LLM:
+                return model.name
+        raise CampusProvisioningError("Campus model list has no llm to validate credentials against")
+
+    def _upsert_model_credential(
+        self, dify_tenant_id: str, model: CampusModel, model_credentials: ModelCredentialPayload
+    ) -> None:
         existing_model = self._session.scalar(
             select(ProviderModelCredential).where(
                 ProviderModelCredential.tenant_id == dify_tenant_id,
                 ProviderModelCredential.provider_name == self._provider,
-                ProviderModelCredential.model_name == self._model,
-                ProviderModelCredential.model_type == ModelType.LLM,
+                ProviderModelCredential.model_name == model.name,
+                ProviderModelCredential.model_type == model.model_type,
                 ProviderModelCredential.credential_name == self._credential_name,
             )
         )
@@ -310,8 +404,8 @@ class DifyModelConfigurator:
             self._provider_service.create_model_credential(
                 tenant_id=dify_tenant_id,
                 provider=self._provider,
-                model_type=ModelType.LLM.value,
-                model=self._model,
+                model_type=model.model_type.value,
+                model=model.name,
                 credentials=model_credentials,
                 credential_name=self._credential_name,
             )
@@ -319,8 +413,8 @@ class DifyModelConfigurator:
             self._provider_service.update_model_credential(
                 tenant_id=dify_tenant_id,
                 provider=self._provider,
-                model_type=ModelType.LLM.value,
-                model=self._model,
+                model_type=model.model_type.value,
+                model=model.name,
                 credentials=model_credentials,
                 credential_id=existing_model.id,
                 credential_name=self._credential_name,

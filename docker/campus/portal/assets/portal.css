@@ -50,7 +50,21 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 .compact { min-height: 36px; font-size: 13px; }
 .text-button { justify-self: start; padding: 8px 0 0; color: #a13f49; background: transparent; font-size: 12px; }
 .message { margin: 0; padding: 11px 13px; border-radius: 10px; color: #285d43; background: #eaf7f0; font-size: 13px; line-height: 1.5; }
+.message:not(.error)::before { content: "✓ "; font-weight: 800; }
 .message.error { color: #923642; background: #fff0f2; }
+.message.error::before { content: "✕ "; font-weight: 800; }
+
+.countdown { color: #2f5fae; font-weight: 700; font-variant-numeric: tabular-nums; }
+.countdown.urgent { color: #b3372f; }
+
+.slot.current { border-color: #9fc2f2; background: #f2f7ff; }
+.reservation.current { border-color: #93cfae; background: #f2fbf6; }
+.reservation.waitlisted { border-color: #e8d29a; background: #fffaf0; }
+
+.password-details { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e6ebf3; }
+.password-details summary { color: #56617b; font-size: 13px; font-weight: 700; cursor: pointer; }
+.password-details form { display: grid; gap: 12px; margin-top: 14px; }
+.password-details .compact { justify-self: start; padding: 0 14px; }
 
 .dashboard { padding-top: 28px; }
 .welcome-row { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }

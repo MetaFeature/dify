@@ -18,8 +18,12 @@ class StudentSuspendedError(CampusError):
     pass
 
 
-class ActiveReservationExistsError(CampusError):
-    pass
+class PendingReservationExistsError(CampusError):
+    """Raised when the student already holds a claim that has not yet granted access."""
+
+
+class DuplicateSlotClaimError(CampusError):
+    """Raised when the student already holds an unfinished claim on the requested slot."""
 
 
 class ReservationWindowError(CampusError):
@@ -48,6 +52,10 @@ class PortalSessionError(CampusError):
 
 class IdentitySourceNotConfiguredError(PortalSessionError):
     """Raised when a declared institutional identity adapter has no concrete schema."""
+
+
+class CredentialNotFoundError(PortalSessionError):
+    """Raised when a student has no platform-held credential row, allowing fallback sources."""
 
 
 class CampusAdministratorRequiredError(CampusError):

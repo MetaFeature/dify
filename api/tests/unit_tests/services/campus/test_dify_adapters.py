@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,11 +10,13 @@ from models.account import Tenant, TenantAccountJoin, TenantAccountRole
 from models.provider import ProviderCredential, ProviderModelCredential
 from services.campus import dify_adapters
 from services.campus.dify_adapters import (
+    CampusModel,
     DifyModelConfigurator,
     DifyWorkspaceProvisioner,
     MarketplaceProviderPluginInstaller,
+    parse_campus_models,
 )
-from services.campus.errors import CampusProvisioningError
+from services.campus.errors import CampusProvisioningError, CampusValidationError
 
 
 @pytest.fixture
@@ -128,7 +131,7 @@ def test_model_configurator_installs_provider_plugin_before_credentials(sqlite_e
             api_key_field="openai_api_key",
             base_url_field="openai_api_base",
             base_url="http://model-gateway:3000/v1",
-            model="deepseek-v4-flash",
+            models=parse_campus_models("llm:deepseek-v4-flash"),
             api_protocol="chat",
             plugin_installer=PluginInstaller(),
             provider_service=ProviderService(),
@@ -191,7 +194,7 @@ def test_model_configurator_updates_existing_provider_and_model_credentials(sqli
             api_key_field="openai_api_key",
             base_url_field="openai_api_base",
             base_url="http://model-gateway:3000/v1",
-            model="deepseek-v4-flash",
+            models=parse_campus_models("llm:deepseek-v4-flash"),
             api_protocol="chat",
             plugin_installer=PluginInstaller(),
             provider_service=ProviderService(),
@@ -328,3 +331,293 @@ def test_marketplace_provider_installer_logs_timeout(
         )
 
     assert "Timed out installing Campus model provider plugin" in caplog.text
+
+
+def test_provider_installer_prefers_the_local_package_over_the_marketplace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = tmp_path / "openai.difypkg"
+    package.write_bytes(b"pinned-package-bytes")
+    uploaded: list[tuple[str, bytes]] = []
+    installed: list[tuple[str, list[str]]] = []
+    list_calls = 0
+
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            nonlocal list_calls
+            list_calls += 1
+            return (
+                []
+                if list_calls == 1
+                else [
+                    SimpleNamespace(
+                        plugin_id="langgenius/openai",
+                        plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "upload_pkg",
+        lambda tenant_id, pkg: (
+            uploaded.append((tenant_id, pkg)) or SimpleNamespace(unique_identifier="langgenius/openai:1.0.4@checksum")
+        ),
+    )
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_local_pkg",
+        lambda tenant_id, identifiers: installed.append((tenant_id, list(identifiers))),
+    )
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda *_: pytest.fail("a usable local package must not reach the marketplace"),
+    )
+
+    MarketplaceProviderPluginInstaller(poll_interval_seconds=0.001, local_package_path=str(package)).ensure_installed(
+        "tenant-1", "langgenius/openai:1.0.4@checksum"
+    )
+
+    assert uploaded == [("tenant-1", b"pinned-package-bytes")]
+    assert installed == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
+
+
+def test_provider_installer_rejects_a_local_package_that_does_not_match_the_pin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package = tmp_path / "openai.difypkg"
+    package.write_bytes(b"some-other-package")
+
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            return []
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "upload_pkg",
+        lambda tenant_id, pkg: SimpleNamespace(unique_identifier="langgenius/openai:0.9.0@stale"),
+    )
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda *_: pytest.fail("a mismatched local package must fail loudly, not silently reach the network"),
+    )
+
+    with pytest.raises(CampusProvisioningError, match="does not match the pinned identifier"):
+        MarketplaceProviderPluginInstaller(local_package_path=str(package)).ensure_installed(
+            "tenant-1",
+            "langgenius/openai:1.0.4@checksum",
+        )
+
+
+def test_provider_installer_rejects_a_configured_local_package_that_is_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            return []
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda *_: pytest.fail("a missing configured package is a deployment fault, not a marketplace fallback"),
+    )
+
+    with pytest.raises(CampusProvisioningError, match="local provider plugin package is missing"):
+        MarketplaceProviderPluginInstaller(local_package_path=str(tmp_path / "absent.difypkg")).ensure_installed(
+            "tenant-1",
+            "langgenius/openai:1.0.4@checksum",
+        )
+
+
+def test_provider_installer_uses_the_marketplace_when_no_local_package_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_calls: list[tuple[str, list[str]]] = []
+    list_calls = 0
+
+    class Installer:
+        def list_plugins(self, tenant_id: str):
+            nonlocal list_calls
+            list_calls += 1
+            return (
+                []
+                if list_calls == 1
+                else [
+                    SimpleNamespace(
+                        plugin_id="langgenius/openai",
+                        plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(dify_adapters, "PluginInstaller", Installer)
+    monkeypatch.setattr(
+        dify_adapters.PluginService,
+        "install_from_marketplace_pkg",
+        lambda tenant_id, identifiers: install_calls.append((tenant_id, list(identifiers))),
+    )
+
+    MarketplaceProviderPluginInstaller(poll_interval_seconds=0.001, local_package_path="").ensure_installed(
+        "tenant-1",
+        "langgenius/openai:1.0.4@checksum",
+    )
+
+    assert install_calls == [("tenant-1", ["langgenius/openai:1.0.4@checksum"])]
+
+
+def test_campus_model_spec_parses_typed_entries() -> None:
+    models = parse_campus_models(
+        "llm:deepseek-v4-flash, llm:glm-5.3-flash ,text-embedding:bge-m3,rerank:bge-reranker-v2-m3"
+    )
+
+    assert models == (
+        CampusModel(name="deepseek-v4-flash", model_type=ModelType.LLM),
+        CampusModel(name="glm-5.3-flash", model_type=ModelType.LLM),
+        CampusModel(name="bge-m3", model_type=ModelType.TEXT_EMBEDDING),
+        CampusModel(name="bge-reranker-v2-m3", model_type=ModelType.RERANK),
+    )
+
+
+def test_campus_model_spec_rejects_entries_it_cannot_route() -> None:
+    # An unusable spec must fail at wiring time rather than silently provisioning
+    # a workspace whose model list is wrong.
+    with pytest.raises(CampusValidationError, match="model type"):
+        parse_campus_models("image:doubao-seedream-5.0-pro")
+    with pytest.raises(CampusValidationError, match="type:name"):
+        parse_campus_models("deepseek-v4-flash")
+    with pytest.raises(CampusValidationError, match="at least one"):
+        parse_campus_models("")
+    with pytest.raises(CampusValidationError, match="duplicate"):
+        parse_campus_models("llm:deepseek-v4-flash,llm:deepseek-v4-flash")
+
+
+def test_campus_model_spec_requires_an_llm_to_validate_provider_credentials() -> None:
+    # The pinned OpenAI plugin validates a credential by calling one LLM, so a
+    # spec without one leaves nothing to validate against.
+    with pytest.raises(CampusValidationError, match="at least one llm"):
+        parse_campus_models("text-embedding:bge-m3")
+
+
+def test_model_configurator_registers_every_configured_model_with_its_type(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    registered: list[tuple[str, str]] = []
+    validate_models: list[str] = []
+
+    class PluginInstaller:
+        def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+            pass
+
+    class ProviderService:
+        def create_provider_credential(self, *, credentials: dict[str, str], **_: object) -> None:
+            validate_models.append(credentials["validate_model"])
+
+        def update_provider_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its provider credential")
+
+        def create_model_credential(
+            self, *, model_type: str, model: str, credentials: dict[str, str], **_: object
+        ) -> None:
+            assert "validate_model" not in credentials
+            registered.append((model_type, model))
+
+        def update_model_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its model credentials")
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai/openai",
+            provider_plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+            credential_name="Campus managed",
+            api_key_field="openai_api_key",
+            base_url_field="openai_api_base",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4-flash,llm:glm-5.3-flash,text-embedding:bge-m3"),
+            api_protocol="chat",
+            plugin_installer=PluginInstaller(),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert registered == [
+        ("llm", "deepseek-v4-flash"),
+        ("llm", "glm-5.3-flash"),
+        ("text-embedding", "bge-m3"),
+    ]
+    # The first LLM is what the provider credential is validated against.
+    assert validate_models == ["deepseek-v4-flash"]
+
+
+def test_model_configurator_updates_only_the_models_already_registered(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    created: list[str] = []
+    updated: list[str] = []
+
+    class PluginInstaller:
+        def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+            pass
+
+    class ProviderService:
+        def create_provider_credential(self, **_: object) -> None:
+            raise AssertionError("existing provider credential must be updated")
+
+        def update_provider_credential(self, **_: object) -> None:
+            pass
+
+        def create_model_credential(self, *, model: str, **_: object) -> None:
+            created.append(model)
+
+        def update_model_credential(self, *, model: str, **_: object) -> None:
+            updated.append(model)
+
+    with Session(sqlite_engine) as session:
+        session.add_all(
+            [
+                ProviderCredential(
+                    tenant_id="tenant-1",
+                    provider_name="langgenius/openai/openai",
+                    credential_name="Campus managed",
+                    encrypted_config="{}",
+                ),
+                ProviderModelCredential(
+                    tenant_id="tenant-1",
+                    provider_name="langgenius/openai/openai",
+                    model_name="deepseek-v4-flash",
+                    model_type=ModelType.LLM,
+                    credential_name="Campus managed",
+                    encrypted_config="{}",
+                ),
+            ]
+        )
+        session.commit()
+
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai/openai",
+            provider_plugin_unique_identifier="langgenius/openai:1.0.4@checksum",
+            credential_name="Campus managed",
+            api_key_field="openai_api_key",
+            base_url_field="openai_api_base",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4-flash,text-embedding:bge-m3"),
+            api_protocol="chat",
+            plugin_installer=PluginInstaller(),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert updated == ["deepseek-v4-flash"]
+    assert created == ["bge-m3"]

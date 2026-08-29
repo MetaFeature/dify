@@ -20,11 +20,17 @@ deployment; a registry mirror is allowed only when it retains that digest.
   workspace, one hidden gateway user, and one hidden gateway token.
 - A service-principal account owns every student workspace; the student is an
   Editor. Campus administrators are not silently added as workspace members.
-- The identity adapter supports virtual acceptance identities now. Excel and
-  SSO remain fail-closed interfaces until their real schemas are supplied.
+- The identity adapter consults platform-held student credentials first
+  (administrator-imported or reset passwords, hashed at rest); the virtual
+  acceptance roster remains a temporary fallback for students without a
+  credential row. Excel and SSO remain fail-closed interfaces until their
+  real schemas are supplied.
 - UTC+8 has twelve fixed two-hour slots per day. The rolling seven-day window,
-  capacity 500, one unfinished booking, FIFO waitlist, pre-start cancellation,
-  promotion, and slot-time access are enforced in the database service.
+  per-slot administrator-adjustable capacity (default 500, zero closes a
+  slot), the one-effective-plus-one-pending claim rule, FIFO waitlist,
+  cancellation until slot end (an in-progress cancellation revokes access
+  immediately), promotion, and slot-time access are enforced in the database
+  service.
 - The current in-progress slot accepts a supplemental reservation only while
   fixed capacity remains and the one-minute system load per logical CPU is at
   or below `CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU`. Missing or invalid load data
@@ -91,6 +97,19 @@ and login APIs. Named administrators use the separate host-loopback-only
 listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally through an SSH
 tunnel). This preserves the upstream administration surface without exposing a
 second student authentication path.
+
+The Campus administration portal owns that loopback listener's root: opening
+`127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}/` serves the static page from
+`campus/admin/`, while the stock Dify console stays reachable on its own
+routes (`/signin` for administrator login, `/apps` for the console itself).
+The portal covers per-slot capacity, the student roster (CSV import with a
+mandatory preview, single-student entry, suspension, password reset),
+allowance adjustments, and named-administrator authorization. It calls
+`/console/api/campus/admin/*` with the Dify console session cookies and the
+CSRF double-submit header. The roster CSV header is
+`student_number,display_name,cohort,password`; the password column sets or
+resets credentials only where supplied, and brand-new students must supply
+one.
 
 The portal is intentionally a Chinese-only, framework-independent static
 surface. It does not modify or import the upstream Dify `web/` application;
@@ -170,6 +189,54 @@ fallback; module checksums remain enforced by Go.
 Do not expose port 13000 on a campus interface. The gateway name, administrator
 token, user IDs, channel details, and upstream credentials are operational
 secrets and must not appear in student responses or logs.
+
+## Model pricing
+
+The gateway bills `quota = model_ratio x group_ratio x (prompt_tokens +
+completion_tokens x completion_ratio)`, and `QuotaPerUnit` is 500,000 quota per
+US dollar. A ratio of `1.0` therefore means $2 per million input tokens.
+
+A model with no ratio entry does **not** fail: `GetModelRatio` returns a
+fallback of `37.5` — about $75 per million tokens, roughly five hundred times
+the real price — and `SelfUseModeEnabled` decides whether that silently bills or
+is rejected. Two invariants keep this away from students, both asserted by
+`manage.sh verify`: `SelfUseModeEnabled` stays `false`, and every model enabled
+in the gateway's `abilities` table has a price. The practical rule is that a
+model is added to a channel's model list only once it is priced.
+
+Prices come from [models.dev](https://models.dev/api.json), preferring the
+model's own provider over a reseller. Conversion:
+
+- `ModelRatio` = models.dev `input` / 2
+- `CompletionRatio` = `output` / `input`
+- `CacheRatio` = `cache_read` / `input`
+
+Ratios are keyed on the name the **student** requests, not the upstream name:
+billing reads `GetModelRatio(info.OriginModelName)`, before any channel model
+mapping is applied.
+
+| Student-facing model | models.dev source | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `deepseek-v4-flash` | `deepseek` | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
+| `deepseek-v4-flash-0817` | `deepseek` (dated snapshot, priced as the base model) | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
+| `glm-5.3-flash` | `zhipuai` | 0.075 | 0.25 | 0.015 | 0.0375 | 3.3333 | 0.2 |
+| `bge-m3` | `digitalocean` (no first-party entry exists) | 0.02 | 0 | — | 0.01 | 0 | — |
+| `bge-reranker-v2-m3` | `digitalocean` (no first-party entry exists) | 0.01 | 0 | — | 0.005 | 0 | — |
+
+Setting the `ModelRatio` option **replaces** the gateway's built-in default
+table rather than merging into it, so only the models listed above have a price.
+That is deliberate: an unlisted model is unroutable rather than mispriced.
+
+Two models on the upstream channel are deliberately unpriced and therefore
+absent from its model list: `doubao-seedream-5.0-pro`, because Dify has no
+image-generation model type, and `qwen-audio-3.0-asr-flash`, because models.dev
+carries no price for it. Add either only together with a price.
+
+Upstream model names are isolated behind the channel's model mapping. The
+student-facing name is lowercase and stable; the mapping rewrites it to whatever
+the upstream currently calls the model, for example
+`{"deepseek-v4-flash": "DeepSeek-V4-Flash"}`. Renaming upstream therefore costs
+one mapping edit and touches neither the ratio table nor any student workspace.
 
 ## Acceptance flow
 

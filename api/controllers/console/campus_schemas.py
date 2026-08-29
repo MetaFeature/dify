@@ -36,6 +36,7 @@ class StudentIdentityPayload(CampusRequestModel):
     student_number: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=255)
     cohort: str | None = Field(default=None, max_length=128)
+    password: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("student_number", "display_name")
     @classmethod
@@ -60,6 +61,38 @@ class StudentStatusPayload(CampusRequestModel):
     status: StudentStatus
 
 
+class StudentCreatePayload(CampusRequestModel):
+    student_number: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=255)
+    cohort: str | None = Field(default=None, max_length=128)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("student_number", "display_name", "password")
+    @classmethod
+    def validate_create_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be whitespace-only")
+        return normalized
+
+
+class StudentPasswordResetPayload(CampusRequestModel):
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be whitespace-only")
+        return normalized
+
+
+class PortalPasswordChangePayload(CampusRequestModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=1, max_length=128)
+
+
 class ReservationCreatePayload(CampusRequestModel):
     starts_at: datetime
 
@@ -75,13 +108,25 @@ class SlotListQuery(CampusRequestModel):
     day: date
 
 
+class SlotCapacityPayload(CampusRequestModel):
+    starts_at: datetime
+    capacity: int = Field(ge=0)
+
+    @field_validator("starts_at")
+    @classmethod
+    def validate_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("starts_at must include a timezone")
+        return value
+
+
 class StudentListQuery(CampusRequestModel):
     limit: int = Field(default=100, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 
 
 class AllowanceAdjustmentPayload(CampusRequestModel):
-    delta_yuan: Decimal
+    delta_usd: Decimal
     reason: str = Field(min_length=1, max_length=500)
     request_id: str = Field(min_length=1, max_length=128)
 
@@ -117,6 +162,8 @@ class StudentResponse(CampusResponseModel):
     display_name: str
     cohort: str | None
     status: StudentStatus
+    has_credential: bool | None = None
+    virtual_identity: bool | None = None
 
 
 class StudentListResponse(CampusResponseModel):
@@ -126,6 +173,16 @@ class StudentListResponse(CampusResponseModel):
 class RosterSyncResponse(CampusResponseModel):
     created: int
     updated: int
+    password_resets: int = 0
+
+
+class AdministratorResponse(CampusResponseModel):
+    account_id: str
+    display_name: str
+
+
+class AdministratorListResponse(CampusResponseModel):
+    data: list[AdministratorResponse]
 
 
 class ReservationResponse(CampusResponseModel):
@@ -153,22 +210,37 @@ class SlotListResponse(CampusResponseModel):
     data: list[SlotResponse]
 
 
+class AdminSlotListResponse(CampusResponseModel):
+    data: list[SlotResponse]
+    server_now: datetime
+
+
+class SlotCapacityResponse(CampusResponseModel):
+    starts_at: datetime
+    ends_at: datetime
+    capacity: int
+    previous_capacity: int
+    confirmed: int
+    waitlisted: int
+
+
 class AccessDecisionResponse(CampusResponseModel):
     allowed: bool
     reservation_id: str | None = None
     ends_at: datetime | None = None
+    server_now: datetime | None = None
 
 
 class ModelUsageResponse(CampusResponseModel):
     model: str
-    used_yuan: Decimal
+    used_usd: Decimal
     requests: int
 
 
 class AllowanceResponse(CampusResponseModel):
-    remaining_yuan: Decimal
-    used_yuan: Decimal
-    total_yuan: Decimal
+    remaining_usd: Decimal
+    used_usd: Decimal
+    total_usd: Decimal
     model_calls_enabled: bool
     by_model: list[ModelUsageResponse]
 
@@ -187,8 +259,12 @@ register_schema_models(
     VirtualLoginPayload,
     StudentRosterSyncPayload,
     StudentStatusPayload,
+    StudentCreatePayload,
+    StudentPasswordResetPayload,
+    PortalPasswordChangePayload,
     ReservationCreatePayload,
     SlotListQuery,
+    SlotCapacityPayload,
     StudentListQuery,
     AllowanceAdjustmentPayload,
     AdministratorPayload,
@@ -199,10 +275,14 @@ register_response_schema_models(
     StudentResponse,
     StudentListResponse,
     RosterSyncResponse,
+    AdministratorResponse,
+    AdministratorListResponse,
     ReservationResponse,
     ReservationListResponse,
     SlotResponse,
     SlotListResponse,
+    AdminSlotListResponse,
+    SlotCapacityResponse,
     AccessDecisionResponse,
     ModelUsageResponse,
     AllowanceResponse,

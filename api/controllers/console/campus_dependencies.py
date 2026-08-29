@@ -10,7 +10,13 @@ from extensions.ext_database import db
 from models import Account
 from models.campus import CampusStudent
 from services.campus.administrator_service import AdministratorService
-from services.campus.dify_adapters import DifyModelConfigurator, DifySessionIssuer, DifyWorkspaceProvisioner
+from services.campus.credential_service import ManagedFirstIdentitySource, StudentCredentialService
+from services.campus.dify_adapters import (
+    DifyModelConfigurator,
+    DifySessionIssuer,
+    DifyWorkspaceProvisioner,
+    parse_campus_models,
+)
 from services.campus.domain import IdentitySource
 from services.campus.errors import (
     CampusAdministratorRequiredError,
@@ -35,13 +41,29 @@ def require_campus_enabled() -> None:
         raise NotFound()
 
 
-def identity_source() -> IdentitySource:
+def credential_service() -> StudentCredentialService:
+    return StudentCredentialService(session=db.session())
+
+
+def virtual_student_numbers() -> frozenset[str]:
+    """Student numbers still present in the virtual demo roster, for admin visibility."""
     if not dify_config.CAMPUS_VIRTUAL_IDENTITY_ENABLED:
-        return UnconfiguredIdentitySource()
+        return frozenset()
     configured = dify_config.CAMPUS_VIRTUAL_IDENTITIES_JSON
     if configured is None:
-        return UnconfiguredIdentitySource()
-    return VirtualIdentitySource(configured.get_secret_value())
+        return frozenset()
+    return VirtualIdentitySource(configured.get_secret_value()).student_numbers
+
+
+def identity_source() -> IdentitySource:
+    if not dify_config.CAMPUS_VIRTUAL_IDENTITY_ENABLED:
+        fallback: IdentitySource = UnconfiguredIdentitySource()
+    else:
+        configured = dify_config.CAMPUS_VIRTUAL_IDENTITIES_JSON
+        fallback = (
+            UnconfiguredIdentitySource() if configured is None else VirtualIdentitySource(configured.get_secret_value())
+        )
+    return ManagedFirstIdentitySource(credential_service(), fallback)
 
 
 def newapi_client() -> NewApiClient:
@@ -73,7 +95,7 @@ def reservation_service() -> ReservationService:
 def student_service() -> StudentAdministrationService:
     return StudentAdministrationService(
         session=db.session(),
-        default_allowance_yuan=dify_config.CAMPUS_DEFAULT_ALLOWANCE_YUAN,
+        default_allowance_usd=dify_config.CAMPUS_DEFAULT_ALLOWANCE_USD,
     )
 
 
@@ -111,10 +133,11 @@ def platform_provisioner() -> PlatformProvisioningService:
             api_key_field=dify_config.CAMPUS_MODEL_PROVIDER_API_KEY_FIELD,
             base_url_field=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,
-            model=dify_config.CAMPUS_MODEL_PROVIDER_MODEL,
+            models=parse_campus_models(dify_config.CAMPUS_MODEL_PROVIDER_MODELS),
             api_protocol=dify_config.CAMPUS_MODEL_PROVIDER_API_PROTOCOL,
+            plugin_package_path=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_PACKAGE_PATH,
         ),
-        quota_units_per_yuan=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN,
+        quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
     )
 
 

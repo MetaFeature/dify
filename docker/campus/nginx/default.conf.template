@@ -53,6 +53,18 @@ server {
       return 404;
     }
 
+    # Every model call must be metered by the gateway, so a student may read the
+    # managed provider list their workspace was given but never add, change, or
+    # remove one. limit_except GET also permits HEAD.
+    location ^~ /console/api/workspaces/current/model-providers {
+      auth_request /_campus_access_check;
+      limit_except GET {
+        deny all;
+      }
+      proxy_pass http://api:5001;
+      include proxy.conf;
+    }
+
     location /console/api {
       auth_request /_campus_access_check;
       proxy_pass http://api:5001;
@@ -141,6 +153,20 @@ server {
     server_name _;
 
     include /etc/nginx/campus-branding/logo-locations.conf;
+
+    # The Campus administration portal owns the listener root; the upstream
+    # Dify console stays reachable on its own routes (/signin, /apps, ...).
+    location = / {
+      root /campus-admin-html;
+      add_header Cache-Control "no-cache" always;
+      try_files /index.html =404;
+    }
+
+    location ^~ /campus-admin/ {
+      alias /campus-admin-html/;
+      add_header Cache-Control "no-cache" always;
+      try_files $uri =404;
+    }
 
     location /console/api {
       proxy_pass http://api:5001;

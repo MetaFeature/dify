@@ -43,7 +43,7 @@ def campus_session(sqlite_engine) -> Session:
                 student_number="20260001",
                 display_name="Student One",
                 status=StudentStatus.ACTIVE,
-                initial_allowance_yuan=Decimal(20),
+                initial_allowance_usd=Decimal(20),
             )
         )
         session.commit()

@@ -1,0 +1,12 @@
+{
+  "name": "@njit-campus/admin-portal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --allowJs --checkJs --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --lib ES2022,DOM assets/*.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "typescript": "6.0.2"
+  }
+}

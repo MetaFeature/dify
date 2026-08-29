@@ -31,7 +31,7 @@ class PlatformProvisioningService(PlatformProvisioner):
     _workspace_provisioner: WorkspaceProvisioner
     _gateway_provisioner: GatewayProvisioner
     _model_configurator: ModelConfigurator
-    _quota_units_per_yuan: int
+    _quota_units_per_usd: int
 
     def __init__(
         self,
@@ -40,15 +40,15 @@ class PlatformProvisioningService(PlatformProvisioner):
         workspace_provisioner: WorkspaceProvisioner,
         gateway_provisioner: GatewayProvisioner,
         model_configurator: ModelConfigurator,
-        quota_units_per_yuan: int,
+        quota_units_per_usd: int,
     ) -> None:
-        if quota_units_per_yuan < 1:
-            raise ValueError("quota_units_per_yuan must be positive")
+        if quota_units_per_usd < 1:
+            raise ValueError("quota_units_per_usd must be positive")
         self._session = session
         self._workspace_provisioner = workspace_provisioner
         self._gateway_provisioner = gateway_provisioner
         self._model_configurator = model_configurator
-        self._quota_units_per_yuan = quota_units_per_yuan
+        self._quota_units_per_usd = quota_units_per_usd
 
     @override
     def ensure_ready(self, student_id: str) -> ProvisionedPlatform:
@@ -84,7 +84,7 @@ class PlatformProvisioningService(PlatformProvisioner):
             select(CampusGatewayBinding).where(CampusGatewayBinding.student_id == student.id)
         )
         if gateway_binding is None:
-            allowance_quota = self._allowance_quota(student.initial_allowance_yuan)
+            allowance_quota = self._allowance_quota(student.initial_allowance_usd)
             managed_token = self._gateway_provisioner.create_managed_token(student.id, allowance_quota)
             try:
                 self._model_configurator.configure(workspace.dify_tenant_id, managed_token.secret)
@@ -125,8 +125,8 @@ class PlatformProvisioningService(PlatformProvisioner):
             elif dialect == "mysql":
                 self._session.execute(text("SELECT RELEASE_LOCK(:key)"), {"key": mysql_lock_name})
 
-    def _allowance_quota(self, allowance_yuan: Decimal) -> int:
-        raw_quota = allowance_yuan * self._quota_units_per_yuan
+    def _allowance_quota(self, allowance_usd: Decimal) -> int:
+        raw_quota = allowance_usd * self._quota_units_per_usd
         if raw_quota != raw_quota.to_integral_value():
             raise ValueError("initial allowance is smaller than gateway quota precision")
         return int(raw_quota)

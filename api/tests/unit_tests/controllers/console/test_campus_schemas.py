@@ -18,7 +18,7 @@ from controllers.console.campus_schemas import (
         (VirtualLoginPayload, {"subject": "   ", "credential": "code"}),
         (
             AllowanceAdjustmentPayload,
-            {"delta_yuan": Decimal(1), "reason": "grant", "request_id": "   "},
+            {"delta_usd": Decimal(1), "reason": "grant", "request_id": "   "},
         ),
     ],
 )

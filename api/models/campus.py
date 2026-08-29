@@ -40,7 +40,23 @@ class CampusStudent(DefaultFieldsMixin, Base):
     status: Mapped[StudentStatus] = mapped_column(
         EnumText(StudentStatus, length=16), nullable=False, default=StudentStatus.ACTIVE
     )
-    initial_allowance_yuan: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False, default=Decimal(0))
+    initial_allowance_usd: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False, default=Decimal(0))
+
+
+class CampusStudentCredential(DefaultFieldsMixin, Base):
+    """Platform-held login credential for one Campus student.
+
+    When a row exists for a student number, it is the authoritative portal
+    credential; the virtual identity source is consulted only for students
+    without a row.
+    """
+
+    __tablename__ = "campus_student_credentials"
+    __table_args__ = (sa.UniqueConstraint("student_id", name="campus_student_credentials_student_id_key"),)
+
+    student_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    password_hashed: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    password_salt: Mapped[str] = mapped_column(sa.String(64), nullable=False)
 
 
 class CampusWorkspaceBinding(DefaultFieldsMixin, Base):
@@ -112,14 +128,16 @@ class CampusReservation(DefaultFieldsMixin, Base):
         sa.Index("campus_reservations_student_status_idx", "student_id", "status"),
         sa.UniqueConstraint("slot_id", "queue_sequence", name="campus_reservations_slot_queue_sequence_key"),
         sa.Index(
-            "campus_reservations_one_active_per_student_pg_idx",
+            "campus_reservations_one_active_per_slot_pg_idx",
             "student_id",
+            "slot_id",
             unique=True,
             postgresql_where=sa.text("status IN ('confirmed', 'waitlisted')"),
         ).ddl_if(dialect="postgresql"),
         sa.Index(
-            "campus_reservations_one_active_per_student_sqlite_idx",
+            "campus_reservations_one_active_per_slot_sqlite_idx",
             "student_id",
+            "slot_id",
             unique=True,
             sqlite_where=sa.text("status IN ('confirmed', 'waitlisted')"),
         ).ddl_if(dialect="sqlite"),
@@ -155,5 +173,5 @@ class CampusAllowanceAdjustment(DefaultFieldsMixin, Base):
     student_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     request_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     actor_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
-    delta_yuan: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False)
+    delta_usd: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False)
     reason: Mapped[str] = mapped_column(sa.String(500), nullable=False)

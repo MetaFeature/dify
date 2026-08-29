@@ -1,26 +1,44 @@
 export const messages = Object.freeze({
   booking: {
     cancelled: '预约已取消。',
+    cancelledInProgress: '预约已取消，你已退出本时段。请关闭已打开的平台标签页。',
     confirmed: '预约成功。',
+    promoted: '你已从候补转为已确认，可在时段内进入平台。',
     supplemented: '当前时段补约成功，可立即进入平台。',
     waitlisted: '时段已满，已加入候补队列。',
+  },
+  countdown: {
+    beforeStart: '距预约时段开始还有',
+    beforeEnd: '距本时段结束还有',
   },
   errors: {
     'bad-request': '请求内容有误，请检查后重试。',
     busy: '服务器当前负载较高，暂时无法补约本时段，请稍后重试。',
     conflict: '当前操作与已有预约冲突，请刷新后重试。',
+    duplicate_slot_claim: '你已经预约了这个时段，无需重复预约。',
     forbidden: '当前预约时段尚未生效。',
     generic: '操作失败，请稍后重试。',
     network: '无法连接校园平台，请检查网络后重试。',
     'not-found': '请求的内容不存在。',
+    pending_reservation_exists: '你已有一个待生效的预约。如需更换时段，请先取消原预约。',
     unauthorized: '登录已失效，请重新登录。',
     unavailable: '服务暂时不可用，请稍后重试。',
   },
   loading: {
     slots: '正在读取开放时段…',
   },
+  login: {
+    badCredentials: '账号或密码不正确，请重新输入。',
+  },
+  password: {
+    changed: '密码修改成功。',
+    currentWrong: '当前密码不正确。',
+    invalidNew: '新密码不符合要求：至少 8 位，且需同时包含字母和数字。',
+  },
   reservations: {
     cancel: '取消预约',
+    confirmCancel: '确定取消这条预约吗？',
+    confirmCancelInProgress: '本时段正在进行，取消后将立即失去平台访问权，请先保存工作。确定取消吗？',
     empty: '暂无预约记录',
     noneDetail: '可从左侧选择一个开放时段',
     statuses: {
@@ -32,6 +50,8 @@ export const messages = Object.freeze({
     },
   },
   slots: {
+    allEnded: '今日时段已全部结束，已为你切换到明天。',
+    closed: '本时段已关闭',
     reserve: '预约',
     supplement: '补约当前时段',
     waitlist: '加入候补',

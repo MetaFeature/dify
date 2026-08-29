@@ -9,21 +9,21 @@ from services.campus.errors import CampusConflictError, CampusValidationError, G
 
 
 class AllowanceService:
-    """Translate opaque gateway quota units into redacted RMB allowance views."""
+    """Translate opaque gateway quota units into redacted US-dollar allowance views."""
 
     _session: Session
     _gateway: ModelGateway
-    _quota_units_per_yuan: int
+    _quota_units_per_usd: int
 
-    def __init__(self, *, session: Session, gateway: ModelGateway, quota_units_per_yuan: int) -> None:
-        if quota_units_per_yuan < 1:
-            raise ValueError("quota_units_per_yuan must be positive")
+    def __init__(self, *, session: Session, gateway: ModelGateway, quota_units_per_usd: int) -> None:
+        if quota_units_per_usd < 1:
+            raise ValueError("quota_units_per_usd must be positive")
         self._session = session
         self._gateway = gateway
-        self._quota_units_per_yuan = quota_units_per_yuan
+        self._quota_units_per_usd = quota_units_per_usd
 
     def get_summary(self, student_id: str) -> AllowanceSummary:
-        """Fetch gateway usage and return only the redacted RMB-denominated view."""
+        """Fetch gateway usage and return only the redacted dollar-denominated view."""
         binding = self._binding(student_id)
         return self._to_summary(self._gateway.get_usage(binding.gateway_token_id))
 
@@ -31,7 +31,7 @@ class AllowanceService:
         self,
         student_id: str,
         *,
-        delta_yuan: Decimal,
+        delta_usd: Decimal,
         reason: str,
         actor_account_id: str,
         request_id: str,
@@ -45,7 +45,7 @@ class AllowanceService:
         if existing is not None:
             if (
                 existing.student_id != student_id
-                or existing.delta_yuan != delta_yuan
+                or existing.delta_usd != delta_usd
                 or existing.reason != reason.strip()
                 or existing.actor_account_id != actor_account_id
             ):
@@ -53,16 +53,16 @@ class AllowanceService:
             return self.get_summary(student_id)
 
         binding = self._binding(student_id)
-        raw_delta = delta_yuan * self._quota_units_per_yuan
+        raw_delta = delta_usd * self._quota_units_per_usd
         if raw_delta != raw_delta.to_integral_value():
-            raise CampusValidationError("delta_yuan is smaller than the gateway quota precision")
+            raise CampusValidationError("delta_usd is smaller than the gateway quota precision")
         usage = self._gateway.adjust_quota(binding.gateway_token_id, int(raw_delta), request_id)
         self._session.add(
             CampusAllowanceAdjustment(
                 student_id=student_id,
                 request_id=request_id,
                 actor_account_id=actor_account_id,
-                delta_yuan=delta_yuan,
+                delta_usd=delta_usd,
                 reason=reason.strip(),
             )
         )
@@ -78,21 +78,21 @@ class AllowanceService:
         return binding
 
     def _to_summary(self, usage: GatewayUsage) -> AllowanceSummary:
-        remaining = self._yuan(usage.remaining_quota)
-        used = self._yuan(usage.used_quota)
+        remaining = self._usd(usage.remaining_quota)
+        used = self._usd(usage.used_quota)
         by_model = tuple(
-            ModelUsageSummary(model=item.model, used_yuan=self._yuan(item.quota), requests=item.requests)
+            ModelUsageSummary(model=item.model, used_usd=self._usd(item.quota), requests=item.requests)
             for item in usage.by_model
         )
         return AllowanceSummary(
-            remaining_yuan=remaining,
-            used_yuan=used,
-            total_yuan=remaining + used,
+            remaining_usd=remaining,
+            used_usd=used,
+            total_usd=remaining + used,
             model_calls_enabled=usage.remaining_quota > 0,
             by_model=by_model,
         )
 
-    def _yuan(self, quota: int) -> Decimal:
-        return (Decimal(quota) / Decimal(self._quota_units_per_yuan)).quantize(
+    def _usd(self, quota: int) -> Decimal:
+        return (Decimal(quota) / Decimal(self._quota_units_per_usd)).quantize(
             Decimal("0.0001"), rounding=ROUND_HALF_UP
         )

@@ -18,7 +18,7 @@ services:
       CAMPUS_VIRTUAL_IDENTITIES_JSON: ${CAMPUS_VIRTUAL_IDENTITIES_JSON:-}
       CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS: ${CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS:-}
       CAMPUS_SERVICE_PRINCIPAL_EMAIL: ${CAMPUS_SERVICE_PRINCIPAL_EMAIL:?set CAMPUS_SERVICE_PRINCIPAL_EMAIL}
-      CAMPUS_DEFAULT_ALLOWANCE_YUAN: ${CAMPUS_DEFAULT_ALLOWANCE_YUAN:-20}
+      CAMPUS_DEFAULT_ALLOWANCE_USD: ${CAMPUS_DEFAULT_ALLOWANCE_USD:-20}
       CAMPUS_RESERVATION_CAPACITY: ${CAMPUS_RESERVATION_CAPACITY:-500}
       CAMPUS_BOOKING_DAYS: ${CAMPUS_BOOKING_DAYS:-7}
       CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU: ${CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU:-1.0}
@@ -30,14 +30,14 @@ services:
       CAMPUS_NEWAPI_ADMIN_USER_ID: ${CAMPUS_NEWAPI_ADMIN_USER_ID:-1}
       CAMPUS_NEWAPI_GROUP: ${CAMPUS_NEWAPI_GROUP:-campus}
       CAMPUS_NEWAPI_MODEL_LIMITS: ${CAMPUS_NEWAPI_MODEL_LIMITS:-}
-      CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN: ${CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN:-500000}
+      CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD: ${CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD:-500000}
       CAMPUS_MODEL_PROVIDER: ${CAMPUS_MODEL_PROVIDER:-langgenius/openai/openai}
       CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER: ${CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER:?set CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER}
       CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME: ${CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME:-Campus managed}
       CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: ${CAMPUS_MODEL_PROVIDER_API_KEY_FIELD:-openai_api_key}
       CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: ${CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD:-openai_api_base}
       CAMPUS_MODEL_PROVIDER_BASE_URL: http://model-gateway:3000/v1
-      CAMPUS_MODEL_PROVIDER_MODEL: ${CAMPUS_MODEL_PROVIDER_MODEL:-deepseek-v4-flash}
+      CAMPUS_MODEL_PROVIDER_MODELS: ${CAMPUS_MODEL_PROVIDER_MODELS:-llm:deepseek-v4-flash,llm:deepseek-v4-flash-0817,llm:glm-5.3-flash,text-embedding:bge-m3,rerank:bge-reranker-v2-m3}
       CAMPUS_MODEL_PROVIDER_API_PROTOCOL: ${CAMPUS_MODEL_PROVIDER_API_PROTOCOL:-chat}
     depends_on:
       model-gateway:
@@ -81,6 +81,8 @@ services:
       - ./nginx/https.conf.template:/etc/nginx/https.conf.template:ro
       - ./campus/nginx/default.conf.template:/etc/nginx/conf.d/default.conf.template:ro
       - ./campus/branding:/etc/nginx/campus-branding:ro
+      - ./campus/admin/index.html:/campus-admin-html/index.html:ro
+      - ./campus/admin/assets:/campus-admin-html/assets:ro
       - ./nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh:ro
       - ./nginx/ssl:/etc/ssl
       - ./volumes/certbot/conf/live:/etc/letsencrypt/live

@@ -58,7 +58,7 @@ def campus_session(sqlite_engine) -> Session:
                 student_number="20260001",
                 display_name="Student One",
                 status=StudentStatus.ACTIVE,
-                initial_allowance_yuan=Decimal(20),
+                initial_allowance_usd=Decimal(20),
             )
         )
         session.commit()
@@ -74,7 +74,7 @@ def test_lazy_provisioning_creates_one_workspace_and_one_gateway_token(campus_se
         workspace_provisioner=workspace,
         gateway_provisioner=gateway,
         model_configurator=configurator,
-        quota_units_per_yuan=100,
+        quota_units_per_usd=100,
     )
     student = campus_session.query(CampusStudent).one()
 
@@ -96,7 +96,7 @@ def test_gateway_token_is_compensated_when_dify_configuration_fails(campus_sessi
         workspace_provisioner=FakeWorkspaceProvisioner(),
         gateway_provisioner=gateway,
         model_configurator=FakeModelConfigurator(calls=[], fail=True),
-        quota_units_per_yuan=100,
+        quota_units_per_usd=100,
     )
     student = campus_session.query(CampusStudent).one()
 
@@ -117,7 +117,7 @@ def test_suspended_student_is_not_provisioned(campus_session: Session):
         workspace_provisioner=workspace,
         gateway_provisioner=FakeGatewayProvisioner(),
         model_configurator=FakeModelConfigurator(calls=[]),
-        quota_units_per_yuan=100,
+        quota_units_per_usd=100,
     )
 
     with pytest.raises(StudentSuspendedError):

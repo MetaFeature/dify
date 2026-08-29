@@ -68,6 +68,26 @@ grep -Fq 'proxy_pass http://portal:8080/;' "${template}" || {
   exit 1
 }
 
+grep -Eq '^[[:space:]]*location \^~ /campus-admin/ \{' "${template}" || {
+  echo "Campus nginx does not expose the administration portal assets" >&2
+  exit 1
+}
+
+grep -Fq 'root /campus-admin-html;' "${template}" || {
+  echo "Campus administration portal does not own the administrator listener root" >&2
+  exit 1
+}
+
+grep -Fq './campus/admin/index.html:/campus-admin-html/index.html:ro' "${compose_overlay}" || {
+  echo "Campus Compose does not mount the administration portal page" >&2
+  exit 1
+}
+
+grep -Fq './campus/admin/assets:/campus-admin-html/assets:ro' "${compose_overlay}" || {
+  echo "Campus Compose does not mount the administration portal assets" >&2
+  exit 1
+}
+
 root_location="$(sed -n '/^[[:space:]]*location = \/ {$/,/^[[:space:]]*}/p' "${template}")"
 for directive in \
   'auth_request /_campus_access_check;' \
@@ -162,6 +182,21 @@ for route in \
   done <<<"${blocked_auth_patterns}"
   [[ "${route_is_blocked}" == "true" ]] || {
     echo "student Dify authentication route is not blocked: ${route}" >&2
+    exit 1
+  }
+done
+
+model_provider_location="$(sed -n '/^[[:space:]]*location \^~ \/console\/api\/workspaces\/current\/model-providers {$/,/^[[:space:]]*}$/p' "${template}")"
+[[ -n "${model_provider_location}" ]] || {
+  echo "Campus nginx does not guard the workspace model-provider routes" >&2
+  exit 1
+}
+for directive in \
+  'auth_request /_campus_access_check;' \
+  'limit_except GET {' \
+  'deny all;'; do
+  printf '%s\n' "${model_provider_location}" | grep -Fq "${directive}" || {
+    echo "students can still change their own model providers: missing ${directive}" >&2
     exit 1
   }
 done

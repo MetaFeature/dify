@@ -3,12 +3,30 @@ import {
   addCampusDays,
   campusDay,
   canCancelReservation,
+  createCampusClock,
+  detectPromotions,
+  formatCountdown,
   isCurrentAccessSlot,
   launchWorkspace,
+  reservationTiming,
+  visibleSlots,
 } from './portal-domain.js'
 import { messages } from './messages.js'
 
+const POLL_INTERVAL_MS = 60_000
+const PASSIVE_REFRESH_MIN_GAP_MS = 5_000
+const URGENT_COUNTDOWN_MS = 5 * 60_000
+
 const api = new CampusApi()
+
+// Block native form submission before any lookup below can throw: a native GET
+// would carry the student's password into the URL, browser history and access
+// logs. This guard must stay above `elements` so a page/script version skew
+// cannot leave the form falling back to navigation.
+const loginFormElement = document.querySelector('#login-form')
+if (loginFormElement instanceof HTMLFormElement)
+  loginFormElement.addEventListener('submit', event => event.preventDefault())
+
 const elements = {
   loginView: requiredElement('#login-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
@@ -26,12 +44,24 @@ const elements = {
   allowanceDetail: requiredElement('#allowance-detail', HTMLElement),
   reservationState: requiredElement('#reservation-state', HTMLElement),
   reservationDetail: requiredElement('#reservation-detail', HTMLElement),
+  reservationCountdown: requiredElement('#reservation-countdown', HTMLElement),
+  passwordForm: requiredElement('#password-form', HTMLFormElement),
+  passwordMessage: requiredElement('#password-message', HTMLElement),
 }
 
-const now = new Date()
-const today = campusDay(now)
+let campusClock = createCampusClock(new Date().toISOString(), Date.now())
+/** @type {import('./campus-api.js').Reservation[]} */
+let lastReservations = []
+let countdownTimer = 0
+let lastRefreshAtMs = 0
+
+function campusNow() {
+  return campusClock()
+}
+
+const today = campusDay(campusNow())
 elements.day.min = today
-elements.day.max = addCampusDays(now, 6)
+elements.day.max = addCampusDays(campusNow(), 6)
 elements.day.value = today
 
 elements.loginForm.addEventListener('submit', async (event) => {
@@ -44,17 +74,26 @@ elements.loginForm.addEventListener('submit', async (event) => {
     elements.loginForm.reset()
     elements.loginView.hidden = true
     elements.dashboardView.hidden = false
+    hideMessage(elements.message)
     await refreshDashboard()
   }
   catch (error) {
-    showMessage(elements.loginError, messageFor(error), true)
+    // On the sign-in form a 401 means the credentials were rejected, not that an
+    // established session expired.
+    const text = error instanceof CampusApiError && error.status === 401
+      ? messages.login.badCredentials
+      : messageFor(error)
+    showMessage(elements.loginError, text, true)
   }
   finally {
     setBusy(elements.loginForm, false)
   }
 })
 
-elements.refreshButton.addEventListener('click', refreshDashboard)
+elements.refreshButton.addEventListener('click', () => {
+  hideMessage(elements.message)
+  refreshDashboard()
+})
 elements.day.addEventListener('change', loadSlots)
 elements.launchButton.addEventListener('click', async () => {
   setBusy(elements.launchButton, true)
@@ -82,11 +121,11 @@ elements.slotList.addEventListener('click', async (event) => {
     const reservation = await api.reserve(button.getAttribute('data-starts-at') || '')
     const bookingMessage = reservation.status === 'waitlisted'
       ? messages.booking.waitlisted
-      : isCurrentAccessSlot(reservation, new Date())
+      : isCurrentAccessSlot(reservation, campusNow())
         ? messages.booking.supplemented
         : messages.booking.confirmed
-    showMessage(elements.message, bookingMessage)
     await refreshDashboard()
+    showMessage(elements.message, bookingMessage)
   }
   catch (error) {
     showMessage(elements.message, messageFor(error), true)
@@ -100,11 +139,17 @@ elements.reservationList.addEventListener('click', async (event) => {
   const button = event.target instanceof Element ? event.target.closest('[data-cancel-id]') : null
   if (!(button instanceof HTMLButtonElement))
     return
+  const reservationId = button.getAttribute('data-cancel-id') || ''
+  const reservation = lastReservations.find(item => item.id === reservationId)
+  const inProgress = reservation !== undefined && isCurrentAccessSlot(reservation, campusNow())
+  const prompt = inProgress ? messages.reservations.confirmCancelInProgress : messages.reservations.confirmCancel
+  if (!window.confirm(prompt))
+    return
   setBusy(button, true)
   try {
-    await api.cancelReservation(button.getAttribute('data-cancel-id') || '')
-    showMessage(elements.message, messages.booking.cancelled)
+    await api.cancelReservation(reservationId)
     await refreshDashboard()
+    showMessage(elements.message, inProgress ? messages.booking.cancelledInProgress : messages.booking.cancelled)
   }
   catch (error) {
     showMessage(elements.message, messageFor(error), true)
@@ -114,13 +159,59 @@ elements.reservationList.addEventListener('click', async (event) => {
   }
 })
 
+elements.passwordForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = new FormData(elements.passwordForm)
+  setBusy(elements.passwordForm, true)
+  hideMessage(elements.passwordMessage)
+  try {
+    await api.changePassword(String(form.get('currentPassword')), String(form.get('newPassword')))
+    elements.passwordForm.reset()
+    showMessage(elements.passwordMessage, messages.password.changed)
+  }
+  catch (error) {
+    const text = !(error instanceof CampusApiError)
+      ? messageFor(error)
+      : error.status === 403
+        ? messages.password.currentWrong
+        : error.status === 400
+          ? messages.password.invalidNew
+          : messageFor(error)
+    showMessage(elements.passwordMessage, text, true)
+  }
+  finally {
+    setBusy(elements.passwordForm, false)
+  }
+})
+
+setInterval(passiveRefresh, POLL_INTERVAL_MS)
+window.addEventListener('focus', passiveRefresh)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden)
+    passiveRefresh()
+})
+
+function passiveRefresh() {
+  if (document.hidden || elements.dashboardView.hidden)
+    return
+  if (Date.now() - lastRefreshAtMs < PASSIVE_REFRESH_MIN_GAP_MS)
+    return
+  refreshDashboard()
+}
+
 async function refreshDashboard() {
   setBusy(elements.refreshButton, true)
-  hideMessage(elements.message)
+  lastRefreshAtMs = Date.now()
   try {
     const dashboard = await api.dashboard()
+    if (dashboard.access.server_now)
+      campusClock = createCampusClock(dashboard.access.server_now, Date.now())
+    const promotions = detectPromotions(lastReservations, dashboard.reservations)
+    lastReservations = dashboard.reservations
     renderDashboard(dashboard)
     await loadSlots()
+    if (promotions.length)
+      showMessage(elements.message, messages.booking.promoted)
   }
   catch (error) {
     if (error instanceof CampusApiError && error.status === 401) {
@@ -141,7 +232,14 @@ async function loadSlots() {
   elements.slotList.textContent = messages.loading.slots
   try {
     const response = await api.listSlots(elements.day.value)
-    elements.slotList.replaceChildren(...response.data.map(slotCard))
+    const visible = visibleSlots(response.data, campusNow())
+    if (!visible.length && elements.day.value === campusDay(campusNow())) {
+      elements.day.value = addCampusDays(campusNow(), 1)
+      showMessage(elements.message, messages.slots.allEnded)
+      elements.slotList.removeAttribute('aria-busy')
+      return loadSlots()
+    }
+    elements.slotList.replaceChildren(...visible.map(slotCard))
   }
   catch (error) {
     elements.slotList.textContent = messageFor(error)
@@ -156,18 +254,48 @@ function renderDashboard({ access, reservations, allowance }) {
   elements.accessState.textContent = access.allowed ? '可进入' : '未开放'
   elements.accessDetail.textContent = access.allowed && access.ends_at ? `访问权限至 ${formatTime(access.ends_at)}` : '需在已确认的预约时段内进入'
   elements.launchButton.disabled = !access.allowed
-  elements.allowanceRemaining.textContent = allowance.remaining_yuan
-  elements.allowanceDetail.textContent = `累计使用 ¥${allowance.used_yuan} · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
+  elements.allowanceRemaining.textContent = allowance.remaining_usd
+  elements.allowanceDetail.textContent = `累计使用 $${allowance.used_usd} · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
   const unfinished = reservations.find(item => item.status === 'confirmed' || item.status === 'waitlisted')
   elements.reservationState.textContent = unfinished ? statusLabel(unfinished.status) : '暂无'
   elements.reservationDetail.textContent = unfinished ? `${formatDateTime(unfinished.starts_at)} – ${formatTime(unfinished.ends_at)}` : messages.reservations.noneDetail
+  renderCountdown(unfinished)
   elements.reservationList.replaceChildren(...(reservations.length ? reservations.map(reservationCard) : [emptyReservation()]))
+}
+
+/** @param {import('./campus-api.js').Reservation | undefined} reservation */
+function renderCountdown(reservation) {
+  clearInterval(countdownTimer)
+  if (!reservation) {
+    elements.reservationCountdown.hidden = true
+    return
+  }
+  const tick = () => {
+    const timing = reservationTiming(reservation, campusNow())
+    if (!timing) {
+      clearInterval(countdownTimer)
+      elements.reservationCountdown.hidden = true
+      refreshDashboard()
+      return
+    }
+    const label = timing.phase === 'before' ? messages.countdown.beforeStart : messages.countdown.beforeEnd
+    elements.reservationCountdown.textContent = `${label} ${formatCountdown(timing.remainingMs)}`
+    elements.reservationCountdown.classList.toggle(
+      'urgent',
+      timing.phase === 'during' && timing.remainingMs <= URGENT_COUNTDOWN_MS,
+    )
+    elements.reservationCountdown.hidden = false
+  }
+  tick()
+  countdownTimer = setInterval(tick, 1_000)
 }
 
 /** @param {import('./campus-api.js').AccessSlot} slot */
 function slotCard(slot) {
   const article = document.createElement('article')
   article.className = 'slot'
+  if (isCurrentAccessSlot(slot, campusNow()))
+    article.classList.add('current')
   const copy = document.createElement('div')
   const title = document.createElement('strong')
   title.textContent = `${formatTime(slot.starts_at)} – ${formatTime(slot.ends_at)}`
@@ -182,10 +310,12 @@ function slotCard(slot) {
   button.textContent = slot.reservable
     ? slot.confirmed >= slot.capacity
       ? messages.slots.waitlist
-      : isCurrentAccessSlot(slot, new Date())
+      : isCurrentAccessSlot(slot, campusNow())
         ? messages.slots.supplement
         : messages.slots.reserve
-    : messages.slots.unavailable
+    : slot.capacity === 0
+      ? messages.slots.closed
+      : messages.slots.unavailable
   article.append(copy, button)
   return article
 }
@@ -194,6 +324,10 @@ function slotCard(slot) {
 function reservationCard(reservation) {
   const article = document.createElement('article')
   article.className = 'reservation'
+  if (reservation.status === 'confirmed' && isCurrentAccessSlot(reservation, campusNow()))
+    article.classList.add('current')
+  else if (reservation.status === 'waitlisted')
+    article.classList.add('waitlisted')
   const status = document.createElement('span')
   status.className = `status ${reservation.status}`
   status.textContent = statusLabel(reservation.status)
@@ -202,7 +336,7 @@ function reservationCard(reservation) {
   const detail = document.createElement('small')
   detail.textContent = `${formatTime(reservation.starts_at)} – ${formatTime(reservation.ends_at)}${reservation.waitlist_position ? ` · 候补第 ${reservation.waitlist_position} 位` : ''}`
   article.append(status, time, detail)
-  if (canCancelReservation(reservation, new Date())) {
+  if (canCancelReservation(reservation, campusNow())) {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'text-button'
@@ -250,7 +384,10 @@ function hideMessage(element) {
 
 /** @param {unknown} error */
 function messageFor(error) {
-  return error instanceof CampusApiError ? messages.errors[error.code] || messages.errors.generic : messages.errors.generic
+  if (!(error instanceof CampusApiError))
+    return messages.errors.generic
+  const known = /** @type {Record<string, string>} */ (messages.errors)
+  return known[error.code] || messages.errors.generic
 }
 
 /** @param {string} value */

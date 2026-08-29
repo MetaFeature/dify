@@ -25,14 +25,14 @@ class CampusAdministrationQueryService:
         session: Session,
         students: StudentAdministrationService,
         gateway: ModelGateway,
-        quota_units_per_yuan: int,
+        quota_units_per_usd: int,
     ) -> None:
         self._session = session
         self._students = students
         self._allowances = AllowanceService(
             session=session,
             gateway=gateway,
-            quota_units_per_yuan=quota_units_per_yuan,
+            quota_units_per_usd=quota_units_per_usd,
         )
 
     def get_student_detail(self, student_number: str) -> StudentAdministrationDetail:

@@ -58,6 +58,10 @@ class VirtualIdentitySource:
         if len(self._records) != len(records):
             raise ValueError("virtual identity student_number values must be unique")
 
+    @property
+    def student_numbers(self) -> frozenset[str]:
+        return frozenset(self._records)
+
     def authenticate(self, subject: str, credential: str) -> StudentIdentity:
         record = self._records.get(subject.strip())
         if record is None or not secrets.compare_digest(record.login_code, credential):

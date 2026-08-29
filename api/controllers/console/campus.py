@@ -10,6 +10,7 @@ from controllers.common.schema import query_params_from_model
 from controllers.console import console_ns
 from controllers.console.campus_dependencies import (
     admin_service,
+    credential_service,
     launch_service,
     newapi_client,
     portal_sessions,
@@ -22,6 +23,7 @@ from controllers.console.campus_schemas import (
     AccessDecisionResponse,
     AllowanceResponse,
     PortalLoginResponse,
+    PortalPasswordChangePayload,
     ReservationCreatePayload,
     ReservationListResponse,
     ReservationResponse,
@@ -32,6 +34,7 @@ from controllers.console.campus_schemas import (
 )
 from controllers.console.wraps import setup_required
 from extensions.ext_database import db
+from libs.exception import BaseHTTPException
 from libs.helper import dump_response, extract_remote_ip
 from libs.login import current_account_with_tenant_optional
 from libs.token import set_access_token_to_cookie, set_csrf_token_to_cookie, set_refresh_token_to_cookie
@@ -39,10 +42,12 @@ from services.campus.allowance_service import AllowanceService
 from services.campus.domain import AllowanceSummary, ReservationResult
 from services.campus.errors import (
     AccessSlotRequiredError,
-    ActiveReservationExistsError,
     CampusAdministratorRequiredError,
+    CampusValidationError,
     CurrentSlotLoadUnavailableError,
+    DuplicateSlotClaimError,
     GatewayBindingNotFoundError,
+    PendingReservationExistsError,
     PortalSessionError,
     ReservationCancellationError,
     ReservationNotFoundError,
@@ -50,6 +55,18 @@ from services.campus.errors import (
     StudentNotFoundError,
     StudentSuspendedError,
 )
+
+
+class PendingReservationExistsHTTPError(BaseHTTPException):
+    error_code = "pending_reservation_exists"
+    description = "Student already has a reservation or waitlist entry that has not granted access"
+    code = 409
+
+
+class DuplicateSlotClaimHTTPError(BaseHTTPException):
+    error_code = "duplicate_slot_claim"
+    description = "Student already has an unfinished claim on this slot"
+    code = 409
 
 
 def _reservation_response(reservation: ReservationResult) -> dict[str, object]:
@@ -126,8 +143,10 @@ class CampusReservationListApi(Resource):
         payload = ReservationCreatePayload.model_validate(console_ns.payload or {})
         try:
             reservation = reservation_service().reserve(student.id, payload.starts_at, now=datetime.now(UTC))
-        except ActiveReservationExistsError as error:
-            raise Conflict("Student already has an unfinished reservation") from error
+        except PendingReservationExistsError as error:
+            raise PendingReservationExistsHTTPError() from error
+        except DuplicateSlotClaimError as error:
+            raise DuplicateSlotClaimHTTPError() from error
         except CurrentSlotLoadUnavailableError as error:
             raise TooManyRequests("Current slot admission is temporarily unavailable") from error
         except ReservationWindowError as error:
@@ -205,6 +224,24 @@ class CampusSessionLaunchApi(Resource):
         return response
 
 
+@console_ns.route("/campus/password")
+class CampusPasswordChangeApi(Resource):
+    @console_ns.expect(console_ns.models[PortalPasswordChangePayload.__name__])
+    @console_ns.response(200, "Password changed", console_ns.models[ResultResponse.__name__])
+    @setup_required
+    def post(self) -> ResponseReturnValue:
+        require_campus_enabled()
+        student = portal_student()
+        payload = PortalPasswordChangePayload.model_validate(console_ns.payload or {})
+        try:
+            credential_service().change_password(student.id, payload.current_password, payload.new_password)
+        except CampusValidationError as error:
+            raise BadRequest(str(error)) from error
+        except PortalSessionError as error:
+            raise Forbidden("Current password is incorrect") from error
+        return ResultResponse(result="success").model_dump(mode="json")
+
+
 @console_ns.route("/campus/allowance")
 class CampusAllowanceApi(Resource):
     @console_ns.response(200, "Student model allowance", console_ns.models[AllowanceResponse.__name__])
@@ -216,7 +253,7 @@ class CampusAllowanceApi(Resource):
             summary = AllowanceService(
                 session=db.session(),
                 gateway=newapi_client(),
-                quota_units_per_yuan=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_YUAN,
+                quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
             ).get_summary(student.id)
         except GatewayBindingNotFoundError as error:
             raise Conflict("Student model allowance is not provisioned") from error

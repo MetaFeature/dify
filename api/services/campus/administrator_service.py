@@ -82,6 +82,16 @@ class AdministratorService:
         self._audit("administrator.revoked", account_id, actor_account_id, {})
         self._session.commit()
 
+    def list_active(self) -> list[CampusAdministrator]:
+        """Return every active named administrator, ordered by display name."""
+        return list(
+            self._session.scalars(
+                select(CampusAdministrator)
+                .where(CampusAdministrator.active)
+                .order_by(CampusAdministrator.display_name)
+            ).all()
+        )
+
     def _audit(self, action: str, target_id: str, actor_account_id: str, details: dict[str, str]) -> None:
         self._session.add(
             CampusAuditEvent(

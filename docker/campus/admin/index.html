@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>南京工程学院 · 校园平台管理后台</title>
+    <link rel="stylesheet" href="/campus-admin/assets/admin.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="brand" href="/" aria-label="校园平台管理后台首页">
+          <span class="brand-mark" aria-hidden="true">NJIT</span>
+          <span><strong>校园平台管理后台</strong><small>南京工程学院 · AI 实践平台</small></span>
+        </a>
+        <nav class="masthead-links">
+          <a href="/apps">Dify 控制台</a>
+        </nav>
+      </header>
+
+      <section id="auth-view" class="panel auth-panel" hidden>
+        <h1>需要管理员登录</h1>
+        <p id="auth-message" class="muted">请先登录 Dify 控制台，再返回本页。</p>
+        <button id="auth-action" class="primary" type="button">前往登录</button>
+      </section>
+
+      <section id="admin-view" hidden>
+        <nav class="tabs" role="tablist">
+          <button class="tab active" type="button" data-tab="slots">时段容量</button>
+          <button class="tab" type="button" data-tab="students">学生管理</button>
+          <button class="tab" type="button" data-tab="roster">名单导入</button>
+          <button class="tab" type="button" data-tab="administrators">管理员</button>
+        </nav>
+        <p id="admin-message" class="message" role="status" hidden></p>
+
+        <section id="tab-slots" class="panel tab-panel">
+          <div class="section-heading">
+            <div><h2>时段容量</h2><p class="muted">容量设为 0 即关闭该时段；已确认的预约不会因调低容量被取消。</p></div>
+            <input id="slot-day" type="date" aria-label="日期">
+          </div>
+          <div id="slot-table" aria-live="polite"></div>
+        </section>
+
+        <section id="tab-students" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>学生管理</h2><p class="muted">「虚拟」标记表示该学号仍存在于虚拟演示名单中。</p></div>
+            <div class="pager">
+              <button id="students-prev" class="secondary compact" type="button">上一页</button>
+              <span id="students-page">第 1 页</span>
+              <button id="students-next" class="secondary compact" type="button">下一页</button>
+            </div>
+          </div>
+          <form id="student-create-form" class="inline-form">
+            <input name="studentNumber" placeholder="学号" required maxlength="64">
+            <input name="displayName" placeholder="姓名" required maxlength="255">
+            <input name="cohort" placeholder="班级（可选）" maxlength="128">
+            <input name="password" type="text" placeholder="初始密码" required maxlength="128" autocomplete="off">
+            <button class="secondary compact" type="submit">添加学生</button>
+          </form>
+          <div id="student-table" aria-live="polite"></div>
+          <div id="student-detail" hidden></div>
+        </section>
+
+        <section id="tab-roster" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>名单导入</h2><p class="muted">CSV 表头：student_number,display_name,cohort,password。密码列留空则保留原密码；新学生必须提供密码。字段中不能包含逗号。</p></div>
+            <input id="roster-file" type="file" accept=".csv,text/csv" aria-label="选择 CSV 文件">
+          </div>
+          <textarea id="roster-text" rows="8" placeholder="也可以直接粘贴 CSV 内容"></textarea>
+          <div class="roster-actions">
+            <button id="roster-preview" class="secondary" type="button">解析并预览</button>
+            <button id="roster-confirm" class="primary" type="button" hidden>确认导入</button>
+          </div>
+          <div id="roster-report" aria-live="polite"></div>
+        </section>
+
+        <section id="tab-administrators" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>管理员</h2><p class="muted">新管理员的 Dify 账号需先在 Dify 控制台创建，再在此处授权。</p></div>
+          </div>
+          <form id="admin-add-form" class="inline-form">
+            <input name="accountId" placeholder="Dify 账号 ID" required maxlength="64">
+            <button class="secondary compact" type="submit">授权为管理员</button>
+          </form>
+          <div id="admin-table" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/campus-admin/assets/admin.js"></script>
+  </body>
+</html>
