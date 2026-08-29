@@ -16,6 +16,24 @@ class StudentStatus(StrEnum):
     SUSPENDED = "suspended"
 
 
+class ExperimentTrack(StrEnum):
+    """One of the three practice paths a student may choose after signing in."""
+
+    LARGE_MODEL = "large-model"
+    DEEP_LEARNING = "deep-learning"
+    AGENT = "agent"
+
+
+#: Tracks the platform serves a lab manual for. The large-model track is
+#: completed in Dify instead, so it has no manual.
+MANUAL_TRACKS = (ExperimentTrack.DEEP_LEARNING, ExperimentTrack.AGENT)
+
+
+class LabManualChapterStatus(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+
+
 class ReservationStatus(StrEnum):
     CONFIRMED = "confirmed"
     WAITLISTED = "waitlisted"
@@ -175,3 +193,36 @@ class CampusAllowanceAdjustment(DefaultFieldsMixin, Base):
     actor_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     delta_usd: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False)
     reason: Mapped[str] = mapped_column(sa.String(500), nullable=False)
+
+
+class CampusLabManualChapter(DefaultFieldsMixin, Base):
+    """One ordered chapter of the lab manual for one experiment track.
+
+    ``body_html`` is already sanitized: it is cleaned once when an administrator
+    uploads it, so serving a chapter never re-parses untrusted markup.
+    """
+
+    __tablename__ = "campus_lab_manual_chapters"
+    __table_args__ = (sa.Index("campus_lab_manual_chapters_track_position_idx", "track", "position"),)
+
+    track: Mapped[ExperimentTrack] = mapped_column(EnumText(ExperimentTrack, length=32), nullable=False)
+    title: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    body_html: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    position: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    status: Mapped[LabManualChapterStatus] = mapped_column(
+        EnumText(LabManualChapterStatus, length=16),
+        nullable=False,
+        default=LabManualChapterStatus.DRAFT,
+    )
+
+
+class CampusLabManualImage(DefaultFieldsMixin, Base):
+    """An image an administrator uploaded for one track's manual."""
+
+    __tablename__ = "campus_lab_manual_images"
+    __table_args__ = (sa.Index("campus_lab_manual_images_track_idx", "track"),)
+
+    track: Mapped[ExperimentTrack] = mapped_column(EnumText(ExperimentTrack, length=32), nullable=False)
+    storage_key: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    mime_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False)
