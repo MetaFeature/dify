@@ -261,6 +261,37 @@ create-or-get, which returns the existing token untouched; if it reports having
 created a new one, the bound token is gone and provisioning fails rather than
 silently restoring the student's spent allowance.
 
+## Lab manuals
+
+The deep-learning and agent experiment tracks are completed on the student's own
+machine, so the only thing the platform publishes for them is a chapter-ordered
+lab manual (ADR-0018). The large-model track has no manual: it is completed in
+Dify, behind the reservation gate.
+
+Administrators author chapters in the administration portal's "实验手册" tab,
+uploading or pasting HTML. Uploads are sanitized before they are stored, once,
+so serving a chapter is a plain string read. What is removed:
+
+- scripts, frames, objects, forms, and inputs, together with their content
+- stylesheets and inline `style` attributes
+- event handler attributes
+- links whose protocol is not http, https, or mailto
+- images that are not same-origin, because the portal serves `img-src 'self'`
+
+The portal owns how a manual looks, so an administrator controls structure and
+content but never presentation. That is deliberate: a chapter exported from a
+word processor arrives with hundreds of lines of layout CSS that would break the
+page, and the content security policy would drop it silently anyway. The tab
+says so, and every save reports what was removed rather than leaving the author
+with a page that quietly lost its formatting.
+
+A chapter is a draft until it is published; only published chapters reach
+students. Reordering renumbers the track, and never crosses into another track.
+
+Authoring writes `lab_manual.chapter_*` audit events. The chapter body is
+deliberately absent from them: the trail records what happened, not a second
+copy of the document.
+
 ## Acceptance flow
 
 Use a virtual identity from the protected environment file:

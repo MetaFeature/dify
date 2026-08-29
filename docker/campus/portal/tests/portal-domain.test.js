@@ -1,18 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  addCampusDays,
-  campusDay,
-  canCancelReservation,
-  createCampusClock,
-  detectPromotions,
-  formatCountdown,
-  isCurrentAccessSlot,
-  launchWorkspace,
-  reservationTiming,
-  visibleSlots,
-} from '../assets/portal-domain.js'
+import { addCampusDays, campusDay, canCancelReservation, createCampusClock, detectPromotions, experimentTrackCards, formatCountdown, isCurrentAccessSlot, launchWorkspace, reservationTiming, visibleSlots } from '../assets/portal-domain.js'
 
 test('booking window follows UTC+8 even when the instant is still the previous UTC day', () => {
   const now = new Date('2026-08-11T16:30:00Z')
@@ -101,4 +90,29 @@ test('successful session launch enters the guarded Dify apps page', async () => 
   )
 
   assert.deepEqual(events, ['session-issued', 'navigate:/apps'])
+})
+
+test('experiment tracks are presented with the platform label and the right destination', () => {
+  const cards = experimentTrackCards([
+    { track: 'large-model', kind: 'dify', chapters: 0 },
+    { track: 'deep-learning', kind: 'manual', chapters: 3 },
+    { track: 'agent', kind: 'manual', chapters: 0 },
+  ])
+
+  assert.deepEqual(cards, [
+    { track: 'large-model', title: '大模型实验', destination: 'reservations', detail: '在 Dify 工作区完成，需先预约时段', available: true },
+    { track: 'deep-learning', title: '深度学习实验', destination: 'manual', detail: '共 3 章 · 在自己的电脑上完成', available: true },
+    { track: 'agent', title: '智能体实验', destination: 'manual', detail: '实验手册尚未发布', available: false },
+  ])
+})
+
+test('an unknown track is dropped rather than shown without a name', () => {
+  // The backend enum is the authority; a card with no label would be a dead end.
+  assert.deepEqual(experimentTrackCards([{ track: 'quantum', kind: 'manual', chapters: 1 }]), [])
+})
+
+test('a manual with no published chapter is not presented as ready', () => {
+  const [card] = experimentTrackCards([{ track: 'deep-learning', kind: 'manual', chapters: 0 }])
+
+  assert.equal(card.available, false)
 })

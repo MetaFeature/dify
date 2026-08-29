@@ -8,6 +8,8 @@ const CAMPUS_API_BASE = '/console/api/campus'
 /** @typedef {{ model: string, used_usd: string, requests: number }} ModelUsage */
 /** @typedef {{ remaining_usd: string, used_usd: string, total_usd: string, model_calls_enabled: boolean, by_model: ModelUsage[] }} Allowance */
 /** @typedef {{ access: AccessDecision, reservations: Reservation[], allowance: Allowance }} Dashboard */
+/** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
+/** @typedef {{ id: string, track: string, title: string, position: number, status: string, body_html: string }} ManualChapter */
 
 /** Backend-issued conflict codes the portal understands beyond plain HTTP statuses. */
 const BODY_ERROR_CODES = new Set(['pending_reservation_exists', 'duplicate_slot_claim'])
@@ -87,6 +89,23 @@ export class CampusApi {
     await this.#request(`/reservations/${encodeURIComponent(reservationId)}`, {
       method: 'DELETE',
     })
+  }
+
+  /** @returns {Promise<ExperimentTrackSummary[]>} */
+  async listExperimentTracks() {
+    const response = await this.#request('/experiment-tracks')
+    return response.data
+  }
+
+  /**
+   * Read one track's published lab manual.
+   *
+   * @param {string} track
+   * @returns {Promise<ManualChapter[]>}
+   */
+  async labManual(track) {
+    const response = await this.#request(`/lab-manuals/${encodeURIComponent(track)}`)
+    return response.data
   }
 
   /** @returns {Promise<{ result: string }>} */

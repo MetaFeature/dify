@@ -125,3 +125,17 @@ def test_authoring_routes_attribute_the_acting_administrator() -> None:
                 )
                 checked += 1
     assert checked >= 5, f"expected every authoring call to be checked, saw {checked}"
+
+
+def test_administrators_can_read_one_chapter_with_its_body() -> None:
+    # The chapter list deliberately omits body_html, so editing needs a route
+    # that returns it; without one the edit form would open empty and a save
+    # would wipe the chapter.
+    import inspect
+
+    from controllers.console import campus_admin
+
+    assert "/campus/admin/lab-manuals/chapters/<string:chapter_id>" in _routes()
+    source = inspect.getsource(campus_admin.CampusAdminLabManualChapterApi)
+    assert "def get(" in source
+    assert "body_html" in source

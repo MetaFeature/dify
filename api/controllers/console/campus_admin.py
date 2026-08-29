@@ -27,6 +27,7 @@ from controllers.console.campus_schemas import (
     AdminSlotListResponse,
     AllowanceAdjustmentPayload,
     AllowanceResponse,
+    LabManualChapterDetailResponse,
     LabManualChapterListResponse,
     LabManualChapterPayload,
     LabManualChapterPositionPayload,
@@ -428,6 +429,22 @@ class CampusAdminLabManualChapterListApi(Resource):
 
 @console_ns.route("/campus/admin/lab-manuals/chapters/<string:chapter_id>")
 class CampusAdminLabManualChapterApi(Resource):
+    @console_ns.response(200, "Chapter detail", console_ns.models[LabManualChapterDetailResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def get(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        try:
+            chapter = lab_manuals().chapter(chapter_id)
+        except CampusValidationError as error:
+            raise _chapter_error(error)
+        return dump_response(
+            LabManualChapterDetailResponse,
+            {**_chapter_payload(chapter), "body_html": chapter.body_html},
+        )
+
     @console_ns.expect(console_ns.models[LabManualChapterPayload.__name__])
     @console_ns.response(200, "Chapter updated", console_ns.models[LabManualChapterSavedResponse.__name__])
     @setup_required

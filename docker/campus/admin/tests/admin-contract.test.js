@@ -35,3 +35,46 @@ test('the model gateway tab keeps the pricing guardrail in front of the administ
   assert.match(panel, /倍率/)
   assert.match(panel, /manage\.sh verify/)
 })
+
+test('the lab manual tab offers only the two tracks that have a manual', () => {
+  // The large-model track is completed in Dify; offering it here would let an
+  // administrator author a manual the platform never serves.
+  const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
+  const options = [...panel.matchAll(/<option value="([a-z-]+)"/g)].map(match => match[1])
+
+  assert.deepEqual(options, ['deep-learning', 'agent'])
+})
+
+test('the manual tab tells the administrator their formatting will not survive', () => {
+  // Sanitizing strips inline styles. Not saying so is what makes an upload look
+  // broken to whoever wrote it.
+  const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
+
+  assert.match(panel, /清洗/)
+  assert.match(panel, /排版不会生效/)
+})
+
+test('a saved chapter always reports what sanitizing removed', () => {
+  const submit = script.slice(script.indexOf("elements.manualForm.addEventListener('submit'"))
+  const handler = submit.slice(0, submit.indexOf('\n})'))
+
+  assert.match(handler, /renderSanitizeReport\(saved\.removed\)/)
+})
+
+test('editing a chapter reads its body rather than opening an empty form', () => {
+  // The list omits body_html; a save from an empty form would wipe the chapter.
+  const editor = script.slice(script.indexOf('async function startEditingChapter('))
+  const body = editor.slice(0, editor.indexOf('\n}'))
+
+  assert.match(body, /api\.manualChapter\(chapterId\)/)
+  assert.match(body, /elements\.manualHtml\.value = chapter\.body_html/)
+})
+
+test('chapter titles reach the table escaped', () => {
+  // Titles are administrator input rendered into an innerHTML template.
+  const loader = script.slice(script.indexOf('async function loadManualChapters('))
+  const body = loader.slice(0, loader.indexOf('\n}\n'))
+
+  assert.match(body, /escapeHtml\(chapter\.title\)/)
+  assert.doesNotMatch(body, /\$\{chapter\.title\}/)
+})

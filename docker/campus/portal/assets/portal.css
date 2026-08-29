@@ -117,3 +117,69 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
   .section-heading input { width: 100%; }
   .slot { align-items: stretch; flex-direction: column; }
 }
+
+/* Experiment selection: the page a student lands on after signing in. */
+.row-actions { display: flex; gap: 8px; }
+.track-cards { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(262px, 1fr)); }
+.track-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 26px;
+  border: 1px solid #e1e7f0;
+  border-radius: 20px;
+  background: white;
+  box-shadow: 0 12px 35px rgb(45 61 96 / 6%);
+}
+.track-card h2 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
+.track-card p { flex: 1; }
+.track-card.unavailable { box-shadow: none; background: #f8fafd; }
+.track-card.unavailable h2 { color: #7b859c; }
+
+/* Lab manual reader: chapter list beside one chapter's body. */
+.manual-layout { display: grid; grid-template-columns: minmax(200px, 264px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.manual-chapters { position: sticky; top: 18px; }
+.chapter-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.chapter-link {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  color: #4a556f;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.chapter-link:hover { background: rgb(55 102 184 / 8%); }
+.chapter-link.active { color: #1d4b99; background: rgb(55 102 184 / 14%); font-weight: 700; }
+.manual-body { padding: 30px; min-width: 0; }
+.manual-body h2 { margin-top: 0; }
+
+/* Administrator-authored chapter content. The portal owns its appearance, so
+   these rules are the manual's only styling: uploads keep structure, never
+   presentation. */
+.chapter-body { color: #29344d; line-height: 1.78; }
+.chapter-body h1, .chapter-body h2, .chapter-body h3, .chapter-body h4 { margin: 26px 0 10px; line-height: 1.35; letter-spacing: -.02em; }
+.chapter-body h1 { font-size: 25px; }
+.chapter-body h2 { font-size: 21px; }
+.chapter-body h3 { font-size: 17px; }
+.chapter-body p, .chapter-body ul, .chapter-body ol, .chapter-body blockquote, .chapter-body pre { margin: 0 0 15px; }
+.chapter-body ul, .chapter-body ol { padding-left: 24px; }
+.chapter-body li { margin-bottom: 6px; }
+.chapter-body a { color: #1d4b99; }
+.chapter-body img { max-width: 100%; height: auto; border-radius: 12px; }
+.chapter-body pre { padding: 15px 17px; border-radius: 14px; color: #e6e8ec; background: #16181d; overflow-x: auto; }
+.chapter-body pre code { padding: 0; background: none; color: inherit; font-size: 13px; }
+.chapter-body code { padding: 2px 6px; border-radius: 6px; background: rgb(45 61 96 / 7%); font-size: .92em; }
+.chapter-body table { display: block; width: 100%; margin: 0 0 15px; border-collapse: collapse; overflow-x: auto; }
+.chapter-body th, .chapter-body td { padding: 9px 11px; border: 1px solid #e1e7f0; text-align: left; }
+.chapter-body th { background: #f6f8fc; font-weight: 700; }
+.chapter-body blockquote { padding: 2px 0 2px 15px; border-left: 3px solid #d7deea; color: #707b92; }
+.chapter-body figcaption { color: #707b92; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .manual-layout { grid-template-columns: minmax(0, 1fr); }
+  .manual-chapters { position: static; }
+}

@@ -5,6 +5,7 @@ import {
   canCancelReservation,
   createCampusClock,
   detectPromotions,
+  experimentTrackCards,
   formatCountdown,
   isCurrentAccessSlot,
   launchWorkspace,
@@ -29,7 +30,17 @@ if (loginFormElement instanceof HTMLFormElement)
 
 const elements = {
   loginView: requiredElement('#login-view', HTMLElement),
+  tracksView: requiredElement('#tracks-view', HTMLElement),
+  manualView: requiredElement('#manual-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
+  trackList: requiredElement('#track-list', HTMLElement),
+  tracksMessage: requiredElement('#tracks-message', HTMLElement),
+  tracksRefresh: requiredElement('#tracks-refresh', HTMLButtonElement),
+  manualTitle: requiredElement('#manual-title', HTMLElement),
+  manualChapters: requiredElement('#manual-chapters', HTMLElement),
+  manualBody: requiredElement('#manual-body', HTMLElement),
+  manualBack: requiredElement('#manual-back', HTMLButtonElement),
+  dashboardBack: requiredElement('#dashboard-back', HTMLButtonElement),
   loginForm: requiredElement('#login-form', HTMLFormElement),
   loginError: requiredElement('#login-error', HTMLElement),
   refreshButton: requiredElement('#refresh-button', HTMLButtonElement),
@@ -73,9 +84,8 @@ elements.loginForm.addEventListener('submit', async (event) => {
     await api.login(String(form.get('studentNumber')).trim(), String(form.get('loginCode')))
     elements.loginForm.reset()
     elements.loginView.hidden = true
-    elements.dashboardView.hidden = false
     hideMessage(elements.message)
-    await refreshDashboard()
+    await showTracks()
   }
   catch (error) {
     // On the sign-in form a 401 means the credentials were rejected, not that an
@@ -216,6 +226,8 @@ async function refreshDashboard() {
   catch (error) {
     if (error instanceof CampusApiError && error.status === 401) {
       elements.dashboardView.hidden = true
+      elements.tracksView.hidden = true
+      elements.manualView.hidden = true
       elements.loginView.hidden = false
       showMessage(elements.loginError, messageFor(error), true)
       return
@@ -411,4 +423,142 @@ function requiredElement(selector, type) {
   if (!(element instanceof type))
     throw new Error(`Missing required portal element: ${selector}`)
   return element
+}
+
+/** Show the experiment selection page and load the three tracks. */
+async function showTracks() {
+  elements.manualView.hidden = true
+  elements.dashboardView.hidden = true
+  elements.tracksView.hidden = false
+  hideMessage(elements.tracksMessage)
+  elements.trackList.textContent = '正在读取实验列表…'
+  try {
+    renderTrackCards(experimentTrackCards(await api.listExperimentTracks()))
+  }
+  catch (error) {
+    elements.trackList.textContent = ''
+    showMessage(elements.tracksMessage, messageFor(error), true)
+  }
+}
+
+/** @param {import('./portal-domain.js').ExperimentTrackCard[]} cards */
+function renderTrackCards(cards) {
+  if (!cards.length) {
+    elements.trackList.textContent = '暂无可用实验。'
+    return
+  }
+  const list = document.createElement('div')
+  list.className = 'track-cards'
+  for (const card of cards) {
+    const item = document.createElement('article')
+    item.className = card.available ? 'track-card' : 'track-card unavailable'
+    const heading = document.createElement('h2')
+    heading.textContent = card.title
+    const detail = document.createElement('p')
+    detail.className = 'muted'
+    detail.textContent = card.detail
+    const action = document.createElement('button')
+    action.type = 'button'
+    action.className = 'primary'
+    action.textContent = card.destination === 'reservations' ? '进入预约中心' : '阅读实验手册'
+    action.disabled = !card.available
+    action.dataset.track = card.track
+    action.dataset.destination = card.destination
+    item.append(heading, detail, action)
+    list.append(item)
+  }
+  elements.trackList.replaceChildren(list)
+}
+
+elements.trackList.addEventListener('click', async (event) => {
+  const button = event.target instanceof Element ? event.target.closest('button[data-destination]') : null
+  if (!(button instanceof HTMLButtonElement) || button.disabled)
+    return
+  if (button.dataset.destination === 'reservations') {
+    await showReservations()
+    return
+  }
+  await showManual(button.dataset.track || '', button.closest('.track-card')?.querySelector('h2')?.textContent || '实验手册')
+})
+
+elements.tracksRefresh.addEventListener('click', () => { void showTracks() })
+elements.manualBack.addEventListener('click', () => { void showTracks() })
+elements.dashboardBack.addEventListener('click', () => { void showTracks() })
+
+/** Show the reservation centre, which is the large-model track's destination. */
+async function showReservations() {
+  elements.tracksView.hidden = true
+  elements.manualView.hidden = true
+  elements.dashboardView.hidden = false
+  hideMessage(elements.message)
+  await refreshDashboard()
+}
+
+/**
+ * Show one track's manual.
+ *
+ * The chapter body arrives already sanitized -- it is cleaned once, when an
+ * administrator uploads it -- so it is assigned as HTML on purpose. Titles come
+ * from the same table and are assigned as text, because they never need markup.
+ *
+ * @param {string} track
+ * @param {string} title
+ */
+async function showManual(track, title) {
+  elements.tracksView.hidden = true
+  elements.dashboardView.hidden = true
+  elements.manualView.hidden = false
+  elements.manualTitle.textContent = title
+  elements.manualChapters.textContent = ''
+  elements.manualBody.textContent = '正在读取实验手册…'
+  let chapters
+  try {
+    chapters = await api.labManual(track)
+  }
+  catch (error) {
+    elements.manualBody.textContent = messageFor(error)
+    return
+  }
+  if (!chapters.length) {
+    elements.manualBody.textContent = '这本实验手册还没有发布章节。'
+    return
+  }
+  const nav = document.createElement('ol')
+  nav.className = 'chapter-list'
+  for (const chapter of chapters) {
+    const item = document.createElement('li')
+    const link = document.createElement('button')
+    link.type = 'button'
+    link.className = 'chapter-link'
+    link.textContent = chapter.title
+    link.dataset.chapterId = chapter.id
+    item.append(link)
+    nav.append(item)
+  }
+  elements.manualChapters.replaceChildren(nav)
+  renderChapter(chapters, chapters[0].id)
+  elements.manualChapters.onclick = (event) => {
+    const link = event.target instanceof Element ? event.target.closest('button[data-chapter-id]') : null
+    if (link instanceof HTMLButtonElement)
+      renderChapter(chapters, link.dataset.chapterId || '')
+  }
+}
+
+/**
+ * @param {import('./campus-api.js').ManualChapter[]} chapters
+ * @param {string} chapterId
+ */
+function renderChapter(chapters, chapterId) {
+  const chapter = chapters.find(candidate => candidate.id === chapterId)
+  if (!chapter)
+    return
+  for (const link of elements.manualChapters.querySelectorAll('button[data-chapter-id]'))
+    link.classList.toggle('active', link.getAttribute('data-chapter-id') === chapterId)
+  const heading = document.createElement('h2')
+  heading.textContent = chapter.title
+  const body = document.createElement('div')
+  body.className = 'chapter-body'
+  // Sanitized at upload; see services/campus/lab_manual_html.py.
+  body.innerHTML = chapter.body_html
+  elements.manualBody.replaceChildren(heading, body)
 }

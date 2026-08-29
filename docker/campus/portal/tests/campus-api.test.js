@@ -122,3 +122,31 @@ test('password change posts both secrets to the campus endpoint', async () => {
     new_password: 'NewPass1234',
   })
 })
+
+test('experiment tracks and a lab manual are read from their own routes', async () => {
+  const calls = []
+  const api = new CampusApi(async (url) => {
+    calls.push(url)
+    return response({ data: [{ track: 'deep-learning', kind: 'manual', chapters: 2 }] })
+  })
+
+  await api.listExperimentTracks()
+  await api.labManual('deep-learning')
+
+  assert.deepEqual(calls, [
+    '/console/api/campus/experiment-tracks',
+    '/console/api/campus/lab-manuals/deep-learning',
+  ])
+})
+
+test('a track name is encoded into the manual path', async () => {
+  const calls = []
+  const api = new CampusApi(async (url) => {
+    calls.push(url)
+    return response({ data: [] })
+  })
+
+  await api.labManual('deep learning/../admin')
+
+  assert.equal(calls[0], '/console/api/campus/lab-manuals/deep%20learning%2F..%2Fadmin')
+})

@@ -84,3 +84,11 @@ textarea { width: 100%; padding: 12px; border: 1px solid #d7deea; border-radius:
 #tab-gateway a.primary { display: inline-block; text-decoration: none; }
 .gateway-notes { margin: 0 0 12px; padding-left: 20px; line-height: 1.7; }
 .gateway-notes li { margin-bottom: 6px; }
+
+/* Lab manual tab: an authoring form above the chapter list. */
+.manual-form { display: grid; gap: 10px; margin-bottom: 14px; }
+.manual-form textarea { width: 100%; padding: 10px 12px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; font-size: 13px; resize: vertical; }
+.manual-actions { display: flex; gap: 8px; }
+#tab-manuals .section-heading select { height: 34px; padding: 0 8px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; }
+#manual-report { margin-bottom: 14px; }
+#manual-report p { margin: 0; }

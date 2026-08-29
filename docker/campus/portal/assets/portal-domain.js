@@ -117,3 +117,54 @@ export async function launchWorkspace(launchSession, navigate) {
   await launchSession()
   navigate('/apps')
 }
+
+/** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
+/** @typedef {{ track: string, title: string, destination: 'reservations' | 'manual', detail: string, available: boolean }} ExperimentTrackCard */
+
+/**
+ * The three tracks, named the way the platform names them. The backend enum is
+ * the authority for which tracks exist; this only decides how each is presented.
+ */
+const TRACK_TITLES = /** @type {Record<string, string>} */ ({
+  'large-model': '大模型实验',
+  'deep-learning': '深度学习实验',
+  agent: '智能体实验',
+})
+
+/**
+ * Turn the backend's track summaries into the cards the selection page renders.
+ *
+ * A track the portal cannot name is dropped: a card with no label is a dead end
+ * for the student, and the label belongs to the portal, not the backend.
+ *
+ * @param {ExperimentTrackSummary[]} tracks
+ * @returns {ExperimentTrackCard[]}
+ */
+export function experimentTrackCards(tracks) {
+  /** @type {ExperimentTrackCard[]} */
+  const cards = []
+  for (const summary of tracks) {
+    const title = TRACK_TITLES[summary.track]
+    if (!title)
+      continue
+    if (summary.kind === 'manual') {
+      const published = summary.chapters > 0
+      cards.push({
+        track: summary.track,
+        title,
+        destination: 'manual',
+        detail: published ? `共 ${summary.chapters} 章 · 在自己的电脑上完成` : '实验手册尚未发布',
+        available: published,
+      })
+      continue
+    }
+    cards.push({
+      track: summary.track,
+      title,
+      destination: 'reservations',
+      detail: '在 Dify 工作区完成，需先预约时段',
+      available: true,
+    })
+  }
+  return cards
+}

@@ -26,6 +26,15 @@ const elements = {
   rosterReport: requiredElement('#roster-report', HTMLElement),
   adminAddForm: requiredElement('#admin-add-form', HTMLFormElement),
   adminTable: requiredElement('#admin-table', HTMLElement),
+  manualTrack: requiredElement('#manual-track', HTMLSelectElement),
+  manualForm: requiredElement('#manual-form', HTMLFormElement),
+  manualChapterId: requiredElement('#manual-chapter-id', HTMLInputElement),
+  manualTitle: requiredElement('#manual-title', HTMLInputElement),
+  manualFile: requiredElement('#manual-file', HTMLInputElement),
+  manualHtml: requiredElement('#manual-html', HTMLTextAreaElement),
+  manualCancel: requiredElement('#manual-cancel', HTMLButtonElement),
+  manualReport: requiredElement('#manual-report', HTMLElement),
+  manualTable: requiredElement('#manual-table', HTMLElement),
 }
 
 let studentOffset = 0
@@ -452,7 +461,177 @@ async function bootstrap() {
     return
   }
   elements.adminView.hidden = false
-  await Promise.all([loadSlots(), loadStudents(), loadAdministrators()])
+  await Promise.all([loadSlots(), loadStudents(), loadAdministrators(), loadManualChapters()])
 }
 
 bootstrap()
+
+elements.manualTrack.addEventListener('change', () => {
+  resetManualForm()
+  void loadManualChapters()
+})
+
+elements.manualFile.addEventListener('change', async () => {
+  const file = elements.manualFile.files && elements.manualFile.files[0]
+  if (!file)
+    return
+  elements.manualHtml.value = await file.text()
+  if (!elements.manualTitle.value)
+    elements.manualTitle.value = file.name.replace(/\.html?$/i, '')
+})
+
+elements.manualCancel.addEventListener('click', resetManualForm)
+
+elements.manualForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const payload = { title: elements.manualTitle.value.trim(), body_html: elements.manualHtml.value }
+  const chapterId = elements.manualChapterId.value
+  elements.manualForm.querySelectorAll('button').forEach((button) => { button.disabled = true })
+  try {
+    const saved = chapterId
+      ? await api.updateManualChapter(chapterId, payload)
+      : await api.createManualChapter(elements.manualTrack.value, payload)
+    renderSanitizeReport(saved.removed)
+    resetManualForm()
+    showMessage(chapterId ? '章节已更新。' : '章节已添加，当前是草稿。', false)
+    await loadManualChapters()
+  }
+  catch (error) {
+    showMessage(messageFor(error), true)
+  }
+  finally {
+    elements.manualForm.querySelectorAll('button').forEach((button) => { button.disabled = false })
+  }
+})
+
+elements.manualTable.addEventListener('click', async (event) => {
+  const button = event.target instanceof Element ? event.target.closest('button[data-manual-action]') : null
+  if (!(button instanceof HTMLButtonElement))
+    return
+  const chapterId = button.getAttribute('data-chapter') || ''
+  const action = button.getAttribute('data-manual-action')
+  button.disabled = true
+  try {
+    if (action === 'publish' || action === 'unpublish') {
+      await api.setManualChapterStatus(chapterId, action === 'publish' ? 'published' : 'draft')
+      showMessage(action === 'publish' ? '章节已发布，学生现在能看到。' : '章节已撤回为草稿。', false)
+    }
+    else if (action === 'up' || action === 'down') {
+      await api.moveManualChapter(chapterId, Number(button.getAttribute('data-position')))
+    }
+    else if (action === 'delete') {
+      if (!window.confirm('确定删除这个章节吗？删除后无法恢复。'))
+        return
+      await api.deleteManualChapter(chapterId)
+      showMessage('章节已删除。', false)
+    }
+    else if (action === 'edit') {
+      await startEditingChapter(chapterId)
+      return
+    }
+    await loadManualChapters()
+  }
+  catch (error) {
+    showMessage(messageFor(error), true)
+  }
+  finally {
+    button.disabled = false
+  }
+})
+
+/**
+ * Load one chapter into the form so it can be replaced.
+ *
+ * The list omits body_html, so this reads the chapter on its own; opening the
+ * form empty would let a save wipe the chapter.
+ *
+ * @param {string} chapterId
+ */
+async function startEditingChapter(chapterId) {
+  const chapter = await api.manualChapter(chapterId)
+  elements.manualChapterId.value = chapter.id
+  elements.manualTitle.value = chapter.title
+  elements.manualHtml.value = chapter.body_html
+  elements.manualCancel.hidden = false
+  elements.manualTitle.focus()
+}
+
+function resetManualForm() {
+  elements.manualForm.reset()
+  elements.manualChapterId.value = ''
+  elements.manualCancel.hidden = true
+}
+
+/**
+ * Say what sanitizing removed. Silence here is what makes an upload look
+ * broken: the administrator's formatting is gone and nothing said so.
+ *
+ * @param {Record<string, number> | undefined} removed
+ */
+function renderSanitizeReport(removed) {
+  const entries = Object.entries(removed || {})
+  if (!entries.length) {
+    elements.manualReport.textContent = '清洗后没有内容被移除。'
+    return
+  }
+  /** @type {Record<string, string>} */
+  const labels = {
+    'script': '脚本',
+    'style': '样式表',
+    'style attribute': '内联样式',
+    'event handler': '事件处理器',
+    'unsafe link': '不安全链接',
+    'remote image': '外链图片',
+    'iframe': '内嵌框架',
+    'form': '表单',
+    'input': '输入控件',
+    'object': '嵌入对象',
+    'noscript': 'noscript',
+    'template': 'template',
+    'link': 'link',
+    'base': 'base',
+    'svg': 'svg',
+  }
+  const summary = document.createElement('p')
+  summary.className = 'muted'
+  summary.textContent = `已移除：${entries
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => `${labels[name] || name} ×${count}`)
+    .join('、')}。手册外观由平台统一控制。`
+  elements.manualReport.replaceChildren(summary)
+}
+
+async function loadManualChapters() {
+  elements.manualTable.textContent = '正在读取章节…'
+  try {
+    const { data } = await api.listManualChapters(elements.manualTrack.value)
+    if (!data.length) {
+      elements.manualTable.textContent = '这个实验类别还没有章节。'
+      return
+    }
+    const table = document.createElement('table')
+    table.innerHTML = '<thead><tr><th>#</th><th>标题</th><th>状态</th><th>操作</th></tr></thead>'
+    const body = document.createElement('tbody')
+    for (const [index, chapter] of data.entries()) {
+      const row = document.createElement('tr')
+      const published = chapter.status === 'published'
+      row.innerHTML = `
+        <td>${chapter.position}</td>
+        <td>${escapeHtml(chapter.title)}</td>
+        <td><span class="badge ${published ? 'active' : 'suspended'}">${published ? '已发布' : '草稿'}</span></td>
+        <td>
+          <button class="secondary compact" type="button" data-manual-action="edit" data-chapter="${escapeHtml(chapter.id)}">编辑</button>
+          <button class="secondary compact" type="button" data-manual-action="${published ? 'unpublish' : 'publish'}" data-chapter="${escapeHtml(chapter.id)}">${published ? '撤回' : '发布'}</button>
+          <button class="secondary compact" type="button" data-manual-action="up" data-chapter="${escapeHtml(chapter.id)}" data-position="${chapter.position - 1}" ${index === 0 ? 'disabled' : ''}>上移</button>
+          <button class="secondary compact" type="button" data-manual-action="down" data-chapter="${escapeHtml(chapter.id)}" data-position="${chapter.position + 1}" ${index === data.length - 1 ? 'disabled' : ''}>下移</button>
+          <button class="secondary compact danger" type="button" data-manual-action="delete" data-chapter="${escapeHtml(chapter.id)}">删除</button>
+        </td>`
+      body.append(row)
+    }
+    table.append(body)
+    elements.manualTable.replaceChildren(table)
+  }
+  catch (error) {
+    elements.manualTable.textContent = messageFor(error)
+  }
+}

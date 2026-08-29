@@ -39,10 +39,33 @@
         </form>
       </section>
 
+      <section id="tracks-view" class="tracks" hidden>
+        <div class="welcome-row">
+          <div><p class="eyebrow">EXPERIMENTS</p><h1>选择实验</h1><p class="muted">大模型实验在平台的 Dify 工作区完成；另两类实验在自己的电脑上完成，平台提供实验手册。</p></div>
+          <button id="tracks-refresh" class="secondary" type="button">刷新</button>
+        </div>
+        <div id="track-list" class="track-list" aria-live="polite"></div>
+        <p id="tracks-message" class="message" role="status" hidden></p>
+      </section>
+
+      <section id="manual-view" class="manual" hidden>
+        <div class="welcome-row">
+          <div><p class="eyebrow">LAB MANUAL</p><h1 id="manual-title">实验手册</h1><p class="muted">按章节阅读；在自己的电脑上按步骤操作。</p></div>
+          <button id="manual-back" class="secondary" type="button">返回实验选择</button>
+        </div>
+        <div class="manual-layout">
+          <nav id="manual-chapters" class="manual-chapters" aria-label="章节"></nav>
+          <article id="manual-body" class="panel manual-body" aria-live="polite"></article>
+        </div>
+      </section>
+
       <section id="dashboard-view" class="dashboard" hidden>
         <div class="welcome-row">
           <div><p class="eyebrow">ACCESS CENTER</p><h1>预约中心</h1><p class="muted">选择七日内的开放时段；进行中的时段可补约，另可再预约一个未开始的时段。</p></div>
-          <button id="refresh-button" class="secondary" type="button">刷新状态</button>
+          <div class="row-actions">
+            <button id="dashboard-back" class="secondary" type="button">返回实验选择</button>
+            <button id="refresh-button" class="secondary" type="button">刷新状态</button>
+          </div>
         </div>
 
         <div class="stats-grid">

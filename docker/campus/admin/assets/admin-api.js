@@ -8,6 +8,8 @@ const CONSOLE_API_BASE = '/console/api/campus'
 /** @typedef {{ id: string, student_number: string, display_name: string, cohort: string | null, status: string, has_credential?: boolean | null, virtual_identity?: boolean | null }} AdminStudent */
 /** @typedef {{ created: number, updated: number, password_resets: number }} SyncOutcome */
 /** @typedef {{ account_id: string, display_name: string }} Administrator */
+/** @typedef {{ id: string, track: string, title: string, position: number, status: 'draft' | 'published' }} ManualChapter */
+/** @typedef {ManualChapter & { body_html: string, removed: Record<string, number> }} SavedManualChapter */
 
 export class AdminApiError extends Error {
   /**
@@ -113,6 +115,61 @@ export class AdminApi {
   /** End the Dify console session so a different account can sign in. */
   async logout() {
     await this.#requestConsole('/logout', { method: 'POST' })
+  }
+
+  /** @param {string} track @returns {Promise<{ data: ManualChapter[] }>} */
+  async listManualChapters(track) {
+    return this.#request(`/admin/lab-manuals/${encodeURIComponent(track)}/chapters`)
+  }
+
+  /**
+   * @param {string} track
+   * @param {{ title: string, body_html: string }} payload
+   * @returns {Promise<SavedManualChapter>}
+   */
+  async createManualChapter(track, payload) {
+    return this.#request(`/admin/lab-manuals/${encodeURIComponent(track)}/chapters`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  /** @param {string} chapterId @returns {Promise<ManualChapter & { body_html: string }>} */
+  async manualChapter(chapterId) {
+    return this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}`)
+  }
+
+  /**
+   * @param {string} chapterId
+   * @param {{ title: string, body_html: string }} payload
+   * @returns {Promise<SavedManualChapter>}
+   */
+  async updateManualChapter(chapterId, payload) {
+    return this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  /** @param {string} chapterId @param {'draft' | 'published'} status @returns {Promise<ManualChapter>} */
+  async setManualChapterStatus(chapterId, status) {
+    return this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+  }
+
+  /** @param {string} chapterId @param {number} position @returns {Promise<{ data: ManualChapter[] }>} */
+  async moveManualChapter(chapterId, position) {
+    return this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}/position`, {
+      method: 'PUT',
+      body: JSON.stringify({ position }),
+    })
+  }
+
+  /** @param {string} chapterId @returns {Promise<void>} */
+  async deleteManualChapter(chapterId) {
+    await this.#request(`/admin/lab-manuals/chapters/${encodeURIComponent(chapterId)}`, { method: 'DELETE' })
   }
 
   /** @returns {Promise<{ data: Administrator[] }>} */
