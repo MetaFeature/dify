@@ -21,7 +21,8 @@ env_value() {
 }
 
 # Exercise the real function rather than a copy of it.
-source <(sed -n '/^validate_campus_model_list() {$/,/^}$/p' "${SCRIPT_DIR}/manage.sh")
+function_source="$(sed -n '/^validate_campus_model_list() {$/,/^}$/p' "${SCRIPT_DIR}/manage.sh")"
+eval "${function_source}"
 declare -F validate_campus_model_list >/dev/null || \
   fail "could not load validate_campus_model_list from manage.sh"
 
@@ -42,10 +43,11 @@ expect "default deployment" \
   accepted
 expect "surrounding whitespace" "llm:a , text-embedding:b " accepted
 expect "every supported type" \
-  "llm:a,text-embedding:b,rerank:c,speech2text:d,moderation:e,tts:f" accepted
+  "llm:a,text-embedding:b,rerank:c,speech2text:d,tts:e" accepted
 
 expect "unset" "" rejected
 expect "a type Dify has no slot for" "image:doubao-seedream-5.0-pro" rejected
+expect "a type the approved provider does not support" "llm:a,moderation:text-moderation-latest" rejected
 expect "an entry with no type" "deepseek-v4-flash" rejected
 expect "an entry with no name" "llm:" rejected
 expect "no llm to validate credentials against" "text-embedding:bge-m3" rejected

@@ -38,11 +38,12 @@ deployment; a registry mirror is allowed only when it retains that digest.
   every current-slot claim ends at the original slot boundary.
 - A zero model allowance blocks gateway calls but does not block Dify access,
   editing, viewing, or export during a confirmed slot.
-- Each student workspace installs the pinned official OpenAI provider plugin
-  before the managed NewAPI credential is validated and stored, then registers
-  the configured gateway model as a tenant custom LLM with an explicit API
-  protocol. Plugin package identity is explicit configuration so deployments
-  do not drift to an unreviewed Marketplace release during provisioning.
+- Each student workspace installs the pinned official OpenAI-API-compatible
+  provider before the managed NewAPI credential is validated and stored on
+  each configured custom model. The compatible plugin has no provider-level
+  credential schema: its model fields are `api_key` and `endpoint_url`, with
+  chat models selecting Chat Completions explicitly. Plugin package identity
+  is pinned so provisioning cannot drift to an unreviewed Marketplace release.
 - The student allowance contract returns only RMB remaining/used/total and
   per-model usage. Gateway tokens, channels, upstream credentials, and internal
   price expressions are never returned.
@@ -83,6 +84,14 @@ roster/SSO data remain outside the implemented boundary.
    install the configured OpenAI-compatible provider, and put the first Dify
    administrator account ID in `CAMPUS_BOOTSTRAP_ADMIN_ACCOUNT_IDS`.
 7. Run `docker/campus/manage.sh deploy`, then `docker/campus/manage.sh verify`.
+
+An existing Campus deployment that still uses the native OpenAI provider must
+run `docker/campus/manage.sh migrate-provider-config` before `validate` or
+`deploy`. The command accepts only the known legacy schema, creates a mode-0600
+rollback copy of `campus.env`, and rewrites only the provider identity, package
+pin, credential scope, and two non-secret field names. Repeating it is a no-op.
+To roll back, restore both the prior source revision and the reported protected
+environment copy before recreating the API container.
 
 ## Non-billable 100-user baseline
 

@@ -10,6 +10,8 @@ firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
 credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
+provider_config_test="${SCRIPT_DIR}/test-provider-config.sh"
+provider_config_migration_test="${SCRIPT_DIR}/test-provider-config-migration.sh"
 workspace_isolation_sql="${SCRIPT_DIR}/verify-workspace-isolation.sql"
 baseline_runner="${SCRIPT_DIR}/nonbillable_baseline.py"
 baseline_runner_test="${SCRIPT_DIR}/tests/test_nonbillable_baseline.py"
@@ -33,6 +35,22 @@ fi
   exit 1
 }
 python3 "${credential_validator_test}"
+[[ -x "${provider_config_test}" ]] || {
+  echo "Campus provider configuration test is missing or not executable" >&2
+  exit 1
+}
+[[ -x "${provider_config_migration_test}" ]] || {
+  echo "Campus provider configuration migration test is missing or not executable" >&2
+  exit 1
+}
+grep -Fq 'test-provider-config.sh' "${manager}" || {
+  echo "Campus validation does not exercise the provider configuration contract" >&2
+  exit 1
+}
+grep -Fq 'test-provider-config-migration.sh' "${manager}" || {
+  echo "Campus validation does not exercise the provider migration contract" >&2
+  exit 1
+}
 grep -Fq 'validate_compose_credentials.py' "${manager}" || {
   echo "Campus validation does not enforce Redis/Celery credential consistency" >&2
   exit 1

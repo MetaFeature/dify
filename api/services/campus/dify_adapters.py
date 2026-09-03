@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from configs import dify_config
-from configs.extra.campus_config import ModelApiProtocol
+from configs.extra.campus_config import ModelApiProtocol, ModelCredentialScope
 from core.plugin.impl.plugin import PluginInstaller
 from core.plugin.plugin_service import PluginService
 from graphon.model_runtime.entities.model_entities import ModelType
@@ -25,6 +25,11 @@ from services.enterprise.rbac_service import RBACService
 from services.model_provider_service import ModelProviderService
 
 logger = logging.getLogger(__name__)
+
+OPENAI_COMPATIBLE_MODEL_TYPES = frozenset(
+    {ModelType.LLM, ModelType.RERANK, ModelType.TEXT_EMBEDDING, ModelType.SPEECH2TEXT, ModelType.TTS}
+)
+OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE = "4096"
 
 
 @dataclass(frozen=True)
@@ -40,8 +45,8 @@ def parse_campus_models(spec: str) -> tuple[CampusModel, ...]:
 
     A deployment lists the gateway models students may use; the type decides
     which Dify model slot each one fills, so a knowledge base gets a real
-    embedding model instead of a second chat model. Anything unroutable is
-    rejected here rather than at a student's first sign-in.
+    embedding model instead of a second chat model. The platform requires an
+    LLM track, and anything unroutable is rejected before a student's sign-in.
     """
     models: list[CampusModel] = []
     seen: set[tuple[str, str]] = set()
@@ -56,6 +61,10 @@ def parse_campus_models(spec: str) -> tuple[CampusModel, ...]:
             model_type = ModelType(raw_type.strip().lower())
         except ValueError:
             raise CampusValidationError(f"Campus model entry has an unknown model type: {entry!r}") from None
+        if model_type not in OPENAI_COMPATIBLE_MODEL_TYPES:
+            raise CampusValidationError(
+                f"Campus OpenAI-compatible provider does not support model type: {model_type.value!r}"
+            )
         key = (model_type.value, name)
         if key in seen:
             raise CampusValidationError(f"Campus model list has a duplicate entry: {entry!r}")
@@ -291,16 +300,19 @@ class DifyWorkspaceProvisioner:
 class DifyModelConfigurator:
     """Install the plugin and upsert the workspace's opaque gateway credentials.
 
-    The pinned OpenAI plugin uses a model name to validate provider credentials,
-    but that probe alone does not register a non-catalog model. Every configured
-    Campus model is therefore also saved as a tenant custom model under its own
-    type, using the API protocol that the isolated gateway actually implements.
+    The approved OpenAI-compatible plugin has only model-level credentials, so
+    every Campus model is saved as a tenant custom model with the gateway token
+    and endpoint. Server-side provisioning must include the schema's required
+    context and batching defaults because it does not pass through the UI form
+    that normally supplies them. Provider scope remains available solely for
+    rollback to a plugin that declares a provider credential schema.
     """
 
     _session: Session
     _provider: str
     _provider_plugin_unique_identifier: str
     _credential_name: str
+    _credential_scope: ModelCredentialScope
     _api_key_field: str
     _base_url_field: str
     _base_url: str
@@ -321,6 +333,7 @@ class DifyModelConfigurator:
         base_url: str,
         models: Sequence[CampusModel],
         api_protocol: ModelApiProtocol,
+        credential_scope: ModelCredentialScope = "provider",
         plugin_package_path: str = "",
         plugin_installer: ProviderPluginInstaller | None = None,
         provider_service: ModelProviderCredentialService | None = None,
@@ -329,6 +342,7 @@ class DifyModelConfigurator:
         self._provider = provider
         self._provider_plugin_unique_identifier = provider_plugin_unique_identifier
         self._credential_name = credential_name
+        self._credential_scope = credential_scope
         self._api_key_field = api_key_field
         self._base_url_field = base_url_field
         self._base_url = base_url
@@ -344,6 +358,16 @@ class DifyModelConfigurator:
             dify_tenant_id,
             self._provider_plugin_unique_identifier,
         )
+        if self._credential_scope == "provider":
+            self._upsert_provider_credential(dify_tenant_id, gateway_secret)
+
+        registered = self._registered_models(dify_tenant_id)
+        for model in self._models:
+            model_credentials = self._model_credentials(model, gateway_secret)
+            self._upsert_model_credential(model, model_credentials, dify_tenant_id, registered)
+
+    def _upsert_provider_credential(self, dify_tenant_id: str, gateway_secret: str) -> None:
+        """Persist a provider credential only for rollback plugins that declare one."""
         provider_credentials = {
             self._api_key_field: gateway_secret,
             self._base_url_field: self._base_url,
@@ -373,14 +397,24 @@ class DifyModelConfigurator:
                 credential_name=self._credential_name,
             )
 
-        model_credentials = {
+    def _model_credentials(self, model: CampusModel, gateway_secret: str) -> ModelCredentialPayload:
+        """Build the credential schema expected by the configured plugin scope."""
+        credentials = {
             self._api_key_field: gateway_secret,
             self._base_url_field: self._base_url,
-            "api_protocol": self._api_protocol,
         }
-        registered = self._registered_models(dify_tenant_id)
-        for model in self._models:
-            self._upsert_model_credential(model, model_credentials, dify_tenant_id, registered)
+        if self._credential_scope == "provider":
+            credentials["api_protocol"] = self._api_protocol
+        elif model.model_type is ModelType.LLM:
+            credentials["mode"] = "chat"
+            credentials["api_type"] = "responses" if self._api_protocol == "responses" else "chat_completions"
+            credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
+        elif model.model_type is ModelType.TEXT_EMBEDDING:
+            credentials["max_chunks"] = "1"
+            credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
+        elif model.model_type is ModelType.RERANK:
+            credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
+        return credentials
 
     def needs_configuration(self, dify_tenant_id: str) -> bool:
         """Report whether this workspace is missing any configured model.

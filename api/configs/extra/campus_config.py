@@ -5,6 +5,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 type ModelApiProtocol = Literal["responses", "chat"]
+type ModelCredentialScope = Literal["provider", "model"]
 
 
 class CampusConfig(BaseSettings):
@@ -42,15 +43,16 @@ class CampusConfig(BaseSettings):
         description="Gateway quota units per US dollar; must match the gateway's own QuotaPerUnit",
     )
 
-    CAMPUS_MODEL_PROVIDER: str = Field(default="langgenius/openai/openai")
+    CAMPUS_MODEL_PROVIDER: str = Field(default="langgenius/openai_api_compatible/openai_api_compatible")
     CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER: str = Field(default="")
     CAMPUS_MODEL_PROVIDER_PLUGIN_PACKAGE_PATH: str = Field(
         default="",
         description="Local .difypkg for the pinned provider plugin; empty falls back to the public Marketplace",
     )
     CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME: str = Field(default="Campus managed", min_length=1, max_length=30)
-    CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: str = Field(default="openai_api_key", min_length=1)
-    CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: str = Field(default="openai_api_base", min_length=1)
+    CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE: ModelCredentialScope = "model"
+    CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: str = Field(default="api_key", min_length=1)
+    CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: str = Field(default="endpoint_url", min_length=1)
     CAMPUS_MODEL_PROVIDER_BASE_URL: str = Field(default="http://model-gateway:3000/v1", min_length=1)
     CAMPUS_MODEL_PROVIDER_MODELS: str = Field(
         default=(

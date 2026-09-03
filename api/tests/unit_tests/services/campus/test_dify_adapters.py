@@ -142,6 +142,119 @@ def test_model_configurator_installs_provider_plugin_before_credentials(sqlite_e
     assert events == ["plugin-installed", "provider-credential-created", "model-credential-created"]
 
 
+def test_model_only_configurator_creates_openai_compatible_model_credentials(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    events: list[str] = []
+
+    class PluginInstaller:
+        def ensure_installed(self, tenant_id: str, plugin_unique_identifier: str) -> None:
+            assert tenant_id == "tenant-1"
+            assert plugin_unique_identifier == "langgenius/openai_api_compatible:0.0.64@checksum"
+            events.append("plugin-installed")
+
+    class ProviderService:
+        def create_provider_credential(self, **_: object) -> None:
+            raise AssertionError("the OpenAI-compatible plugin has no provider credential schema")
+
+        def update_provider_credential(self, **_: object) -> None:
+            raise AssertionError("the OpenAI-compatible plugin has no provider credential schema")
+
+        def create_model_credential(
+            self,
+            tenant_id: str,
+            provider: str,
+            model_type: str,
+            model: str,
+            credentials: dict[str, str],
+            credential_name: str,
+        ) -> None:
+            assert tenant_id == "tenant-1"
+            assert provider == "langgenius/openai_api_compatible/openai_api_compatible"
+            assert model_type == "llm"
+            assert model == "deepseek-v4-flash"
+            assert credentials == {
+                "api_key": "managed-secret",
+                "endpoint_url": "http://model-gateway:3000/v1",
+                "mode": "chat",
+                "api_type": "chat_completions",
+                "context_size": "4096",
+            }
+            assert credential_name == "Campus managed"
+            events.append("model-credential-created")
+
+        def update_model_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its model credential")
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai_api_compatible/openai_api_compatible",
+            provider_plugin_unique_identifier="langgenius/openai_api_compatible:0.0.64@checksum",
+            credential_name="Campus managed",
+            credential_scope="model",
+            api_key_field="api_key",
+            base_url_field="endpoint_url",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4-flash"),
+            api_protocol="chat",
+            plugin_installer=PluginInstaller(),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert events == ["plugin-installed", "model-credential-created"]
+
+
+def test_model_only_configurator_supplies_required_fields_for_each_model_type(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    credentials_by_type: dict[str, dict[str, str]] = {}
+
+    class ProviderService:
+        def create_provider_credential(self, **_: object) -> None:
+            raise AssertionError("model-only configuration cannot create provider credentials")
+
+        def update_provider_credential(self, **_: object) -> None:
+            raise AssertionError("model-only configuration cannot update provider credentials")
+
+        def create_model_credential(self, *, model_type: str, credentials: dict[str, str], **_: object) -> None:
+            credentials_by_type[model_type] = credentials
+
+        def update_model_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its model credentials")
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai_api_compatible/openai_api_compatible",
+            provider_plugin_unique_identifier="langgenius/openai_api_compatible:0.0.64@checksum",
+            credential_name="Campus managed",
+            credential_scope="model",
+            api_key_field="api_key",
+            base_url_field="endpoint_url",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4-flash,text-embedding:bge-m3,rerank:bge-reranker-v2-m3"),
+            api_protocol="chat",
+            plugin_installer=SimpleNamespace(ensure_installed=lambda *_: None),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    common = {"api_key": "managed-secret", "endpoint_url": "http://model-gateway:3000/v1"}
+    assert credentials_by_type == {
+        "llm": {**common, "mode": "chat", "api_type": "chat_completions", "context_size": "4096"},
+        "text-embedding": {**common, "max_chunks": "1", "context_size": "4096"},
+        "rerank": {**common, "context_size": "4096"},
+    }
+
+
 def test_model_configurator_updates_existing_provider_and_model_credentials(sqlite_engine) -> None:
     ProviderCredential.metadata.create_all(
         sqlite_engine,
@@ -488,6 +601,8 @@ def test_campus_model_spec_rejects_entries_it_cannot_route() -> None:
     # a workspace whose model list is wrong.
     with pytest.raises(CampusValidationError, match="model type"):
         parse_campus_models("image:doubao-seedream-5.0-pro")
+    with pytest.raises(CampusValidationError, match="provider does not support"):
+        parse_campus_models("llm:deepseek-v4-flash,moderation:text-moderation-latest")
     with pytest.raises(CampusValidationError, match="type:name"):
         parse_campus_models("deepseek-v4-flash")
     with pytest.raises(CampusValidationError, match="at least one"):
@@ -496,9 +611,9 @@ def test_campus_model_spec_rejects_entries_it_cannot_route() -> None:
         parse_campus_models("llm:deepseek-v4-flash,llm:deepseek-v4-flash")
 
 
-def test_campus_model_spec_requires_an_llm_to_validate_provider_credentials() -> None:
-    # The pinned OpenAI plugin validates a credential by calling one LLM, so a
-    # spec without one leaves nothing to validate against.
+def test_campus_model_spec_requires_an_llm_track() -> None:
+    # The large-model experiment requires at least one chat model even when the
+    # configured provider also exposes embedding and reranking slots.
     with pytest.raises(CampusValidationError, match="at least one llm"):
         parse_campus_models("text-embedding:bge-m3")
 

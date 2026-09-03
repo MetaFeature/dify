@@ -136,6 +136,7 @@ def platform_provisioner() -> PlatformProvisioningService:
             provider=dify_config.CAMPUS_MODEL_PROVIDER,
             provider_plugin_unique_identifier=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER,
             credential_name=dify_config.CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME,
+            credential_scope=dify_config.CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE,
             api_key_field=dify_config.CAMPUS_MODEL_PROVIDER_API_KEY_FIELD,
             base_url_field=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,

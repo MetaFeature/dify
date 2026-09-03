@@ -12,6 +12,10 @@ BRANDING_DIR="${SCRIPT_DIR}/branding"
 BRANDING_LOGO_FILE="${BRANDING_DIR}/njit-logo.png"
 BRANDING_LOGO_MANIFEST="${BRANDING_DIR}/SHA256SUMS"
 WORKSPACE_ISOLATION_SQL="${SCRIPT_DIR}/verify-workspace-isolation.sql"
+APPROVED_MODEL_PROVIDER="langgenius/openai_api_compatible/openai_api_compatible"
+APPROVED_MODEL_CREDENTIAL_SCOPE="model"
+APPROVED_MODEL_API_KEY_FIELD="api_key"
+APPROVED_MODEL_BASE_URL_FIELD="endpoint_url"
 
 env_value() {
   local key="$1"
@@ -98,7 +102,7 @@ assert_branding_logo() {
 }
 
 set_env_value() {
-  local key="$1" value="$2" env_tmp
+  local key="$1" value="$2" env_tmp source_mode
   [[ "${key}" =~ ^[A-Z0-9_]+$ ]] || fail "invalid environment key"
   env_tmp="$(mktemp "${CAMPUS_ENV_FILE}.XXXXXX")"
   awk -v key="${key}" -v value="${value}" '
@@ -107,7 +111,9 @@ set_env_value() {
     { print }
     END { if (!replaced) print key "=" value }
   ' "${CAMPUS_ENV_FILE}" >"${env_tmp}"
-  chmod --reference="${CAMPUS_ENV_FILE}" "${env_tmp}"
+  source_mode="$(stat -c '%a' "${CAMPUS_ENV_FILE}" 2>/dev/null || stat -f '%Lp' "${CAMPUS_ENV_FILE}")"
+  [[ "${source_mode}" =~ ^[0-7]{3,4}$ ]] || fail "could not preserve Campus environment file mode"
+  chmod "${source_mode}" "${env_tmp}"
   mv "${env_tmp}" "${CAMPUS_ENV_FILE}"
 }
 
@@ -131,11 +137,63 @@ EOF
   [[ -n "${approved_provider_plugin}" ]] || fail "approved provider plugin identity is empty"
   [[ "${value}" == "${approved_provider_plugin}" ]] || \
     fail "CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER must retain the approved package identity"
+  [[ "$(env_value CAMPUS_MODEL_PROVIDER)" == "${APPROVED_MODEL_PROVIDER}" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER must match the approved OpenAI-compatible model credential schema"
+  [[ "$(env_value CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE)" == "${APPROVED_MODEL_CREDENTIAL_SCOPE}" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE must match the approved OpenAI-compatible model credential schema"
+  [[ "$(env_value CAMPUS_MODEL_PROVIDER_API_KEY_FIELD)" == "${APPROVED_MODEL_API_KEY_FIELD}" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER_API_KEY_FIELD must match the approved OpenAI-compatible model credential schema"
+  [[ "$(env_value CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD)" == "${APPROVED_MODEL_BASE_URL_FIELD}" ]] || \
+    fail "CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD must match the approved OpenAI-compatible model credential schema"
   value="$(env_value CAMPUS_GATEWAY_GO_PROXY)"
   case "${value}" in
     ""|https://proxy.golang.org,direct|https://goproxy.cn,direct) ;;
     *) fail "CAMPUS_GATEWAY_GO_PROXY must use an approved HTTPS Go module proxy" ;;
   esac
+}
+
+migrate_provider_config() {
+  [[ -f "${CAMPUS_ENV_FILE}" ]] || fail "missing ${CAMPUS_ENV_FILE}"
+  [[ -f "${APPROVED_PROVIDER_PLUGIN_FILE}" ]] || fail "missing approved provider plugin identity"
+  local approved_plugin current_plugin current_scope stamp destination
+  approved_plugin="$(sed -n '1p' "${APPROVED_PROVIDER_PLUGIN_FILE}")"
+  current_plugin="$(env_value CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER)"
+  current_scope="$(env_value CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE)"
+
+  if [[ "$(env_value CAMPUS_MODEL_PROVIDER)" == "${APPROVED_MODEL_PROVIDER}" && \
+        "${current_plugin}" == "${approved_plugin}" && \
+        "${current_scope}" == "${APPROVED_MODEL_CREDENTIAL_SCOPE}" && \
+        "$(env_value CAMPUS_MODEL_PROVIDER_API_KEY_FIELD)" == "${APPROVED_MODEL_API_KEY_FIELD}" && \
+        "$(env_value CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD)" == "${APPROVED_MODEL_BASE_URL_FIELD}" ]]; then
+    echo "Campus provider configuration already uses the approved OpenAI-compatible schema."
+    return
+  fi
+
+  [[ "$(env_value CAMPUS_MODEL_PROVIDER)" == "langgenius/openai/openai" && \
+        "${current_plugin}" == langgenius/openai:* && \
+        ( -z "${current_scope}" || "${current_scope}" == "provider" ) && \
+        "$(env_value CAMPUS_MODEL_PROVIDER_API_KEY_FIELD)" == "openai_api_key" && \
+        "$(env_value CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD)" == "openai_api_base" ]] || \
+    fail "provider configuration is neither the approved schema nor the supported legacy OpenAI schema"
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  destination="${BACKUP_ROOT}/provider-config-${stamp}"
+  install -d -m 700 "${destination}"
+  cp -p "${CAMPUS_ENV_FILE}" "${destination}/campus.env"
+  chmod 600 "${destination}/campus.env"
+
+  if ! (
+    set_env_value CAMPUS_MODEL_PROVIDER "${APPROVED_MODEL_PROVIDER}"
+    set_env_value CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER "${approved_plugin}"
+    set_env_value CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE "${APPROVED_MODEL_CREDENTIAL_SCOPE}"
+    set_env_value CAMPUS_MODEL_PROVIDER_API_KEY_FIELD "${APPROVED_MODEL_API_KEY_FIELD}"
+    set_env_value CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD "${APPROVED_MODEL_BASE_URL_FIELD}"
+    validate_gateway_build_images
+  ); then
+    cp -p "${destination}/campus.env" "${CAMPUS_ENV_FILE}"
+    fail "provider configuration migration failed; the protected environment was restored"
+  fi
+  echo "Campus provider configuration migrated; rollback copy: ${destination}/campus.env"
 }
 
 validate() {
@@ -149,6 +207,8 @@ validate() {
   fi
   validate_branding_logo_source
   validate_gateway_build_images
+  "${SCRIPT_DIR}/test-provider-config.sh"
+  "${SCRIPT_DIR}/test-provider-config-migration.sh"
   validate_campus_model_list
   "${SCRIPT_DIR}/test-model-list.sh"
   "${SCRIPT_DIR}/test-nginx-routes.sh"
@@ -170,7 +230,7 @@ validate_campus_model_list() {
       fail "CAMPUS_MODEL_PROVIDER_MODELS entry must be type:name, got '${entry}'"
     case "${model_type}" in
       llm) seen_llm=true ;;
-      text-embedding|rerank|speech2text|moderation|tts) ;;
+      text-embedding|rerank|speech2text|tts) ;;
       *) fail "CAMPUS_MODEL_PROVIDER_MODELS has an unknown model type: '${entry}'" ;;
     esac
   done < <(printf '%s\n' "${models}" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
@@ -937,7 +997,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {gateway-up|migrate-provider-config|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
   exit 2
 }
 
@@ -951,6 +1011,7 @@ case "${1:-}" in
     CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN=bootstrap \
       "${COMPOSE[@]}" up -d --build model-gateway-db model-gateway-redis model-gateway
     ;;
+  migrate-provider-config) migrate_provider_config ;;
   validate) validate ;;
   backup) backup ;;
   deploy) deploy ;;
