@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { addCampusDays, campusDay, canCancelReservation, createCampusClock, detectPromotions, experimentTrackCards, formatCountdown, isCurrentAccessSlot, launchWorkspace, reservationTiming, visibleSlots } from '../assets/portal-domain.js'
+import { addCampusDays, campusDay, canCancelReservation, createCampusClock, detectPromotions, experimentTrackCards, formatCountdown, isCurrentAccessSlot, launchWorkspace, paginateReservations, reservationPageSize, reservationTiming, visibleSlots } from '../assets/portal-domain.js'
 
 test('booking window follows UTC+8 even when the instant is still the previous UTC day', () => {
   const now = new Date('2026-08-11T16:30:00Z')
@@ -79,6 +79,30 @@ test('ended slots are hidden from the booking list', () => {
 
   assert.deepEqual(visibleSlots(slots, new Date('2026-08-12T02:30:00Z')), [slots[1]])
   assert.deepEqual(visibleSlots(slots, new Date('2026-08-12T04:00:00Z')), [])
+})
+
+test('reservation history page length adapts to the viewport without expanding unbounded', () => {
+  assert.equal(reservationPageSize(720), 2)
+  assert.equal(reservationPageSize(1080), 3)
+  assert.equal(reservationPageSize(1293), 4)
+  assert.equal(reservationPageSize(1600), 6)
+})
+
+test('reservation history exposes one bounded page and clamps a stale page after refresh', () => {
+  const reservations = Array.from({ length: 7 }, (_, index) => ({ id: `reservation-${index + 1}` }))
+
+  assert.deepEqual(paginateReservations(reservations, 1, 1080), {
+    items: reservations.slice(3, 6),
+    page: 1,
+    pageCount: 3,
+    pageSize: 3,
+  })
+  assert.deepEqual(paginateReservations(reservations.slice(0, 2), 2, 1080), {
+    items: reservations.slice(0, 2),
+    page: 0,
+    pageCount: 1,
+    pageSize: 3,
+  })
 })
 
 test('successful session launch enters the guarded Dify apps page', async () => {

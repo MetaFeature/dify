@@ -81,7 +81,12 @@
           </article>
           <aside class="panel action-panel">
             <p class="eyebrow">YOUR RESERVATION</p><h2>我的预约</h2>
-            <div id="reservation-list" class="reservation-list"></div>
+            <div id="reservation-list" class="reservation-list" aria-live="polite"></div>
+            <nav id="reservation-pagination" class="reservation-pagination" aria-label="预约记录分页" hidden>
+              <button id="reservation-previous" class="secondary compact" type="button">上一页</button>
+              <span id="reservation-page" aria-live="polite"></span>
+              <button id="reservation-next" class="secondary compact" type="button">下一页</button>
+            </nav>
             <button id="launch-button" class="primary" type="button" disabled>进入 Dify 工作区</button>
             <p id="dashboard-message" class="message" role="status" hidden></p>
             <details class="password-details">

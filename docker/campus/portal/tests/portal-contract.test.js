@@ -59,3 +59,10 @@ test('chapter titles are assigned as text, never as markup', () => {
   assert.match(manual, /link\.textContent = chapter\.title/)
   assert.match(script, /heading\.textContent = chapter\.title/)
 })
+
+test('reservation history provides accessible pagination controls', () => {
+  assert.match(page, /<nav id="reservation-pagination"[^>]*aria-label="预约记录分页"/)
+  assert.match(page, /<button id="reservation-previous"[^>]*>上一页<\/button>/)
+  assert.match(page, /<span id="reservation-page"[^>]*aria-live="polite"/)
+  assert.match(page, /<button id="reservation-next"[^>]*>下一页<\/button>/)
+})

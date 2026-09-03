@@ -1,4 +1,8 @@
 const CAMPUS_TIME_ZONE = 'Asia/Shanghai'
+const RESERVATION_PAGE_MIN = 2
+const RESERVATION_PAGE_MAX = 6
+const RESERVATION_PANEL_CHROME_HEIGHT = 680
+const RESERVATION_CARD_ROW_HEIGHT = 130
 
 /** @typedef {import('./campus-api.js').ReservationStatus} ReservationStatus */
 /** @typedef {{ status: ReservationStatus, starts_at: string, ends_at: string }} CancellableReservation */
@@ -105,6 +109,38 @@ export function detectPromotions(previous, current) {
  */
 export function visibleSlots(slots, now) {
   return slots.filter(slot => new Date(slot.ends_at).getTime() > now.getTime())
+}
+
+/**
+ * Keep reservation history compact while using extra room on taller screens.
+ * Two records remain visible on short viewports and six is the hard ceiling, so
+ * a long history never stretches the booking page indefinitely.
+ *
+ * @param {number} viewportHeight
+ */
+export function reservationPageSize(viewportHeight) {
+  const availableHeight = Math.max(0, viewportHeight - RESERVATION_PANEL_CHROME_HEIGHT)
+  const fittingRows = Math.floor(availableHeight / RESERVATION_CARD_ROW_HEIGHT)
+  return Math.min(RESERVATION_PAGE_MAX, Math.max(RESERVATION_PAGE_MIN, fittingRows))
+}
+
+/**
+ * Slice reservation history into a viewport-sized page and keep the selected
+ * page valid when a refresh removes records.
+ *
+ * @template T
+ * @param {T[]} reservations
+ * @param {number} requestedPage zero-based page index
+ * @param {number} viewportHeight
+ * @returns {{ items: T[], page: number, pageCount: number, pageSize: number }}
+ */
+export function paginateReservations(reservations, requestedPage, viewportHeight) {
+  const pageSize = reservationPageSize(viewportHeight)
+  const pageCount = Math.max(1, Math.ceil(reservations.length / pageSize))
+  const normalizedPage = Number.isFinite(requestedPage) ? Math.trunc(requestedPage) : 0
+  const page = Math.min(pageCount - 1, Math.max(0, normalizedPage))
+  const start = page * pageSize
+  return { items: reservations.slice(start, start + pageSize), page, pageCount, pageSize }
 }
 
 /**

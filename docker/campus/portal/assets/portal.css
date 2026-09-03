@@ -87,6 +87,8 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 .slot small { color: #7b8599; }
 .action-panel { align-self: start; }
 .reservation-list { display: grid; gap: 10px; min-height: 190px; margin: 18px 0; }
+.reservation-pagination { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin: -4px 0 18px; }
+.reservation-pagination span { color: #6f7990; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
 .reservation { display: grid; gap: 7px; padding: 16px; border: 1px solid #e3e8f0; border-radius: 14px; background: #fbfcfe; }
 .reservation small, .empty { color: #788298; }
 .status { justify-self: start; padding: 4px 8px; border-radius: 999px; color: #345687; background: #e9f0fb; font-size: 11px; font-weight: 800; }

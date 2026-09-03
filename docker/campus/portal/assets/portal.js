@@ -9,6 +9,7 @@ import {
   formatCountdown,
   isCurrentAccessSlot,
   launchWorkspace,
+  paginateReservations,
   reservationTiming,
   visibleSlots,
 } from './portal-domain.js'
@@ -47,6 +48,10 @@ const elements = {
   day: requiredElement('#slot-day', HTMLInputElement),
   slotList: requiredElement('#slot-list', HTMLElement),
   reservationList: requiredElement('#reservation-list', HTMLElement),
+  reservationPagination: requiredElement('#reservation-pagination', HTMLElement),
+  reservationPrevious: requiredElement('#reservation-previous', HTMLButtonElement),
+  reservationPage: requiredElement('#reservation-page', HTMLElement),
+  reservationNext: requiredElement('#reservation-next', HTMLButtonElement),
   launchButton: requiredElement('#launch-button', HTMLButtonElement),
   message: requiredElement('#dashboard-message', HTMLElement),
   accessState: requiredElement('#access-state', HTMLElement),
@@ -65,6 +70,8 @@ let campusClock = createCampusClock(new Date().toISOString(), Date.now())
 let lastReservations = []
 let countdownTimer = 0
 let lastRefreshAtMs = 0
+let reservationPage = 0
+let resizeFrame = 0
 
 function campusNow() {
   return campusClock()
@@ -105,6 +112,14 @@ elements.refreshButton.addEventListener('click', () => {
   refreshDashboard()
 })
 elements.day.addEventListener('change', loadSlots)
+elements.reservationPrevious.addEventListener('click', () => {
+  reservationPage -= 1
+  renderReservationHistory()
+})
+elements.reservationNext.addEventListener('click', () => {
+  reservationPage += 1
+  renderReservationHistory()
+})
 elements.launchButton.addEventListener('click', async () => {
   setBusy(elements.launchButton, true)
   hideMessage(elements.message)
@@ -200,6 +215,13 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden)
     passiveRefresh()
 })
+window.addEventListener('resize', () => {
+  cancelAnimationFrame(resizeFrame)
+  resizeFrame = requestAnimationFrame(() => {
+    if (!elements.dashboardView.hidden)
+      renderReservationHistory()
+  })
+})
 
 function passiveRefresh() {
   if (document.hidden || elements.dashboardView.hidden)
@@ -272,7 +294,19 @@ function renderDashboard({ access, reservations, allowance }) {
   elements.reservationState.textContent = unfinished ? statusLabel(unfinished.status) : '暂无'
   elements.reservationDetail.textContent = unfinished ? `${formatDateTime(unfinished.starts_at)} – ${formatTime(unfinished.ends_at)}` : messages.reservations.noneDetail
   renderCountdown(unfinished)
-  elements.reservationList.replaceChildren(...(reservations.length ? reservations.map(reservationCard) : [emptyReservation()]))
+  renderReservationHistory()
+}
+
+function renderReservationHistory() {
+  const page = paginateReservations(lastReservations, reservationPage, window.innerHeight)
+  reservationPage = page.page
+  elements.reservationList.replaceChildren(
+    ...(page.items.length ? page.items.map(reservationCard) : [emptyReservation()]),
+  )
+  elements.reservationPage.textContent = `第 ${page.page + 1} / ${page.pageCount} 页 · 共 ${lastReservations.length} 条`
+  elements.reservationPrevious.disabled = page.page === 0
+  elements.reservationNext.disabled = page.page === page.pageCount - 1
+  elements.reservationPagination.hidden = page.pageCount === 1
 }
 
 /** @param {import('./campus-api.js').Reservation | undefined} reservation */
