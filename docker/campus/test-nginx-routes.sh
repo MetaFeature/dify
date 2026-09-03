@@ -136,6 +136,13 @@ printf '%s\n' "${signin_location}" | grep -Fq 'return 302 /portal/;' || {
   exit 1
 }
 
+logout_location="$(sed -n '/^[[:space:]]*location = \/console\/api\/logout {$/,/^[[:space:]]*}/p' "${template}")"
+printf '%s\n' "${logout_location}" | \
+  grep -Fq 'proxy_pass http://campus_api/console/api/campus/session/logout;' || {
+    echo "Dify logout does not revoke the Campus portal session" >&2
+    exit 1
+  }
+
 grep -Eq '^[[:space:]]{2}portal:$' "${compose_overlay}" || {
   echo "Campus Compose does not define the Access portal container" >&2
   exit 1

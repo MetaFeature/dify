@@ -13,6 +13,7 @@ services:
     image: *campus-dify-image
     build: *campus-dify-build
     environment:
+      CODE_EXECUTION_API_KEY: ${SANDBOX_API_KEY:?set SANDBOX_API_KEY}
       SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-2}
       SERVER_WORKER_CLASS: ${CAMPUS_API_WORKER_CLASS:-gevent}
       SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}
@@ -60,6 +61,7 @@ services:
     image: *campus-dify-image
     build: *campus-dify-build
     environment:
+      CODE_EXECUTION_API_KEY: ${SANDBOX_API_KEY:?set SANDBOX_API_KEY}
       MIGRATION_ENABLED: "false"
 
   worker_beat:

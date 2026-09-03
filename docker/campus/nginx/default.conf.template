@@ -80,6 +80,14 @@ server {
       return 302 /portal/;
     }
 
+    # Dify's logout must also end the server-side Campus portal session. The
+    # endpoint remains callable after a reservation expires so logout cannot be
+    # blocked by the access check it is intended to invalidate.
+    location = /console/api/logout {
+      proxy_pass http://campus_api/console/api/campus/session/logout;
+      include proxy.conf;
+    }
+
     # Student authentication is available only through the Access portal.
     # Named administrators use the host-loopback-only listener below.
     location ~ ^/(activate|forgot-password|reset-password|signin|signup)(/|$) {

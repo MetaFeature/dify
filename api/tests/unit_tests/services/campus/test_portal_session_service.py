@@ -96,3 +96,27 @@ def test_expired_or_suspended_session_fails_closed(campus_session: Session):
     campus_session.commit()
     with pytest.raises(StudentSuspendedError):
         service.resolve(issued.token, now=datetime(2026, 8, 11, 0, 30, tzinfo=UTC))
+
+
+def test_revoke_ends_the_server_side_portal_session_immediately(campus_session: Session):
+    service = PortalSessionService(
+        session=campus_session,
+        identity_source=FakeIdentitySource(),
+        platform_provisioner=FakePlatformProvisioner(),
+        session_ttl=timedelta(hours=12),
+        token_factory=lambda: "raw-portal-token",
+    )
+    issued = service.authenticate(
+        "20260001",
+        "valid-code",
+        now=datetime(2026, 8, 11, 0, 0, tzinfo=UTC),
+    )
+    revoked_at = datetime(2026, 8, 11, 0, 30, tzinfo=UTC)
+
+    assert service.revoke(issued.token, now=revoked_at) is True
+    assert service.revoke(issued.token, now=revoked_at) is False
+
+    stored = campus_session.query(CampusPortalSession).one()
+    assert stored.revoked_at == revoked_at.replace(tzinfo=None)
+    with pytest.raises(PortalSessionError):
+        service.resolve(issued.token, now=revoked_at)

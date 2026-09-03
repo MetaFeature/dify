@@ -144,11 +144,21 @@ the portal container has no host port and no direct API-network access.
 
 The campus-facing listener sends the exact stock Dify `/signin` route back to
 `/portal/` so upstream logout cannot strand a student on an unavailable page.
-It continues to block nested sign-in routes, signup, password-reset, activation,
-and login APIs. Named administrators use the separate host-loopback-only
-listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally through an SSH
-tunnel). This preserves the upstream administration surface without exposing a
-second student authentication path.
+It also intercepts the exact stock logout API and delegates it to the Campus
+backend, which revokes the server-side portal session and clears both the Dify
+and `campus_portal_session` cookies. Revisiting a historical Dify URL therefore
+requires the student to enter portal credentials again, even while the original
+reservation is still effective. Nested sign-in routes, signup, password-reset,
+activation, and login APIs remain blocked. Named administrators use the separate
+host-loopback-only listener at `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}` (normally
+through an SSH tunnel). This preserves the upstream administration surface
+without exposing a second student authentication path.
+
+The Campus Compose overlay renders the sandbox's `SANDBOX_API_KEY` into both
+API and worker `CODE_EXECUTION_API_KEY`. `manage.sh validate` rejects any
+rendered mismatch without printing either secret, and `manage.sh verify` runs a
+non-model CodeExecutor probe so a stale running container cannot leave workflow
+Code nodes failing with sandbox `401` responses.
 
 The Campus administration portal owns that loopback listener's root: opening
 `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}/` serves the static page from

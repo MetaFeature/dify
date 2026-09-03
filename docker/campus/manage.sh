@@ -331,6 +331,16 @@ print(f"current_slot_load_per_cpu={one_minute_load / cpu_count:.3f} threshold={t
 '
 }
 
+assert_code_execution_ready() {
+  "${COMPOSE[@]}" exec -T worker python -c '
+from core.helper.code_executor.code_executor import CodeExecutor, CodeLanguage
+
+output = CodeExecutor.execute_code(CodeLanguage.PYTHON3, "", "print(\"campus-sandbox-ready\")")
+assert output.strip() == "campus-sandbox-ready"
+print("sandbox_code_execution=ready")
+'
+}
+
 assert_portal_root_redirect() {
   local url="$1" status redirect_url
   read -r status redirect_url < <(local_curl --silent --output /dev/null \
@@ -551,6 +561,7 @@ verify() {
   assert_api_concurrency_capacity "$(env_value CAMPUS_BASELINE_CONCURRENCY || true)"
   verify_workspace_isolation
   assert_current_slot_load_signal
+  assert_code_execution_ready
   for service in worker worker_beat; do
     assert_service_never_restarted "${service}"
   done

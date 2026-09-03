@@ -20,7 +20,9 @@ SPEC.loader.exec_module(MODULE)
 
 
 class EnvironmentFixture(TypedDict, total=False):
+    API_KEY: str
     CELERY_BROKER_URL: str
+    CODE_EXECUTION_API_KEY: str
     REDISCLI_AUTH: str
     REDIS_HOST: str
     REDIS_PORT: str
@@ -32,6 +34,7 @@ class ServiceFixture(TypedDict):
 
 class ServicesFixture(TypedDict):
     redis: ServiceFixture
+    sandbox: ServiceFixture
     api: ServiceFixture
     worker: ServiceFixture
     worker_beat: ServiceFixture
@@ -46,12 +49,14 @@ def compose_config(redis_password: str, broker_password: str | None = None) -> C
     broker_url = f"redis://:{encoded_password}@redis:6379/1"
     shared_environment = {
         "CELERY_BROKER_URL": broker_url,
+        "CODE_EXECUTION_API_KEY": "sandbox-key",
         "REDIS_HOST": "redis",
         "REDIS_PORT": "6379",
     }
     return {
         "services": {
             "redis": {"environment": {"REDISCLI_AUTH": redis_password}},
+            "sandbox": {"environment": {"API_KEY": "sandbox-key"}},
             "api": {"environment": dict(shared_environment)},
             "worker": {"environment": dict(shared_environment)},
             "worker_beat": {"environment": dict(shared_environment)},
@@ -79,6 +84,16 @@ class ComposeCredentialValidationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "worker broker endpoint"):
             MODULE.validate_compose_credentials(config)
+
+    def test_rejects_stale_code_execution_key_without_disclosing_it(self) -> None:
+        stale_key = "old-sandbox-key-must-not-leak"
+        config = compose_config("current-password")
+        config["services"]["worker"]["environment"]["CODE_EXECUTION_API_KEY"] = stale_key
+
+        with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "sandbox credential does not match") as caught:
+            MODULE.validate_compose_credentials(config)
+
+        self.assertNotIn(stale_key, str(caught.exception))
 
     def test_rejects_transport_and_acl_forms_not_used_by_internal_redis(self) -> None:
         for broker_url in (

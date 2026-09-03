@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import flask_login
 from flask import Response, make_response, request
 from flask.typing import ResponseReturnValue
 from flask_restx import Resource
@@ -40,8 +41,16 @@ from extensions.ext_database import db
 from libs.exception import BaseHTTPException
 from libs.helper import dump_response, extract_remote_ip
 from libs.login import current_account_with_tenant_optional
-from libs.token import set_access_token_to_cookie, set_csrf_token_to_cookie, set_refresh_token_to_cookie
+from libs.token import (
+    clear_access_token_from_cookie,
+    clear_csrf_token_from_cookie,
+    clear_refresh_token_from_cookie,
+    set_access_token_to_cookie,
+    set_csrf_token_to_cookie,
+    set_refresh_token_to_cookie,
+)
 from models.campus import MANUAL_TRACKS, ExperimentTrack
+from services.account_service import AccountService
 from services.campus.allowance_service import AllowanceService
 from services.campus.domain import AllowanceSummary, ReservationResult
 from services.campus.errors import (
@@ -225,6 +234,38 @@ class CampusSessionLaunchApi(Resource):
         set_access_token_to_cookie(request, response, token_pair.access_token)
         set_refresh_token_to_cookie(request, response, token_pair.refresh_token)
         set_csrf_token_to_cookie(request, response, token_pair.csrf_token)
+        return response
+
+
+@console_ns.route("/campus/session/logout")
+class CampusSessionLogoutApi(Resource):
+    @console_ns.response(200, "Campus and Dify sessions ended", console_ns.models[ResultResponse.__name__])
+    @setup_required
+    def post(self) -> ResponseReturnValue:
+        require_campus_enabled()
+        raw_portal_token = request.cookies.get(dify_config.CAMPUS_PORTAL_COOKIE_NAME)
+        if raw_portal_token:
+            portal_sessions().revoke(raw_portal_token, now=datetime.now(UTC))
+
+        account, _ = current_account_with_tenant_optional()
+        if account is not None:
+            AccountService.logout(account=account)
+            flask_login.logout_user()
+
+        response = make_response(ResultResponse(result="success").model_dump(mode="json"))
+        clear_access_token_from_cookie(response)
+        clear_refresh_token_from_cookie(response)
+        clear_csrf_token_from_cookie(response)
+        response.set_cookie(
+            dify_config.CAMPUS_PORTAL_COOKIE_NAME,
+            "",
+            expires=0,
+            max_age=0,
+            httponly=True,
+            secure=dify_config.CAMPUS_PORTAL_COOKIE_SECURE,
+            samesite="Lax",
+            path="/",
+        )
         return response
 
 

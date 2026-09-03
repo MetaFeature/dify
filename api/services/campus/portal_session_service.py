@@ -85,6 +85,17 @@ class PortalSessionService:
             self._session.commit()
         return student
 
+    def revoke(self, raw_token: str, *, now: datetime) -> bool:
+        """Revoke one portal session by its raw browser token."""
+        portal_session = self._session.scalar(
+            select(CampusPortalSession).where(CampusPortalSession.token_hash == self._hash_token(raw_token))
+        )
+        if portal_session is None or portal_session.revoked_at is not None:
+            return False
+        portal_session.revoked_at = to_naive_utc(now)
+        self._session.commit()
+        return True
+
     @staticmethod
     def _hash_token(raw_token: str) -> str:
         return hashlib.sha256(raw_token.encode()).hexdigest()

@@ -131,6 +131,10 @@ printf '%s\n' "${verify_function}" | grep -Fq 'assert_api_concurrency_capacity' 
   echo "Campus runtime verification does not enforce API concurrency capacity" >&2
   exit 1
 }
+printf '%s\n' "${verify_function}" | grep -Fq 'assert_code_execution_ready' || {
+  echo "Campus runtime verification does not exercise the sandbox authentication path" >&2
+  exit 1
+}
 printf '%s\n' "${verify_function}" | grep -Fq 'docker port "${container_id}" 80/tcp' || {
   echo "Campus verification does not inspect every nginx host binding" >&2
   exit 1
