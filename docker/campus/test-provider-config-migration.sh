@@ -29,7 +29,7 @@ grep -Fxq "CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER=${approved_plugin}" "$
 grep -Fxq 'CAMPUS_MODEL_PROVIDER_CREDENTIAL_SCOPE=model' "${fixture_env}"
 grep -Fxq 'CAMPUS_MODEL_PROVIDER_API_KEY_FIELD=api_key' "${fixture_env}"
 grep -Fxq 'CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD=endpoint_url' "${fixture_env}"
-[[ "$(stat -f '%Lp' "${fixture_env}" 2>/dev/null || stat -c '%a' "${fixture_env}")" == "600" ]]
+[[ "$(stat -c '%a' "${fixture_env}" 2>/dev/null || stat -f '%Lp' "${fixture_env}")" == "600" ]]
 
 backup_count="$(find "${backup_root}" -type f -name campus.env -print | wc -l | tr -d ' ')"
 backup_file="$(find "${backup_root}" -type f -name campus.env -print -quit)"
