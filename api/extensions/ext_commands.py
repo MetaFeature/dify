@@ -8,6 +8,7 @@ def init_app(app: DifyApp):
         archive_workflow_runs_plan,
         backfill_plugin_auto_upgrade,
         backfill_workflow_run_archive_bundles,
+        campus_model_providers,
         clean_expired_messages,
         clean_workflow_runs,
         cleanup_orphaned_draft_variables,
@@ -88,6 +89,7 @@ def init_app(app: DifyApp):
         export_migration_data_template,
         import_migration_data,
         migration_data_wizard,
+        campus_model_providers,
     ]
     for cmd in cmds_to_register:
         app.cli.add_command(cmd)

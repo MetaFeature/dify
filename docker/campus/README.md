@@ -44,6 +44,10 @@ deployment; a registry mirror is allowed only when it retains that digest.
   credential schema: its model fields are `api_key` and `endpoint_url`, with
   chat models selecting Chat Completions explicitly. Plugin package identity
   is pinned so provisioning cannot drift to an unreviewed Marketplace release.
+- The public nginx reservation check forwards only the Campus portal session
+  cookie. A remembered stock Dify session, including an administrator session,
+  cannot satisfy the public gate; administrators continue to use the dedicated
+  host-loopback listener.
 - The student allowance contract returns only RMB remaining/used/total and
   per-model usage. Gateway tokens, channels, upstream credentials, and internal
   price expressions are never returned.
@@ -92,6 +96,16 @@ rollback copy of `campus.env`, and rewrites only the provider identity, package
 pin, credential scope, and two non-secret field names. Repeating it is a no-op.
 To roll back, restore both the prior source revision and the reported protected
 environment copy before recreating the API container.
+
+After that source-level migration, run
+`docker/campus/manage.sh reconcile-model-providers` once. The command creates a
+full runtime backup, copies the existing encrypted managed gateway key into any
+missing OpenAI-compatible model records without decrypting or validating it
+against a billable model, rewrites legacy OpenAI and DeepSeek workflow/default
+references, and uninstalls those two legacy plugins from student workspaces.
+The command and its audit are idempotent. Roll back by restoring the source and
+the runtime backup path printed by the command; do not restore only one side of
+the provider migration.
 
 ## Non-billable 100-user baseline
 

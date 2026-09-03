@@ -63,6 +63,13 @@ grep -Eq '^[[:space:]]*location \^~ /portal/ \{' "${template}" || {
   exit 1
 }
 
+access_check_location="$(sed -n '/^[[:space:]]*location = \/_campus_access_check {$/,/^[[:space:]]*}/p' "${template}")"
+printf '%s\n' "${access_check_location}" | \
+  grep -Fq 'proxy_set_header Cookie "campus_portal_session=$cookie_campus_portal_session";' || {
+    echo "Campus access checks can still authenticate with a stock Dify cookie" >&2
+    exit 1
+  }
+
 for upstream in campus_api campus_portal campus_web campus_plugin_daemon; do
   upstream_block="$(sed -n "/^upstream ${upstream} {$/,/^}$/p" "${template}")"
   [[ -n "${upstream_block}" ]] || {

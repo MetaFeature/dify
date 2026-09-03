@@ -3,6 +3,7 @@ CLI command modules extracted from `commands.py`.
 """
 
 from .account import create_tenant, reset_email, reset_password
+from .campus import campus_model_providers
 from .data_migrate import data_migrate, legacy_model_types
 from .data_migration import (
     export_migration_data,
@@ -56,6 +57,7 @@ __all__ = [
     "archive_workflow_runs_plan",
     "backfill_plugin_auto_upgrade",
     "backfill_workflow_run_archive_bundles",
+    "campus_model_providers",
     "clean_expired_messages",
     "clean_workflow_runs",
     "cleanup_orphaned_draft_variables",

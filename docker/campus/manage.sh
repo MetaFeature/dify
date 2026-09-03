@@ -481,6 +481,16 @@ verify_workspace_isolation() {
     "${binding_count}" "${account_count}" "${tenant_count}"
 }
 
+reconcile_model_providers_runtime() {
+  require_running_service api
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile
+}
+
+audit_model_providers_runtime() {
+  require_running_service api
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers audit
+}
+
 assert_api_concurrency_capacity() {
   local required_concurrency="${1:-100}" container_id environment worker_amount worker_class worker_connections
   local configured_capacity
@@ -537,6 +547,7 @@ verify() {
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
+  audit_model_providers_runtime
   assert_api_concurrency_capacity "$(env_value CAMPUS_BASELINE_CONCURRENCY || true)"
   verify_workspace_isolation
   assert_current_slot_load_signal
@@ -983,7 +994,18 @@ deploy() {
   # serving the old page while its mounted asset directory serves new scripts.
   "${COMPOSE[@]}" up -d --no-deps --force-recreate portal
   "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+  reconcile_model_providers_runtime
   verify
+}
+
+reconcile_model_providers() {
+  local backup_destination
+  validate
+  project_has_state || fail "model provider reconciliation requires an existing Campus project"
+  backup_destination="$(backup)"
+  reconcile_model_providers_runtime
+  verify
+  echo "Campus model providers reconciled; rollback backup: ${backup_destination}"
 }
 
 deploy_branding() {
@@ -997,7 +1019,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|migrate-provider-config|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
   exit 2
 }
 
@@ -1012,6 +1034,7 @@ case "${1:-}" in
       "${COMPOSE[@]}" up -d --build model-gateway-db model-gateway-redis model-gateway
     ;;
   migrate-provider-config) migrate_provider_config ;;
+  reconcile-model-providers) reconcile_model_providers ;;
   validate) validate ;;
   backup) backup ;;
   deploy) deploy ;;
