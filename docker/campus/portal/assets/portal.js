@@ -1,4 +1,5 @@
 import { CampusApi, CampusApiError } from './campus-api.js'
+import { messageFor, passwordErrorMessage } from './error-messages.js'
 import {
   addCampusDays,
   campusDay,
@@ -195,14 +196,7 @@ elements.passwordForm.addEventListener('submit', async (event) => {
     showMessage(elements.passwordMessage, messages.password.changed)
   }
   catch (error) {
-    const text = !(error instanceof CampusApiError)
-      ? messageFor(error)
-      : error.status === 403
-        ? messages.password.currentWrong
-        : error.status === 400
-          ? messages.password.invalidNew
-          : messageFor(error)
-    showMessage(elements.passwordMessage, text, true)
+    showMessage(elements.passwordMessage, passwordErrorMessage(error), true)
   }
   finally {
     setBusy(elements.passwordForm, false)
@@ -426,14 +420,6 @@ function showMessage(element, message, error = false) {
 /** @param {HTMLElement} element */
 function hideMessage(element) {
   element.hidden = true
-}
-
-/** @param {unknown} error */
-function messageFor(error) {
-  if (!(error instanceof CampusApiError))
-    return messages.errors.generic
-  const known = /** @type {Record<string, string>} */ (messages.errors)
-  return known[error.code] || messages.errors.generic
 }
 
 /** @param {string} value */

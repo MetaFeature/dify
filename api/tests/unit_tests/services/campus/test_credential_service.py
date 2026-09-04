@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -19,7 +20,9 @@ from services.campus.errors import (
     CredentialNotFoundError,
     PortalSessionError,
     StudentNotFoundError,
+    StudentPasswordStrengthError,
 )
+from services.campus.identity_source import VirtualIdentitySource
 from services.campus.student_service import StudentAdministrationService
 
 
@@ -49,6 +52,20 @@ def _student(session: Session, student_number: str = "20260001") -> CampusStuden
     student = session.scalar(select(CampusStudent).where(CampusStudent.student_number == student_number))
     assert student is not None
     return student
+
+
+def _legacy_identity_source() -> VirtualIdentitySource:
+    return VirtualIdentitySource(
+        json.dumps(
+            [
+                {
+                    "student_number": "20260001",
+                    "display_name": "Student One",
+                    "login_code": "LegacyPass1234",
+                }
+            ]
+        )
+    )
 
 
 NOW = datetime(2026, 8, 28, 10, 0, tzinfo=UTC)
@@ -114,6 +131,52 @@ def test_change_password_requires_current_password_and_strength(campus_session: 
 
     service.change_password(student.id, "Ngc0001", "NewPass1234")
     assert service.authenticate("20260001", "NewPass1234").student_number == "20260001"
+
+
+def test_change_password_reports_a_specific_strength_failure(campus_session: Session):
+    student = _student(campus_session)
+    service = StudentCredentialService(session=campus_session)
+    service.set_password("20260001", "Ngc0001", now=NOW)
+
+    with pytest.raises(StudentPasswordStrengthError):
+        service.change_password(student.id, "Ngc0001", "short")
+
+
+def test_change_password_claims_a_legacy_virtual_identity(campus_session: Session):
+    student = _student(campus_session)
+    legacy_identity = _legacy_identity_source()
+    service = StudentCredentialService(session=campus_session, fallback_identity_source=legacy_identity)
+
+    service.change_password(
+        student.id,
+        "LegacyPass1234",
+        "NewPass1234",
+    )
+
+    managed_source = ManagedFirstIdentitySource(service, legacy_identity)
+    assert managed_source.authenticate("20260001", "NewPass1234").student_number == "20260001"
+    with pytest.raises(PortalSessionError):
+        managed_source.authenticate("20260001", "LegacyPass1234")
+
+
+def test_change_password_does_not_claim_a_legacy_identity_with_the_wrong_current_password(
+    campus_session: Session,
+):
+    student = _student(campus_session)
+    legacy_identity = _legacy_identity_source()
+    service = StudentCredentialService(session=campus_session, fallback_identity_source=legacy_identity)
+
+    with pytest.raises(PortalSessionError):
+        service.change_password(
+            student.id,
+            "wrong-current-password",
+            "NewPass1234",
+        )
+
+    managed_source = ManagedFirstIdentitySource(service, legacy_identity)
+    assert managed_source.authenticate("20260001", "LegacyPass1234").student_number == "20260001"
+    with pytest.raises(PortalSessionError):
+        managed_source.authenticate("20260001", "NewPass1234")
 
 
 def test_managed_source_wins_when_a_credential_row_exists(campus_session: Session):

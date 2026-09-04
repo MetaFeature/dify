@@ -11,8 +11,12 @@ const CAMPUS_API_BASE = '/console/api/campus'
 /** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
 /** @typedef {{ id: string, track: string, title: string, position: number, status: string, body_html: string }} ManualChapter */
 
-/** Backend-issued conflict codes the portal understands beyond plain HTTP statuses. */
-const BODY_ERROR_CODES = new Set(['pending_reservation_exists', 'duplicate_slot_claim'])
+/** Backend-issued safe codes the portal understands beyond plain HTTP statuses. */
+const BODY_ERROR_CODES = new Set([
+  'pending_reservation_exists',
+  'duplicate_slot_claim',
+  'invalid_new_password',
+])
 
 export class CampusApiError extends Error {
   /**

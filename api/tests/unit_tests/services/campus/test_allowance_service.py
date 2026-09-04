@@ -19,7 +19,7 @@ class FakeModelGateway:
         return GatewayUsage(
             remaining_quota=self.remaining_quota,
             used_quota=self.used_quota,
-            by_model=(ModelUsage(model="text-model", quota=3_000, requests=4),),
+            by_model=(ModelUsage(model="text-model", quota=self.used_quota, requests=4),),
         )
 
     def adjust_quota(self, token_id: str, delta_quota: int, request_id: str) -> GatewayUsage:
@@ -41,7 +41,7 @@ def campus_session(sqlite_engine) -> Session:
         yield session
 
 
-def test_student_summary_uses_rmb_and_never_exposes_gateway_credentials(campus_session: Session):
+def test_student_summary_uses_usd_and_never_exposes_gateway_credentials(campus_session: Session):
     gateway = FakeModelGateway()
     service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
     student = campus_session.query(CampusStudent).one()
@@ -54,6 +54,21 @@ def test_student_summary_uses_rmb_and_never_exposes_gateway_credentials(campus_s
     assert summary.by_model[0].model == "text-model"
     assert not hasattr(summary, "token")
     assert not hasattr(summary, "channel")
+
+
+def test_student_summary_matches_the_four_decimal_gateway_balance_display(campus_session: Session):
+    gateway = FakeModelGateway()
+    gateway.remaining_quota = 9_991_584
+    gateway.used_quota = 8_416
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=500_000)
+    student = campus_session.query(CampusStudent).one()
+
+    summary = service.get_summary(student.id)
+
+    assert summary.remaining_usd == Decimal("19.9832")
+    assert summary.used_usd == Decimal("0.0168")
+    assert summary.total_usd == Decimal("20.0000")
+    assert summary.by_model[0].used_usd == Decimal("0.0168")
 
 
 def test_admin_adjustment_is_idempotent_and_audited(campus_session: Session):

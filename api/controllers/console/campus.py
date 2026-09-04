@@ -66,6 +66,7 @@ from services.campus.errors import (
     ReservationNotFoundError,
     ReservationWindowError,
     StudentNotFoundError,
+    StudentPasswordStrengthError,
     StudentSuspendedError,
 )
 
@@ -80,6 +81,12 @@ class DuplicateSlotClaimHTTPError(BaseHTTPException):
     error_code = "duplicate_slot_claim"
     description = "Student already has an unfinished claim on this slot"
     code = 409
+
+
+class InvalidNewPasswordHTTPError(BaseHTTPException):
+    error_code = "invalid_new_password"
+    description = "New password does not meet the strength requirements"
+    code = 400
 
 
 def _reservation_response(reservation: ReservationResult) -> dict[str, object]:
@@ -279,7 +286,13 @@ class CampusPasswordChangeApi(Resource):
         student = portal_student()
         payload = PortalPasswordChangePayload.model_validate(console_ns.payload or {})
         try:
-            credential_service().change_password(student.id, payload.current_password, payload.new_password)
+            credential_service().change_password(
+                student.id,
+                payload.current_password,
+                payload.new_password,
+            )
+        except StudentPasswordStrengthError as error:
+            raise InvalidNewPasswordHTTPError() from error
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
         except PortalSessionError as error:

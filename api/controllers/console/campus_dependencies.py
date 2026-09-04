@@ -43,10 +43,6 @@ def require_campus_enabled() -> None:
         raise NotFound()
 
 
-def credential_service() -> StudentCredentialService:
-    return StudentCredentialService(session=db.session())
-
-
 def virtual_student_numbers() -> frozenset[str]:
     """Student numbers still present in the virtual demo roster, for admin visibility."""
     if not dify_config.CAMPUS_VIRTUAL_IDENTITY_ENABLED:
@@ -57,15 +53,21 @@ def virtual_student_numbers() -> frozenset[str]:
     return VirtualIdentitySource(configured.get_secret_value()).student_numbers
 
 
-def identity_source() -> IdentitySource:
+def fallback_identity_source() -> IdentitySource:
     if not dify_config.CAMPUS_VIRTUAL_IDENTITY_ENABLED:
-        fallback: IdentitySource = UnconfiguredIdentitySource()
-    else:
-        configured = dify_config.CAMPUS_VIRTUAL_IDENTITIES_JSON
-        fallback = (
-            UnconfiguredIdentitySource() if configured is None else VirtualIdentitySource(configured.get_secret_value())
-        )
-    return ManagedFirstIdentitySource(credential_service(), fallback)
+        return UnconfiguredIdentitySource()
+    configured = dify_config.CAMPUS_VIRTUAL_IDENTITIES_JSON
+    return UnconfiguredIdentitySource() if configured is None else VirtualIdentitySource(configured.get_secret_value())
+
+
+def credential_service() -> StudentCredentialService:
+    return StudentCredentialService(session=db.session(), fallback_identity_source=fallback_identity_source())
+
+
+def identity_source() -> IdentitySource:
+    fallback = fallback_identity_source()
+    credentials = StudentCredentialService(session=db.session(), fallback_identity_source=fallback)
+    return ManagedFirstIdentitySource(credentials, fallback)
 
 
 def lab_manuals() -> LabManualService:

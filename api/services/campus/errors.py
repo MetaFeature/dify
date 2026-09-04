@@ -6,6 +6,10 @@ class CampusValidationError(CampusError):
     """Raised when a Campus command violates an input or precision contract."""
 
 
+class StudentPasswordStrengthError(CampusValidationError):
+    """Raised when a student-chosen replacement password is too weak."""
+
+
 class CampusConflictError(CampusError):
     """Raised when a valid Campus command conflicts with persisted state."""
 

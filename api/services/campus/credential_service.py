@@ -21,6 +21,7 @@ from services.campus.errors import (
     CredentialNotFoundError,
     PortalSessionError,
     StudentNotFoundError,
+    StudentPasswordStrengthError,
 )
 from services.campus.time_utils import to_naive_utc
 
@@ -57,12 +58,18 @@ def revoke_portal_sessions(session: Session, student_id: str, now_utc: datetime)
 
 
 class StudentCredentialService:
-    """Authenticate, set, and change platform-held student passwords."""
+    """Authenticate, set, and change platform-held student passwords.
+
+    The optional fallback identity source is injected only for a legacy
+    student's one-time transition into the authoritative credential store.
+    """
 
     _session: Session
+    _fallback_identity_source: IdentitySource | None
 
-    def __init__(self, *, session: Session) -> None:
+    def __init__(self, *, session: Session, fallback_identity_source: IdentitySource | None = None) -> None:
         self._session = session
+        self._fallback_identity_source = fallback_identity_source
 
     def authenticate(self, subject: str, credential: str) -> StudentIdentity:
         """Verify a student number and password against the credential table.
@@ -102,23 +109,38 @@ class StudentCredentialService:
         revoke_portal_sessions(self._session, student.id, to_naive_utc(now))
         self._session.commit()
 
-    def change_password(self, student_id: str, current_password: str, new_password: str) -> None:
+    def change_password(
+        self,
+        student_id: str,
+        current_password: str,
+        new_password: str,
+    ) -> None:
         """Let a student replace their own password after proving the current one.
 
         The strength rule applies only to the student-chosen password, not to
-        administrator-issued initial passwords.
+        administrator-issued initial passwords. A legacy student without a
+        credential row may claim one only after the configured fallback
+        identity source verifies the current password. The student row is
+        locked so concurrent first claims cannot create duplicate credentials.
         """
+        student = self._session.scalar(select(CampusStudent).where(CampusStudent.id == student_id).with_for_update())
+        if student is None:
+            raise StudentNotFoundError(student_id)
         row = self._session.scalar(
             select(CampusStudentCredential).where(CampusStudentCredential.student_id == student_id)
         )
         if row is None:
-            raise CampusValidationError("student has no platform credential to change")
-        if not compare_password(current_password, row.password_hashed, row.password_salt):
+            if self._fallback_identity_source is None:
+                raise CampusValidationError("student has no platform credential to change")
+            identity = self._fallback_identity_source.authenticate(student.student_number, current_password)
+            if identity.student_number.strip() != student.student_number:
+                raise PortalSessionError("current password is incorrect")
+        elif not compare_password(current_password, row.password_hashed, row.password_salt):
             raise PortalSessionError("current password is incorrect")
         try:
             valid_password(new_password)
         except ValueError as error:
-            raise CampusValidationError(str(error)) from error
+            raise StudentPasswordStrengthError(str(error)) from error
         upsert_credential(self._session, student_id, new_password)
         self._session.commit()
 

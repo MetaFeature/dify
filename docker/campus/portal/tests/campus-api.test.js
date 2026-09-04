@@ -123,6 +123,16 @@ test('password change posts both secrets to the campus endpoint', async () => {
   })
 })
 
+test('password strength failures keep their dedicated safe error code', async () => {
+  const api = new CampusApi(async () =>
+    response({ code: 'invalid_new_password', message: 'safe public detail' }, { status: 400 }))
+
+  await assert.rejects(
+    api.changePassword('old-secret', 'short'),
+    error => error instanceof CampusApiError && error.status === 400 && error.code === 'invalid_new_password',
+  )
+})
+
 test('experiment tracks and a lab manual are read from their own routes', async () => {
   const calls = []
   const api = new CampusApi(async (url) => {
