@@ -69,3 +69,16 @@ def sync_gateway_identities() -> None:
             student.display_name,
         )
     click.echo(json.dumps({"synced_gateway_identities": len(rows)}, sort_keys=True))
+
+
+@click.group("campus-model-accounts", help="Reconcile one NewAPI model account for every roster student.")
+def campus_model_accounts() -> None:
+    pass
+
+
+@campus_model_accounts.command("reconcile")
+def reconcile_model_accounts() -> None:
+    from controllers.console.campus_dependencies import model_account_service
+
+    summary = model_account_service().reconcile()
+    click.echo(json.dumps(asdict(summary), sort_keys=True))

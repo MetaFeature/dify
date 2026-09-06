@@ -436,8 +436,8 @@ grep -Fq '/api/campus/users/summary' "${manager}" || {
   echo "Campus verification does not enforce centralized gateway accounting" >&2
   exit 1
 }
-grep -Fq 'sync-gateway-identities' "${manager}" || {
-  echo "Campus deployment does not synchronize gateway identity labels" >&2
+grep -Fq 'campus-model-accounts reconcile' "${manager}" || {
+  echo "Campus deployment does not preprovision every roster model account" >&2
   exit 1
 }
 grep -Fq 'configured Campus model has no enabled gateway route' "${manager}" || {

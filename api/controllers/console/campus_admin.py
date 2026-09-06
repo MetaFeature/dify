@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from flask import Response, request
 from flask.typing import ResponseReturnValue
 from flask_restx import Resource
-from werkzeug.exceptions import BadRequest, Conflict, NotFound
+from werkzeug.exceptions import BadRequest, Conflict, NotFound, ServiceUnavailable
 
 from configs import dify_config
 from controllers.common.schema import query_params_from_model
@@ -14,6 +14,7 @@ from controllers.console.campus_dependencies import (
     admin_service,
     credential_service,
     lab_manuals,
+    model_account_service,
     newapi_client,
     require_admin,
     require_campus_enabled,
@@ -62,8 +63,10 @@ from services.campus.errors import (
     CampusAccountNotFoundError,
     CampusAdministratorRequiredError,
     CampusConflictError,
+    CampusProvisioningError,
     CampusValidationError,
     GatewayBindingNotFoundError,
+    ModelGatewayError,
     ReservationWindowError,
     StudentNotFoundError,
 )
@@ -146,6 +149,10 @@ class CampusAdminStudentListApi(Resource):
             )
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
+        try:
+            model_account_service().reconcile(student_numbers=(payload.student_number,))
+        except (CampusProvisioningError, ModelGatewayError) as error:
+            raise ServiceUnavailable("Student model account could not be provisioned") from error
         student = student_service().get_student(payload.student_number)
         return dump_response(StudentResponse, student), 201
 
@@ -226,6 +233,12 @@ class CampusAdminStudentSyncApi(Resource):
             )
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
+        try:
+            model_account_service().reconcile(
+                student_numbers=tuple(student.student_number for student in payload.students)
+            )
+        except (CampusProvisioningError, ModelGatewayError) as error:
+            raise ServiceUnavailable("Student model accounts could not be reconciled") from error
         return dump_response(RosterSyncResponse, result)
 
 

@@ -36,7 +36,10 @@ deployment; a registry mirror is allowed only when it retains that digest.
   or below `CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU`. Missing or invalid load data
   fails closed. A full current slot still creates a FIFO waitlist entry, and
   every current-slot claim ends at the original slot boundary.
-- A zero model allowance blocks gateway calls but does not block Dify access,
+- Every roster student receives a hidden NewAPI user, managed token, and
+  planned allowance before first login. The Dify workspace remains lazy and
+  adopts that token without resetting its balance. A zero model allowance
+  blocks gateway calls but does not block Dify access,
   editing, viewing, or export during a confirmed slot.
 - Each student workspace installs the pinned official OpenAI-API-compatible
   provider before the managed NewAPI credential is validated and stored on
@@ -333,7 +336,8 @@ only, exactly like the administration portal, so an administrator reaches it the
 same way they reach the portal: on the server itself, or through an SSH tunnel.
 The portal's "模型与 API" tab links to it and restates the pricing guardrail.
 
-The NewAPI Users page is the unified accounting view. Campus-managed rows show
+The NewAPI Users page is the unified accounting view. Every roster student has
+a Campus-managed row showing
 student number and name, planned total, used quota, remaining quota, request
 count, and a synchronization status. Setting a planned total updates the
 NewAPI user and the workspace's hidden token in one transaction; it cannot be
@@ -354,6 +358,13 @@ costs one query in the common case. The gateway token is fetched again through
 create-or-get, which returns the existing token untouched; if it reports having
 created a new one, the bound token is gone and provisioning fails rather than
 silently restoring the student's spent allowance.
+
+Roster creation and import also run `campus-model-accounts reconcile`. It
+creates the hidden NewAPI user/token and `campus_gateway_bindings` row before a
+Dify workspace exists, including for suspended identities whose state must be
+retained. The later workspace provisioner adopts the existing token and never
+reapplies the default allowance. Re-running the reconciliation only refreshes
+the student label and verifies the binding.
 
 ## Lab manuals
 

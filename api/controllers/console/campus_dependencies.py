@@ -30,6 +30,7 @@ from services.campus.errors import (
 from services.campus.identity_source import UnconfiguredIdentitySource, VirtualIdentitySource
 from services.campus.lab_manual_service import LabManualService
 from services.campus.load_admission import SystemLoadAdmission
+from services.campus.model_account_service import StudentModelAccountService
 from services.campus.newapi_client import NewApiClient
 from services.campus.portal_session_service import PortalSessionService
 from services.campus.provisioning_service import PlatformProvisioningService
@@ -104,6 +105,14 @@ def student_service() -> StudentAdministrationService:
     return StudentAdministrationService(
         session=db.session(),
         default_allowance_usd=dify_config.CAMPUS_DEFAULT_ALLOWANCE_USD,
+    )
+
+
+def model_account_service() -> StudentModelAccountService:
+    return StudentModelAccountService(
+        session=db.session(),
+        gateway=newapi_client(),
+        quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
     )
 
 

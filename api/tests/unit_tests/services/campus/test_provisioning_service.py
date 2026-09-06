@@ -411,6 +411,29 @@ def test_existing_workspace_is_reconfigured_when_its_model_list_drifted(campus_s
     assert gateway.identities == [("42", "20260001", "Student One")]
 
 
+def test_first_workspace_provisioning_adopts_the_preprovisioned_model_account(campus_session: Session) -> None:
+    student = campus_session.scalars(select(CampusStudent)).one()
+    campus_session.add(CampusGatewayBinding(student_id=student.id, gateway_token_id="42"))
+    campus_session.commit()
+    gateway = FakeExistingTokenGateway()
+    configurator = FakeModelConfigurator(calls=[], drifted=True)
+    service = PlatformProvisioningService(
+        session=campus_session,
+        workspace_provisioner=FakeWorkspaceProvisioner(),
+        gateway_provisioner=gateway,
+        model_configurator=configurator,
+        quota_units_per_usd=500_000,
+    )
+
+    provisioned = service.ensure_ready(student.id)
+
+    assert provisioned.gateway_token_id == "42"
+    assert gateway.calls == 1
+    assert gateway.deleted == []
+    assert gateway.identities == [("42", "20260001", "Student One")]
+    assert configurator.calls == [("tenant-1", "existing-secret")]
+
+
 def test_existing_workspace_is_left_alone_when_its_model_list_matches(campus_session: Session) -> None:
     configurator = FakeModelConfigurator(calls=[], drifted=False)
     gateway = FakeExistingTokenGateway()

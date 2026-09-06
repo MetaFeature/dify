@@ -131,6 +131,13 @@ class ProvisionedPlatform:
     gateway_token_id: str
 
 
+@dataclass(frozen=True)
+class ModelAccountReconciliation:
+    students: int
+    bindings_created: int
+    existing_bindings: int
+
+
 class WorkspaceProvisioner(Protocol):
     def provision(self, student_number: str, display_name: str) -> ProvisionedWorkspace: ...
 

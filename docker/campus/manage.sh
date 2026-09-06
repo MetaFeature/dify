@@ -635,9 +635,9 @@ reconcile_model_providers_runtime() {
   "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile
 }
 
-reconcile_gateway_identities_runtime() {
+reconcile_model_accounts_runtime() {
   require_running_service api
-  "${COMPOSE[@]}" exec -T api flask campus-model-providers sync-gateway-identities
+  "${COMPOSE[@]}" exec -T api flask campus-model-accounts reconcile
 }
 
 reconcile_gateway_routes_runtime() {
@@ -902,10 +902,10 @@ SQL
 }
 
 verify_gateway_accounting() {
-  local gateway_port="$1" binding_count response
-  binding_count="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
-    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from campus_gateway_bindings"')"
-  [[ "${binding_count}" =~ ^[0-9]+$ ]] || fail "Campus gateway binding count is invalid"
+  local gateway_port="$1" student_count response
+  student_count="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from campus_students"')"
+  [[ "${student_count}" =~ ^[0-9]+$ ]] || fail "Campus roster student count is invalid"
   response="$(gateway_admin_get "${gateway_port}" /api/campus/users/summary)"
   python3 -c '
 import json
@@ -919,7 +919,7 @@ assert data.get("managed_users") == expected
 assert data.get("unlabeled_users") == 0
 assert data.get("quota_mismatches") == 0
 assert data.get("planned_quota") == data.get("remaining_quota") + data.get("used_quota")
-' "${binding_count}" <<<"${response}" || fail "Campus gateway accounting summary is invalid"
+' "${student_count}" <<<"${response}" || fail "Campus gateway accounting summary is invalid"
 }
 
 # The first llm in the configured model list is what a student's workspace is
@@ -1242,8 +1242,8 @@ deploy() {
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   gateway_port="${gateway_port:-13000}"
   reconcile_gateway_routes_runtime "${gateway_port}"
+  reconcile_model_accounts_runtime
   reconcile_model_providers_runtime
-  reconcile_gateway_identities_runtime
   verify
 }
 
