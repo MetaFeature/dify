@@ -444,6 +444,14 @@ grep -Fq 'configured Campus model has no enabled gateway route' "${manager}" || 
   echo "Campus verification does not reject unroutable configured models" >&2
   exit 1
 }
+grep -Fq '/api/campus/channels/${id}/models' "${manager}" || {
+  echo "Campus deployment does not constrain the active gateway channel model list" >&2
+  exit 1
+}
+grep -Fq 'CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS=' "${campus_env_example}" || {
+  echo "Campus environment omits the required gateway channel model list" >&2
+  exit 1
+}
 
 grep -Fq 'Dify HTTP 80' "${firewall_script}" || {
   echo "Campus firewall promotion does not account for the legacy public HTTP rule" >&2

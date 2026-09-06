@@ -641,13 +641,25 @@ reconcile_gateway_identities_runtime() {
 }
 
 reconcile_gateway_routes_runtime() {
-  local gateway_port="$1" required_ids retired_ids id
+  local gateway_port="$1" required_ids required_models required_models_json retired_ids id
   required_ids="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_IDS)"
+  required_models="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS)"
   retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
   required_ids="${required_ids:-1}"
+  required_models="${required_models:-deepseek-v4-flash}"
   retired_ids="${retired_ids:-2}"
+  required_models_json="$(python3 -c '
+import json
+import sys
+
+models = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+assert models
+print(json.dumps({"models": models}, separators=(",", ":")))
+' "${required_models}")"
   for id in ${required_ids//,/ }; do
     [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid required Campus gateway channel id"
+    gateway_admin_put "${gateway_port}" "/api/campus/channels/${id}/models" "${required_models_json}" | \
+      grep -q '"success":true' || fail "could not set Campus gateway channel ${id} models"
     gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":1}' | \
       grep -q '"success":true' || fail "could not enable Campus gateway channel ${id}"
   done
@@ -930,6 +942,15 @@ gateway_admin_get() {
   local_curl --silent --show-error --max-time 20 \
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
+    "http://127.0.0.1:${gateway_port}${path}"
+}
+
+gateway_admin_put() {
+  local gateway_port="$1" path="$2" body="$3"
+  local_curl --silent --show-error --max-time 20 -X PUT \
+    -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
+    -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
+    -H 'Content-Type: application/json' -d "${body}" \
     "http://127.0.0.1:${gateway_port}${path}"
 }
 
