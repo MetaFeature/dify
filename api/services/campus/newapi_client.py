@@ -87,12 +87,20 @@ class NewApiClient:
         self._requester = requester or ssrf_proxy.make_request
         self._timeout_seconds = timeout_seconds
 
-    def create_managed_token(self, external_ref: str, allowance_quota: int) -> ManagedGatewayToken:
+    def create_managed_token(
+        self,
+        external_ref: str,
+        student_number: str,
+        student_name: str,
+        allowance_quota: int,
+    ) -> ManagedGatewayToken:
         data = self._request(
             "POST",
             "/api/campus/tokens",
             json={
                 "external_ref": external_ref,
+                "student_number": student_number,
+                "student_name": student_name,
                 "allowance_quota": allowance_quota,
                 "group": self._group,
                 "model_limits": list(self._model_limits),
@@ -100,6 +108,13 @@ class NewApiClient:
         )
         managed = _ManagedTokenData.model_validate(data)
         return ManagedGatewayToken(token_id=str(managed.token_id), secret=managed.key, created=managed.created)
+
+    def update_managed_identity(self, token_id: str, student_number: str, student_name: str) -> None:
+        self._request(
+            "PATCH",
+            f"/api/campus/tokens/{int(token_id)}/identity",
+            json={"student_number": student_number, "student_name": student_name},
+        )
 
     def delete_managed_token(self, token_id: str) -> None:
         try:

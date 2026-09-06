@@ -42,10 +42,16 @@ class FakeGatewayProvisioner:
     def __init__(self) -> None:
         self.calls = 0
         self.deleted: list[str] = []
+        self.identities: list[tuple[str, str, str]] = []
 
-    def create_managed_token(self, external_ref: str, allowance_quota: int) -> ManagedGatewayToken:
+    def create_managed_token(
+        self, external_ref: str, student_number: str, student_name: str, allowance_quota: int
+    ) -> ManagedGatewayToken:
         self.calls += 1
         return ManagedGatewayToken(token_id="42", secret="secret-for-dify-only", created=True)
+
+    def update_managed_identity(self, token_id: str, student_number: str, student_name: str) -> None:
+        self.identities.append((token_id, student_number, student_name))
 
     def delete_managed_token(self, token_id: str) -> None:
         self.deleted.append(token_id)
@@ -102,6 +108,7 @@ def test_lazy_provisioning_creates_one_workspace_and_one_gateway_token(campus_se
     assert first == second
     assert workspace.calls == 1
     assert gateway.calls == 1
+    assert gateway.identities == [("42", "20260001", "Student One")]
     assert configurator.calls == [("tenant-1", "secret-for-dify-only")]
     assert campus_session.query(CampusWorkspaceBinding).count() == 1
     assert campus_session.query(CampusGatewayBinding).count() == 1
@@ -351,10 +358,16 @@ class FakeExistingTokenGateway:
         self.created = created
         self.calls = 0
         self.deleted: list[str] = []
+        self.identities: list[tuple[str, str, str]] = []
 
-    def create_managed_token(self, external_ref: str, allowance_quota: int) -> ManagedGatewayToken:
+    def create_managed_token(
+        self, external_ref: str, student_number: str, student_name: str, allowance_quota: int
+    ) -> ManagedGatewayToken:
         self.calls += 1
         return ManagedGatewayToken(token_id="42", secret="existing-secret", created=self.created)
+
+    def update_managed_identity(self, token_id: str, student_number: str, student_name: str) -> None:
+        self.identities.append((token_id, student_number, student_name))
 
     def delete_managed_token(self, token_id: str) -> None:
         self.deleted.append(token_id)
@@ -395,6 +408,7 @@ def test_existing_workspace_is_reconfigured_when_its_model_list_drifted(campus_s
 
     assert configurator.calls == [("tenant-1", "existing-secret")]
     assert gateway.deleted == []
+    assert gateway.identities == [("42", "20260001", "Student One")]
 
 
 def test_existing_workspace_is_left_alone_when_its_model_list_matches(campus_session: Session) -> None:
@@ -407,6 +421,7 @@ def test_existing_workspace_is_left_alone_when_its_model_list_matches(campus_ses
 
     assert configurator.calls == []
     assert gateway.calls == 0
+    assert gateway.identities == [("42", "20260001", "Student One")]
 
 
 def test_reconfiguration_refuses_a_freshly_minted_token(campus_session: Session) -> None:

@@ -474,6 +474,18 @@ install_wsl_loopback_routing() {
   echo "Campus WSL loopback routing installed; rollback backup: ${backup_destination}"
 }
 
+ensure_wsl_loopback_routing() {
+  if sudo -n test -x "${WSL_LOOPBACK_ROUTING_INSTALLED}" && \
+     sudo -n cmp -s "${WSL_LOOPBACK_ROUTING_SOURCE}" "${WSL_LOOPBACK_ROUTING_INSTALLED}" && \
+     sudo -n cmp -s "${WSL_LOOPBACK_ROUTING_UNIT_SOURCE}" \
+       "/etc/systemd/system/${WSL_LOOPBACK_ROUTING_UNIT}"; then
+    sudo -n systemctl enable --now "${WSL_LOOPBACK_ROUTING_UNIT}" >/dev/null
+    sudo -n "${WSL_LOOPBACK_ROUTING_INSTALLED}" apply
+    return
+  fi
+  install_wsl_loopback_routing
+}
+
 verify_wsl_loopback_routing() {
   systemctl is-enabled --quiet "${WSL_LOOPBACK_ROUTING_UNIT}" || \
     fail "Campus WSL loopback routing service is not enabled"
@@ -492,6 +504,66 @@ repair_wsl_loopback_routing() {
   install_wsl_loopback_routing
   verify
   echo "Campus WSL loopback routing repaired; application rollback backup: ${backup_destination}"
+}
+
+verify_control_plane() {
+  local campus_port admin_port gateway_port status
+  campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
+  campus_port="${campus_port:-18080}"
+  admin_port="${admin_port:-18081}"
+  gateway_port="${gateway_port:-13000}"
+  for service in api portal model-gateway worker worker_beat nginx; do
+    require_running_service "${service}"
+  done
+  verify_wsl_loopback_routing
+  wait_for_campus_health "${campus_port}"
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${admin_port}/")"
+  [[ "${status}" == "200" ]] || fail "Campus administration portal is unavailable (HTTP ${status})"
+  local_curl --fail --silent --show-error --max-time 10 \
+    "http://127.0.0.1:${gateway_port}/api/status" | grep -q '"success":true' || \
+    fail "Campus model gateway is unavailable"
+  echo "Campus control plane is ready."
+}
+
+start_runtime() {
+  validate
+  "${COMPOSE[@]}" up -d
+  ensure_wsl_loopback_routing
+  verify_control_plane
+}
+
+restart_runtime() {
+  validate
+  "${COMPOSE[@]}" up -d --force-recreate
+  ensure_wsl_loopback_routing
+  verify_control_plane
+}
+
+status_runtime() {
+  local campus_port admin_port gateway_port failed=0 status name url
+  campus_port="$(env_value EXPOSE_NGINX_PORT)"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
+  campus_port="${campus_port:-18080}"
+  admin_port="${admin_port:-18081}"
+  gateway_port="${gateway_port:-13000}"
+  printf 'docker=%s loopback_service=%s\n' \
+    "$(systemctl is-active docker.service 2>/dev/null || true)" \
+    "$(systemctl is-active "${WSL_LOOPBACK_ROUTING_UNIT}" 2>/dev/null || true)"
+  "${COMPOSE[@]}" ps
+  for target in \
+    "canary http://127.0.0.1:${campus_port}/health" \
+    "admin http://127.0.0.1:${admin_port}/" \
+    "newapi http://127.0.0.1:${gateway_port}/api/status"; do
+    read -r name url <<<"${target}"
+    status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 "${url}" || true)"
+    printf '%s=%s\n' "${name}" "${status:-000}"
+    [[ "${status}" == "200" ]] || failed=1
+  done
+  ((failed == 0)) || fail "one or more Campus control-plane endpoints are unavailable"
 }
 
 assert_static_surface_is_consistent() {
@@ -561,6 +633,31 @@ verify_workspace_isolation() {
 reconcile_model_providers_runtime() {
   require_running_service api
   "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile
+}
+
+reconcile_gateway_identities_runtime() {
+  require_running_service api
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers sync-gateway-identities
+}
+
+reconcile_gateway_routes_runtime() {
+  local gateway_port="$1" required_ids retired_ids id
+  required_ids="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_IDS)"
+  retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
+  required_ids="${required_ids:-1}"
+  retired_ids="${retired_ids:-2}"
+  for id in ${required_ids//,/ }; do
+    [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid required Campus gateway channel id"
+    gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":1}' | \
+      grep -q '"success":true' || fail "could not enable Campus gateway channel ${id}"
+  done
+  for id in ${retired_ids//,/ }; do
+    [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid retired Campus gateway channel id"
+    grep -Eq "(^|,)${id}(,|$)" <<<"${required_ids}" && \
+      fail "Campus gateway channel ${id} cannot be both required and retired"
+    gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":2}' | \
+      grep -q '"success":true' || fail "could not retire Campus gateway channel ${id}"
+  done
 }
 
 audit_model_providers_runtime() {
@@ -722,6 +819,7 @@ verify() {
   container_id="$("${COMPOSE[@]}" ps -q plugin_daemon)"
   [[ -n "${container_id}" && -z "$(docker port "${container_id}" 2>/dev/null || true)" ]] || \
     fail "plugin daemon is published"
+  verify_gateway_accounting "${gateway_port}"
   verify_gateway_pricing "${gateway_port}"
   local_curl --fail --silent --show-error --max-time 10 "${baseline_url}" >/dev/null
 }
@@ -736,7 +834,15 @@ gateway_sql() {
 # silently. These assertions are what keep that from reaching a student.
 verify_gateway_pricing() {
   local gateway_port="$1"
-  local unpriced self_use probe_model probe_id probe_secret status log_ratio sql
+  local enabled_models entry required_model unpriced self_use probe_model probe_id probe_secret status log_ratio sql
+
+  enabled_models="$(gateway_sql "select distinct model from abilities where enabled order by model")"
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    required_model="${entry#*:}"
+    grep -Fxq "${required_model}" <<<"${enabled_models}" || \
+      fail "configured Campus model has no enabled gateway route: ${required_model}"
+  done < <(env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n')
 
   sql="$(
     cat <<'SQL'
@@ -783,6 +889,27 @@ SQL
     fail "gateway metered the probe at ratio ${log_ratio}, which is the unpriced fallback"
 }
 
+verify_gateway_accounting() {
+  local gateway_port="$1" binding_count response
+  binding_count="$("${COMPOSE[@]}" exec -T db_postgres sh -ec \
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from campus_gateway_bindings"')"
+  [[ "${binding_count}" =~ ^[0-9]+$ ]] || fail "Campus gateway binding count is invalid"
+  response="$(gateway_admin_get "${gateway_port}" /api/campus/users/summary)"
+  python3 -c '
+import json
+import sys
+
+expected = int(sys.argv[1])
+payload = json.load(sys.stdin)
+data = payload.get("data") or {}
+assert payload.get("success") is True
+assert data.get("managed_users") == expected
+assert data.get("unlabeled_users") == 0
+assert data.get("quota_mismatches") == 0
+assert data.get("planned_quota") == data.get("remaining_quota") + data.get("used_quota")
+' "${binding_count}" <<<"${response}" || fail "Campus gateway accounting summary is invalid"
+}
+
 # The first llm in the configured model list is what a student's workspace is
 # validated against, so it is the right model to probe.
 campus_probe_model() {
@@ -795,6 +922,14 @@ gateway_admin_post() {
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
     -H 'Content-Type: application/json' -d "${body}" \
+    "http://127.0.0.1:${gateway_port}${path}"
+}
+
+gateway_admin_get() {
+  local gateway_port="$1" path="$2"
+  local_curl --silent --show-error --max-time 20 \
+    -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
+    -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
     "http://127.0.0.1:${gateway_port}${path}"
 }
 
@@ -1071,6 +1206,7 @@ rollback_promotion() {
 }
 
 deploy() {
+  local gateway_port
   validate
   if project_has_state; then
     backup >/dev/null
@@ -1082,7 +1218,11 @@ deploy() {
   "${COMPOSE[@]}" up -d --no-deps --force-recreate portal
   "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
   install_wsl_loopback_routing
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
+  gateway_port="${gateway_port:-13000}"
+  reconcile_gateway_routes_runtime "${gateway_port}"
   reconcile_model_providers_runtime
+  reconcile_gateway_identities_runtime
   verify
 }
 
@@ -1107,11 +1247,14 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {start|stop|restart|status|gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
   exit 2
 }
 
 case "${1:-}" in
+  start) start_runtime ;;
+  restart) restart_runtime ;;
+  status) status_runtime ;;
   gateway-up)
     validate_gateway_bootstrap
     if project_has_state; then
@@ -1136,7 +1279,7 @@ case "${1:-}" in
   rollback-promotion) rollback_promotion ;;
   stop)
     validate
-    "${COMPOSE[@]}" down
+    "${COMPOSE[@]}" stop
     ;;
   *) usage ;;
 esac

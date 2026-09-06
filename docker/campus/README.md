@@ -48,7 +48,7 @@ deployment; a registry mirror is allowed only when it retains that digest.
   cookie. A remembered stock Dify session, including an administrator session,
   cannot satisfy the public gate; administrators continue to use the dedicated
   host-loopback listener.
-- The student allowance contract returns only RMB remaining/used/total and
+- The student allowance contract returns only USD remaining/used/planned-total and
   per-model usage. Gateway tokens, channels, upstream credentials, and internal
   price expressions are never returned.
 
@@ -242,6 +242,17 @@ and `18444`. The rules return those connections to the existing local
 `docker-proxy` listeners; they do not publish a private port on a campus
 interface.
 
+Windows also has four Public Desktop shortcuts for start, stop, restart, and
+status. Install or refresh them from an elevated PowerShell session:
+
+```powershell
+.\campus\windows\campus-control.ps1 -Action InstallShortcuts
+```
+
+`Start` and `Restart` run focused control-plane health checks. `Stop` stops the
+Compose services without removing them, so the boot task and `restart: always`
+policies start the platform again at the next Windows boot.
+
 Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
 rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
 `10.20.10.193:80`, retains `127.0.0.1:18080` for health checks, and verifies
@@ -297,19 +308,16 @@ mapping is applied.
 | Student-facing model | models.dev source | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `deepseek-v4-flash` | `deepseek` | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
-| `deepseek-v4-flash-0817` | `deepseek` (dated snapshot, priced as the base model) | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
-| `glm-5.3-flash` | `zhipuai` | 0.075 | 0.25 | 0.015 | 0.0375 | 3.3333 | 0.2 |
-| `bge-m3` | `digitalocean` (no first-party entry exists) | 0.02 | 0 | — | 0.01 | 0 | — |
-| `bge-reranker-v2-m3` | `digitalocean` (no first-party entry exists) | 0.01 | 0 | — | 0.005 | 0 | — |
 
 Setting the `ModelRatio` option **replaces** the gateway's built-in default
 table rather than merging into it, so only the models listed above have a price.
 That is deliberate: an unlisted model is unroutable rather than mispriced.
 
-Two models on the upstream channel are deliberately unpriced and therefore
-absent from its model list: `doubao-seedream-5.0-pro`, because Dify has no
-image-generation model type, and `qwen-audio-3.0-asr-flash`, because models.dev
-carries no price for it. Add either only together with a price.
+The active Campus catalog contains only `deepseek-v4-flash`, whose dedicated
+channel passes the real gateway probe. The stale Tianyi channel is retired
+because its LLM returns `model_not_activated` and its additional image/audio
+models are unpriced. A model enters the Campus catalog only after its channel
+test, price, Dify credential, and metered invocation all pass.
 
 Upstream model names are isolated behind the channel's model mapping. The
 student-facing name is lowercase and stable; the mapping rewrites it to whatever
@@ -324,6 +332,13 @@ configured in the gateway's own interface. The gateway listens on host loopback
 only, exactly like the administration portal, so an administrator reaches it the
 same way they reach the portal: on the server itself, or through an SSH tunnel.
 The portal's "模型与 API" tab links to it and restates the pricing guardrail.
+
+The NewAPI Users page is the unified accounting view. Campus-managed rows show
+student number and name, planned total, used quota, remaining quota, request
+count, and a synchronization status. Setting a planned total updates the
+NewAPI user and the workspace's hidden token in one transaction; it cannot be
+set below already-consumed usage. The summary above the table aggregates every
+Campus user and never exposes token keys.
 
 Nothing about this is exposed on a campus interface. Adding a model to a channel
 before giving it a ratio is the one mistake that bills silently, so the order is

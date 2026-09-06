@@ -56,14 +56,19 @@ def rewrite_model_provider_references(
     def visit(item: Any) -> int:
         changed = 0
         if isinstance(item, dict):
-            if item.get("provider") in LEGACY_MODEL_PROVIDERS:
-                item["provider"] = target_provider
+            provider = item.get("provider")
+            if provider in LEGACY_MODEL_PROVIDERS or provider == target_provider:
+                item_changed = False
+                if provider in LEGACY_MODEL_PROVIDERS:
+                    item["provider"] = target_provider
+                    item_changed = True
                 for model_key in ("name", "model"):
                     model_name = item.get(model_key)
                     if isinstance(model_name, str) and model_name not in allowed:
                         item[model_key] = fallback
+                        item_changed = True
                         break
-                changed += 1
+                changed += int(item_changed)
             for child in item.values():
                 changed += visit(child)
         elif isinstance(item, list):
@@ -96,6 +101,7 @@ class ModelProviderReconciliationSummary:
     legacy_plugins: int = 0
     legacy_database_rows: int = 0
     legacy_workflow_references: int = 0
+    obsolete_target_models: int = 0
 
     @property
     def clean(self) -> bool:
@@ -106,6 +112,7 @@ class ModelProviderReconciliationSummary:
                 self.legacy_plugins,
                 self.legacy_database_rows,
                 self.legacy_workflow_references,
+                self.obsolete_target_models,
             )
         )
 
@@ -163,6 +170,7 @@ class CampusModelProviderReconciler:
             legacy_plugins=legacy_plugins,
             legacy_database_rows=self._legacy_database_row_count(tenant_ids),
             legacy_workflow_references=self._legacy_workflow_reference_count(tenant_ids),
+            obsolete_target_models=self._obsolete_target_model_count(tenant_ids),
         )
 
     def reconcile(self, tenant_ids: Sequence[str]) -> ModelProviderReconciliationSummary:
@@ -170,6 +178,7 @@ class CampusModelProviderReconciler:
             self._require_target_plugin(tenant_id)
             self._ensure_target_credentials(tenant_id)
             self._rewrite_tenant_references(tenant_id)
+            self._delete_obsolete_target_models(tenant_id)
         self._session.commit()
 
         for tenant_id in tenant_ids:
@@ -298,8 +307,9 @@ class CampusModelProviderReconciler:
 
         app_ids = select(App.id).where(App.tenant_id == tenant_id)
         for config in self._session.scalars(select(AppModelConfig).where(AppModelConfig.app_id.in_(app_ids))):
-            if config.provider in LEGACY_MODEL_PROVIDERS:
-                config.provider = self._target_provider
+            if config.provider in LEGACY_MODEL_PROVIDERS or config.provider == self._target_provider:
+                if config.provider in LEGACY_MODEL_PROVIDERS:
+                    config.provider = self._target_provider
                 if config.model_id not in self._llms:
                     config.model_id = self._llms[0]
             if config.model:
@@ -320,8 +330,12 @@ class CampusModelProviderReconciler:
                     config.configs = configs
 
         for conversation in self._session.scalars(select(Conversation).where(Conversation.app_id.in_(app_ids))):
-            if conversation.model_provider in LEGACY_MODEL_PROVIDERS:
-                conversation.model_provider = self._target_provider
+            if (
+                conversation.model_provider in LEGACY_MODEL_PROVIDERS
+                or conversation.model_provider == self._target_provider
+            ):
+                if conversation.model_provider in LEGACY_MODEL_PROVIDERS:
+                    conversation.model_provider = self._target_provider
                 if conversation.model_id not in self._llms:
                     conversation.model_id = self._llms[0]
 
@@ -331,7 +345,7 @@ class CampusModelProviderReconciler:
         for default in self._session.scalars(
             select(TenantDefaultModel).where(
                 TenantDefaultModel.tenant_id == tenant_id,
-                TenantDefaultModel.provider_name.in_(LEGACY_MODEL_PROVIDERS),
+                TenantDefaultModel.provider_name.in_((*LEGACY_MODEL_PROVIDERS, self._target_provider)),
             )
         ):
             target_model = targets_by_type.get(default.model_type)
@@ -339,7 +353,47 @@ class CampusModelProviderReconciler:
                 self._session.delete(default)
             else:
                 default.provider_name = self._target_provider
-                default.model_name = target_model
+                allowed_names = {model.name for model in self._models if model.model_type == default.model_type}
+                if default.model_name not in allowed_names:
+                    default.model_name = target_model
+
+    def _delete_obsolete_target_models(self, tenant_id: str) -> None:
+        allowed = {(model.name, model.model_type) for model in self._models}
+        for model_type in (
+            LoadBalancingModelConfig,
+            ProviderModelSetting,
+            ProviderModel,
+            ProviderModelCredential,
+        ):
+            rows = self._session.scalars(
+                select(model_type).where(
+                    model_type.tenant_id == tenant_id,
+                    model_type.provider_name == self._target_provider,
+                )
+            )
+            for row in rows:
+                if (row.model_name, row.model_type) not in allowed:
+                    self._session.delete(row)
+
+    def _obsolete_target_model_count(self, tenant_ids: Sequence[str]) -> int:
+        if not tenant_ids:
+            return 0
+        allowed = {(model.name, model.model_type) for model in self._models}
+        total = 0
+        for model_type in (
+            ProviderModel,
+            ProviderModelCredential,
+            ProviderModelSetting,
+            LoadBalancingModelConfig,
+        ):
+            rows = self._session.scalars(
+                select(model_type).where(
+                    model_type.tenant_id.in_(tenant_ids),
+                    model_type.provider_name == self._target_provider,
+                )
+            )
+            total += sum((row.model_name, row.model_type) not in allowed for row in rows)
+        return total
 
     def _delete_legacy_database_rows(self, tenant_id: str) -> None:
         for model in (

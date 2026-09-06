@@ -227,3 +227,41 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
         assert second_summary.clean
         assert plugins.uninstalled == ["openai-installation", "deepseek-installation"]
         assert session.query(ProviderModelCredential).count() == 2
+
+        workflow.graph = json.dumps(
+            {
+                "nodes": [
+                    {
+                        "data": {
+                            "model": {
+                                "provider": TARGET_PROVIDER,
+                                "name": "glm-5.3-flash",
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+        session.commit()
+        shrunk = CampusModelProviderReconciler(
+            session=session,
+            target_provider=TARGET_PROVIDER,
+            credential_name="Campus managed",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4-flash"),
+            plugin_manager=plugins,
+        )
+
+        shrunk_summary = shrunk.reconcile(["tenant-1"])
+
+        assert shrunk_summary.clean
+        assert [
+            credential.model_name
+            for credential in session.query(ProviderModelCredential)
+            .order_by(ProviderModelCredential.model_name)
+            .all()
+        ] == ["deepseek-v4-flash"]
+        assert json.loads(workflow.graph)["nodes"][0]["data"]["model"] == {
+            "provider": TARGET_PROVIDER,
+            "name": "deepseek-v4-flash",
+        }

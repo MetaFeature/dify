@@ -33,7 +33,7 @@ def test_create_managed_token_uses_internal_admin_contract_and_returns_secret():
         requester=httpx.Client(transport=httpx.MockTransport(handler)).request,
     )
 
-    managed = client.create_managed_token("student-uuid", 2_000)
+    managed = client.create_managed_token("student-uuid", "20260001", "Student One", 2_000)
 
     assert managed.token_id == "42"
     assert managed.secret == "gateway-secret"
@@ -44,10 +44,39 @@ def test_create_managed_token_uses_internal_admin_contract_and_returns_secret():
         "user": "1",
         "payload": {
             "external_ref": "student-uuid",
+            "student_number": "20260001",
+            "student_name": "Student One",
             "allowance_quota": 2_000,
             "group": "campus",
             "model_limits": ["text-model", "image-model"],
         },
+    }
+
+
+def test_update_managed_identity_uses_token_scoped_admin_contract():
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"success": True, "message": "", "data": None})
+
+    client = NewApiClient(
+        base_url="http://newapi:3000",
+        admin_access_token="admin-secret",
+        admin_user_id=1,
+        group="campus",
+        model_limits=(),
+        requester=httpx.Client(transport=httpx.MockTransport(handler)).request,
+    )
+
+    client.update_managed_identity("42", "20260001", "Student One")
+
+    assert seen == {
+        "method": "PATCH",
+        "path": "/api/campus/tokens/42/identity",
+        "payload": {"student_number": "20260001", "student_name": "Student One"},
     }
 
 

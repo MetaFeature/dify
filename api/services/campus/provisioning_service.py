@@ -100,7 +100,12 @@ class PlatformProvisioningService(PlatformProvisioner):
         )
         if gateway_binding is None:
             allowance_quota = self._allowance_quota(student.initial_allowance_usd)
-            managed_token = self._gateway_provisioner.create_managed_token(student.id, allowance_quota)
+            managed_token = self._gateway_provisioner.create_managed_token(
+                student.id,
+                student.student_number,
+                student.display_name,
+                allowance_quota,
+            )
             try:
                 self._model_configurator.configure(workspace.dify_tenant_id, managed_token.secret)
             except Exception:
@@ -115,6 +120,11 @@ class PlatformProvisioningService(PlatformProvisioner):
             self._session.add(gateway_binding)
             self._session.commit()
         else:
+            self._gateway_provisioner.update_managed_identity(
+                gateway_binding.gateway_token_id,
+                student.student_number,
+                student.display_name,
+            )
             self._reconcile_models(student, workspace.dify_tenant_id, gateway_binding.gateway_token_id)
 
         return ProvisionedPlatform(workspace=workspace, gateway_token_id=gateway_binding.gateway_token_id)
@@ -148,7 +158,12 @@ class PlatformProvisioningService(PlatformProvisioner):
         if not self._model_configurator.needs_configuration(dify_tenant_id):
             return
         allowance_quota = self._allowance_quota(student.initial_allowance_usd)
-        managed_token = self._gateway_provisioner.create_managed_token(student.id, allowance_quota)
+        managed_token = self._gateway_provisioner.create_managed_token(
+            student.id,
+            student.student_number,
+            student.display_name,
+            allowance_quota,
+        )
         if managed_token.created:
             # The bound token is gone, so this is a brand-new one carrying the
             # initial allowance again. Adopting it would silently refund whatever

@@ -136,7 +136,15 @@ class WorkspaceProvisioner(Protocol):
 
 
 class GatewayProvisioner(Protocol):
-    def create_managed_token(self, external_ref: str, allowance_quota: int) -> ManagedGatewayToken: ...
+    def create_managed_token(
+        self,
+        external_ref: str,
+        student_number: str,
+        student_name: str,
+        allowance_quota: int,
+    ) -> ManagedGatewayToken: ...
+
+    def update_managed_identity(self, token_id: str, student_number: str, student_name: str) -> None: ...
 
     def delete_managed_token(self, token_id: str) -> None: ...
 

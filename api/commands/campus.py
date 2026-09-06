@@ -8,12 +8,12 @@ from sqlalchemy import select
 
 from configs import dify_config
 from extensions.ext_database import db
-from models.campus import CampusWorkspaceBinding
+from models.campus import CampusGatewayBinding, CampusStudent, CampusWorkspaceBinding
 from services.campus.dify_adapters import parse_campus_models
 from services.campus.model_provider_reconciliation import CampusModelProviderReconciler
 
 
-@click.group("campus-model-providers", help="Audit and reconcile Campus model providers.")
+@click.group("campus-model-providers", help="Audit and reconcile Campus model providers and gateway identities.")
 def campus_model_providers() -> None:
     pass
 
@@ -50,3 +50,22 @@ def reconcile_model_providers() -> None:
     click.echo(json.dumps(asdict(summary), sort_keys=True))
     if not summary.clean:
         raise click.ClickException("Campus model provider reconciliation did not converge")
+
+
+@campus_model_providers.command("sync-gateway-identities")
+def sync_gateway_identities() -> None:
+    from controllers.console.campus_dependencies import newapi_client
+
+    rows = db.session.execute(
+        select(CampusStudent, CampusGatewayBinding)
+        .join(CampusGatewayBinding, CampusGatewayBinding.student_id == CampusStudent.id)
+        .order_by(CampusStudent.id)
+    ).all()
+    gateway = newapi_client()
+    for student, binding in rows:
+        gateway.update_managed_identity(
+            binding.gateway_token_id,
+            student.student_number,
+            student.display_name,
+        )
+    click.echo(json.dumps({"synced_gateway_identities": len(rows)}, sort_keys=True))

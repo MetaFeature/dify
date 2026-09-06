@@ -23,6 +23,14 @@ $ActiveBackupPath = "$BackupRoot\$Port-active.json"
 $LegacyPort80RuleDisplayNames = @("Dify HTTP 80", "dify-nginx-80")
 $WslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
 $WslKeepaliveTaskName = "wsl-docker-boot"
+$CampusControlRoot = "C:\ProgramData\NJITCampus"
+$CampusControlScript = Join-Path $CampusControlRoot "campus-control.ps1"
+$CampusControlShortcuts = @{
+    Start = "NJIT Campus - Start.lnk"
+    Stop = "NJIT Campus - Stop.lnk"
+    Restart = "NJIT Campus - Restart.lnk"
+    Status = "NJIT Campus - Status.lnk"
+}
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -215,8 +223,36 @@ function Test-WslKeepaliveTask {
         $actualArguments -ne $expectedArguments) {
         throw "The Windows WSL keepalive task does not match the Campus runtime anchor."
     }
+    $bootTriggers = @(
+        $task.Triggers | Where-Object {
+            $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" -and $_.Enabled
+        }
+    )
+    if ($bootTriggers.Count -lt 1 -or $task.Principal.RunLevel -ne "Highest") {
+        throw "The Windows WSL keepalive task is not configured for elevated startup at boot."
+    }
     if ($RequireRunning -and $task.State -ne "Running") {
         throw "The Windows WSL keepalive task is not running."
+    }
+}
+
+function Test-CampusControlShortcuts {
+    if (-not (Test-Path -LiteralPath $CampusControlScript)) {
+        throw "The installed Campus control script is missing."
+    }
+    $publicDesktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($entry in $CampusControlShortcuts.GetEnumerator()) {
+        $shortcutPath = Join-Path $publicDesktop $entry.Value
+        if (-not (Test-Path -LiteralPath $shortcutPath)) {
+            throw "Campus control shortcut is missing: $($entry.Value)"
+        }
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        if ([System.IO.Path]::GetFileName($shortcut.TargetPath) -ine "powershell.exe" -or
+            $shortcut.Arguments -notlike "*$CampusControlScript*" -or
+            $shortcut.Arguments -notlike "*-Action $($entry.Key)*") {
+            throw "Campus control shortcut target is invalid: $($entry.Value)"
+        }
     }
 }
 
@@ -431,6 +467,7 @@ switch ($Action) {
         Test-CampusFirewallRules
         Test-WslHostAddressLoopbackConfiguration
         Test-WslKeepaliveTask -RequireRunning
+        Test-CampusControlShortcuts
         Test-CampusHostAddressLoopback
         Write-Output "Campus Dify intranet firewall rules verified for TCP $Port."
     }

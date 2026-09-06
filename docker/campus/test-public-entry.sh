@@ -7,6 +7,7 @@ public_overlay="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
+control_script="${SCRIPT_DIR}/windows/campus-control.ps1"
 loopback_script="${SCRIPT_DIR}/wsl-loopback-routing.sh"
 loopback_unit="${SCRIPT_DIR}/systemd/njit-campus-wsl-loopback-routing.service"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
@@ -109,6 +110,22 @@ printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
   echo "Campus WSL loopback routing helper or systemd unit is missing" >&2
   exit 1
 }
+[[ -f "${control_script}" ]] || {
+  echo "Campus one-click Windows control script is missing" >&2
+  exit 1
+}
+for action in Start Stop Restart Status InstallShortcuts; do
+  grep -Fq "\"${action}\"" "${control_script}" || {
+    echo "Campus Windows control script omits ${action}" >&2
+    exit 1
+  }
+done
+for command in start stop restart status; do
+  grep -Eq "^[[:space:]]*${command}\)" "${manager}" || {
+    echo "Campus manager omits one-click action ${command}" >&2
+    exit 1
+  }
+done
 bash -n "${loopback_script}"
 grep -Fq '13000,18080,18081,18082,18444' "${loopback_script}" || {
   echo "Campus WSL loopback routing does not cover every private listener" >&2
@@ -415,6 +432,18 @@ grep -Fq '/api/status' "${manager}" || {
   echo "Campus verification does not check the model-gateway status endpoint" >&2
   exit 1
 }
+grep -Fq '/api/campus/users/summary' "${manager}" || {
+  echo "Campus verification does not enforce centralized gateway accounting" >&2
+  exit 1
+}
+grep -Fq 'sync-gateway-identities' "${manager}" || {
+  echo "Campus deployment does not synchronize gateway identity labels" >&2
+  exit 1
+}
+grep -Fq 'configured Campus model has no enabled gateway route' "${manager}" || {
+  echo "Campus verification does not reject unroutable configured models" >&2
+  exit 1
+}
 
 grep -Fq 'Dify HTTP 80' "${firewall_script}" || {
   echo "Campus firewall promotion does not account for the legacy public HTTP rule" >&2
@@ -449,6 +478,14 @@ grep -Fq 'wsl-docker-boot' "${firewall_script}" || {
 }
 grep -Fq 'Test-WslKeepaliveTask' "${firewall_script}" || {
   echo "Campus public-entry verification does not validate the WSL runtime anchor" >&2
+  exit 1
+}
+grep -Fq 'MSFT_TaskBootTrigger' "${firewall_script}" || {
+  echo "Campus startup verification does not require a boot trigger" >&2
+  exit 1
+}
+grep -Fq 'Test-CampusControlShortcuts' "${firewall_script}" || {
+  echo "Campus firewall verification does not enforce one-click controls" >&2
   exit 1
 }
 firewall_verify_function="$(sed -n '/^verify_public_firewall() {$/,/^}/p' "${manager}")"
