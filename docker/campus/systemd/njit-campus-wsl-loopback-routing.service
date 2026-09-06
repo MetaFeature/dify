@@ -1,0 +1,15 @@
+[Unit]
+Description=NJIT Campus WSL host loopback routing
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/njit-campus-wsl-loopback-routing apply
+ExecReload=/usr/local/sbin/njit-campus-wsl-loopback-routing apply
+ExecStop=-/usr/local/sbin/njit-campus-wsl-loopback-routing remove
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

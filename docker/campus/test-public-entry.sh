@@ -7,6 +7,8 @@ public_overlay="${DOCKER_DIR}/docker-compose.campus-public.yaml"
 upstream_overlay="${SCRIPT_DIR}/upstream-loopback.yaml"
 manager="${SCRIPT_DIR}/manage.sh"
 firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
+loopback_script="${SCRIPT_DIR}/wsl-loopback-routing.sh"
+loopback_unit="${SCRIPT_DIR}/systemd/njit-campus-wsl-loopback-routing.service"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
 credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
@@ -100,6 +102,49 @@ printf '%s\n' "${wait_for_http_function}" | grep -Fq 'local_curl' || {
 }
 printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
   echo "Campus redirect checks can still send loopback traffic through a proxy" >&2
+  exit 1
+}
+
+[[ -x "${loopback_script}" && -f "${loopback_unit}" ]] || {
+  echo "Campus WSL loopback routing helper or systemd unit is missing" >&2
+  exit 1
+}
+bash -n "${loopback_script}"
+grep -Fq '13000,18080,18081,18082,18444' "${loopback_script}" || {
+  echo "Campus WSL loopback routing does not cover every private listener" >&2
+  exit 1
+}
+for contract in \
+  'LOOPBACK_INTERFACE' \
+  '127.0.0.0/8' \
+  '127.0.0.1/32' \
+  '-t raw -I PREROUTING 1' \
+  '-t nat -I DOCKER 1' \
+  '-j ACCEPT' \
+  '-j RETURN'; do
+  grep -Fq -- "${contract}" "${loopback_script}" || {
+    echo "Campus WSL loopback routing omits required contract: ${contract}" >&2
+    exit 1
+  }
+done
+for contract in \
+  'Requires=docker.service' \
+  'After=docker.service' \
+  'PartOf=docker.service' \
+  'ExecStart=/usr/local/sbin/njit-campus-wsl-loopback-routing apply' \
+  'WantedBy=multi-user.target'; do
+  grep -Fq "${contract}" "${loopback_unit}" || {
+    echo "Campus WSL loopback service omits required contract: ${contract}" >&2
+    exit 1
+  }
+done
+grep -Fq 'install_wsl_loopback_routing' "${manager}" || {
+  echo "Campus deployment does not install the WSL loopback repair" >&2
+  exit 1
+}
+verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
+printf '%s\n' "${verify_function}" | grep -Fq 'verify_wsl_loopback_routing' || {
+  echo "Campus runtime verification does not enforce WSL loopback routing" >&2
   exit 1
 }
 
@@ -420,3 +465,12 @@ printf '%s\n' "${host_loopback_function}" | grep -Fq 'portal/' || {
   echo "Windows public-entry verification does not load the Portal page" >&2
   exit 1
 }
+for private_url in \
+  'http://127.0.0.1:${CanaryPort}/health' \
+  'http://127.0.0.1:${AdminPort}/' \
+  'http://127.0.0.1:${GatewayPort}/api/status'; do
+  printf '%s\n' "${host_loopback_function}" | grep -Fq "${private_url}" || {
+    echo "Windows verification does not exercise private listener ${private_url}" >&2
+    exit 1
+  }
+done

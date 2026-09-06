@@ -12,6 +12,10 @@ BRANDING_DIR="${SCRIPT_DIR}/branding"
 BRANDING_LOGO_FILE="${BRANDING_DIR}/njit-logo.png"
 BRANDING_LOGO_MANIFEST="${BRANDING_DIR}/SHA256SUMS"
 WORKSPACE_ISOLATION_SQL="${SCRIPT_DIR}/verify-workspace-isolation.sql"
+WSL_LOOPBACK_ROUTING_SOURCE="${SCRIPT_DIR}/wsl-loopback-routing.sh"
+WSL_LOOPBACK_ROUTING_UNIT_SOURCE="${SCRIPT_DIR}/systemd/njit-campus-wsl-loopback-routing.service"
+WSL_LOOPBACK_ROUTING_INSTALLED="/usr/local/sbin/njit-campus-wsl-loopback-routing"
+WSL_LOOPBACK_ROUTING_UNIT="njit-campus-wsl-loopback-routing.service"
 APPROVED_MODEL_PROVIDER="langgenius/openai_api_compatible/openai_api_compatible"
 APPROVED_MODEL_CREDENTIAL_SCOPE="model"
 APPROVED_MODEL_API_KEY_FIELD="api_key"
@@ -427,6 +431,69 @@ backup() {
   echo "${destination}"
 }
 
+backup_wsl_loopback_routing() {
+  local stamp destination source target
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  destination="${BACKUP_ROOT}/loopback-routing-${stamp}"
+  umask 077
+  mkdir -p "${destination}"
+  for target in \
+    "${WSL_LOOPBACK_ROUTING_INSTALLED}" \
+    "/etc/systemd/system/${WSL_LOOPBACK_ROUTING_UNIT}"; do
+    if sudo -n test -f "${target}"; then
+      source="$(basename -- "${target}")"
+      sudo -n cat "${target}" >"${destination}/${source}.before"
+    else
+      printf '%s\n' "${target}" >>"${destination}/MISSING_BEFORE_DEPLOY.txt"
+    fi
+  done
+  sudo -n iptables-save -t raw >"${destination}/iptables-raw.before"
+  sudo -n iptables-save -t nat >"${destination}/iptables-nat.before"
+  chmod 600 "${destination}"/*
+  echo "${destination}"
+}
+
+install_wsl_loopback_routing() {
+  local backup_destination
+  [[ -x "${WSL_LOOPBACK_ROUTING_SOURCE}" ]] || \
+    fail "missing executable Campus WSL loopback routing helper"
+  [[ -f "${WSL_LOOPBACK_ROUTING_UNIT_SOURCE}" ]] || \
+    fail "missing Campus WSL loopback routing systemd unit"
+  command -v sudo >/dev/null || fail "sudo is required for WSL loopback routing installation"
+  command -v systemctl >/dev/null || fail "systemd is required for WSL loopback routing installation"
+  backup_destination="$(backup_wsl_loopback_routing)"
+  if systemctl cat "${WSL_LOOPBACK_ROUTING_UNIT}" >/dev/null 2>&1; then
+    sudo -n systemctl stop "${WSL_LOOPBACK_ROUTING_UNIT}"
+  fi
+  sudo -n install -m 755 "${WSL_LOOPBACK_ROUTING_SOURCE}" \
+    "${WSL_LOOPBACK_ROUTING_INSTALLED}"
+  sudo -n install -m 644 "${WSL_LOOPBACK_ROUTING_UNIT_SOURCE}" \
+    "/etc/systemd/system/${WSL_LOOPBACK_ROUTING_UNIT}"
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl enable --now "${WSL_LOOPBACK_ROUTING_UNIT}"
+  echo "Campus WSL loopback routing installed; rollback backup: ${backup_destination}"
+}
+
+verify_wsl_loopback_routing() {
+  systemctl is-enabled --quiet "${WSL_LOOPBACK_ROUTING_UNIT}" || \
+    fail "Campus WSL loopback routing service is not enabled"
+  systemctl is-active --quiet "${WSL_LOOPBACK_ROUTING_UNIT}" || \
+    fail "Campus WSL loopback routing service is not active"
+  [[ -x "${WSL_LOOPBACK_ROUTING_INSTALLED}" ]] || \
+    fail "Campus WSL loopback routing helper is not installed"
+  sudo -n "${WSL_LOOPBACK_ROUTING_INSTALLED}" verify
+}
+
+repair_wsl_loopback_routing() {
+  local backup_destination
+  validate
+  project_has_state || fail "WSL loopback repair requires an existing Campus project"
+  backup_destination="$(backup)"
+  install_wsl_loopback_routing
+  verify
+  echo "Campus WSL loopback routing repaired; application rollback backup: ${backup_destination}"
+}
+
 assert_static_surface_is_consistent() {
   # A served page and its served script must agree on required element ids.
   # Their pages are single-file bind mounts, so a stale container can serve an
@@ -551,6 +618,7 @@ verify() {
   for service in api portal model-gateway worker worker_beat nginx; do
     require_running_service "${service}"
   done
+  verify_wsl_loopback_routing
   wait_for_campus_health "${campus_port}"
   assert_branding_logo "http://127.0.0.1:${campus_port}/logo/logo.svg"
   assert_branding_logo "http://127.0.0.1:${admin_port}/logo/logo.svg"
@@ -796,6 +864,7 @@ assert_public_bind_is_local() {
 
 verify_public_firewall() {
   local public_port="$1" remote_address public_bind powershell_bin windows_script
+  local canary_port admin_port gateway_port
   powershell_bin="$(command -v powershell.exe || true)"
   if [[ -z "${powershell_bin}" && -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]]; then
     powershell_bin=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
@@ -806,10 +875,17 @@ verify_public_firewall() {
   remote_address="${remote_address:-10.0.0.0/255.0.0.0}"
   public_bind="$(env_value CAMPUS_PUBLIC_BIND_ADDRESS)"
   public_bind="${public_bind:-10.20.10.193}"
+  canary_port="$(env_value EXPOSE_NGINX_PORT)"
+  canary_port="${canary_port:-18080}"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  admin_port="${admin_port:-18081}"
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
+  gateway_port="${gateway_port:-13000}"
   windows_script="$(wslpath -w "${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1")"
   "${powershell_bin}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}" \
     -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}" \
-    -ListenAddress "${public_bind}"
+    -ListenAddress "${public_bind}" -CanaryPort "${canary_port}" \
+    -AdminPort "${admin_port}" -GatewayPort "${gateway_port}"
 }
 
 assert_port_owner() {
@@ -1005,6 +1081,7 @@ deploy() {
   # serving the old page while its mounted asset directory serves new scripts.
   "${COMPOSE[@]}" up -d --no-deps --force-recreate portal
   "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
+  install_wsl_loopback_routing
   reconcile_model_providers_runtime
   verify
 }
@@ -1030,7 +1107,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
+  echo "usage: $0 {gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion|stop}" >&2
   exit 2
 }
 
@@ -1050,6 +1127,7 @@ case "${1:-}" in
   backup) backup ;;
   deploy) deploy ;;
   deploy-branding) deploy_branding ;;
+  repair-loopback-routing) repair_wsl_loopback_routing ;;
   verify) verify ;;
   verify-demo-accounts) verify_demo_accounts ;;
   baseline) run_baseline ;;

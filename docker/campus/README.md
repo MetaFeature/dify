@@ -225,6 +225,23 @@ Start-ScheduledTask -TaskName wsl-docker-boot
 curl.exe --noproxy "*" -I http://10.20.10.193/
 ```
 
+Docker 29's loopback anti-spoof rules treat mirrored WSL traffic arriving on
+`loopback0` as non-loopback traffic. Install the scoped routing reconciliation
+after Docker or WSL changes:
+
+```bash
+docker/campus/manage.sh repair-loopback-routing
+systemctl is-active njit-campus-wsl-loopback-routing.service
+sudo /usr/local/sbin/njit-campus-wsl-loopback-routing verify
+```
+
+The systemd unit runs after and with `docker.service`. It permits only source
+`127.0.0.0/8` traffic arriving on WSL's `loopback0`, only to `127.0.0.1`, and
+only for the five private platform ports `13000`, `18080`, `18081`, `18082`,
+and `18444`. The rules return those connections to the existing local
+`docker-proxy` listeners; they do not publish a private port on a campus
+interface.
+
 Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
 rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
 `10.20.10.193:80`, retains `127.0.0.1:18080` for health checks, and verifies

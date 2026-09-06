@@ -3,6 +3,12 @@ param(
     [string]$Action = "Apply",
     [ValidateRange(1, 65535)]
     [int]$Port = 18080,
+    [ValidateRange(1, 65535)]
+    [int]$CanaryPort = 18080,
+    [ValidateRange(1, 65535)]
+    [int]$AdminPort = 18081,
+    [ValidateRange(1, 65535)]
+    [int]$GatewayPort = 13000,
     [string]$RemoteAddress = "10.0.0.0/255.0.0.0",
     [string]$ListenAddress = "10.20.10.193",
     [string]$WslDistributionName = "Ubuntu-2404"
@@ -143,16 +149,38 @@ function Test-CampusHostAddressLoopback {
         throw "Windows curl.exe is required for Campus public-entry verification."
     }
     $checks = @(
-        [PSCustomObject]@{ Path = "/"; Status = "302" },
-        [PSCustomObject]@{ Path = "/portal/"; Status = "200" }
+        [PSCustomObject]@{
+            Name = "Campus public root"
+            Url = "http://${ListenAddress}:${Port}/"
+            Status = "302"
+        },
+        [PSCustomObject]@{
+            Name = "Campus public portal"
+            Url = "http://${ListenAddress}:${Port}/portal/"
+            Status = "200"
+        },
+        [PSCustomObject]@{
+            Name = "Campus administration portal"
+            Url = "http://127.0.0.1:${AdminPort}/"
+            Status = "200"
+        },
+        [PSCustomObject]@{
+            Name = "Campus model gateway"
+            Url = "http://127.0.0.1:${GatewayPort}/api/status"
+            Status = "200"
+        },
+        [PSCustomObject]@{
+            Name = "Campus loopback canary"
+            Url = "http://127.0.0.1:${CanaryPort}/health"
+            Status = "200"
+        }
     )
     foreach ($check in $checks) {
-        $url = "http://${ListenAddress}:${Port}$($check.Path)"
         $verified = $false
         foreach ($attempt in 1..10) {
             $output = @(
                 & $curlPath --noproxy "*" --connect-timeout 1 --max-time 2 `
-                    --silent --output NUL --write-out "%{http_code}" $url 2>$null
+                    --silent --output NUL --write-out "%{http_code}" $check.Url 2>$null
             )
             $status = ($output -join "").Trim()
             if ($LASTEXITCODE -eq 0 -and $status -eq $check.Status) {
@@ -162,7 +190,7 @@ function Test-CampusHostAddressLoopback {
             Start-Sleep -Milliseconds 500
         }
         if (-not $verified) {
-            throw "Windows cannot reach the expected Campus route at $($check.Path)."
+            throw "Windows cannot reach $($check.Name) at $($check.Url)."
         }
     }
 }
