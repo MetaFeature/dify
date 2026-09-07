@@ -728,8 +728,18 @@ heartbeat_probe() {
   done
 }
 
+wait_for_heartbeat_probe() {
+  local max_wait="$1" deadline
+  deadline=$((SECONDS + max_wait))
+  while ((SECONDS < deadline)); do
+    heartbeat_probe && return 0
+    sleep 2
+  done
+  return 1
+}
+
 heartbeat_runtime() {
-  local failures=0 campus_port
+  local failures=0
   command -v flock >/dev/null || fail "flock is required for the Campus heartbeat"
   exec 9>"${CAMPUS_HEARTBEAT_LOCK_FILE}"
   if ! flock -n 9; then
@@ -755,12 +765,10 @@ heartbeat_runtime() {
   echo "Campus heartbeat: three consecutive failures; starting scoped recovery."
   "${COMPOSE[@]}" up -d
   ensure_wsl_loopback_routing
-  if ! heartbeat_probe; then
+  if ! wait_for_heartbeat_probe 20; then
     "${COMPOSE[@]}" restart api portal model-gateway worker worker_beat nginx
-    campus_port="$(env_value EXPOSE_NGINX_PORT)"
-    wait_for_campus_health "${campus_port:-18080}"
+    wait_for_heartbeat_probe 90 || fail "Campus heartbeat recovery did not restore the control plane"
   fi
-  heartbeat_probe || fail "Campus heartbeat recovery did not restore the control plane"
   rm -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}"
   echo "Campus heartbeat: recovery succeeded."
 }
