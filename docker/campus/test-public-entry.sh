@@ -507,6 +507,10 @@ grep -Fq -- '--profile "${vector_store}"' "${manager}" || {
   echo "Campus Compose commands do not activate the configured vector-store profile" >&2
   exit 1
 }
+grep -Fq -- '--config.runtime-on-fail=ignore' "${DOCKER_DIR}/../web/Dockerfile" || {
+  echo "Campus Web build may download an unmanaged Node runtime" >&2
+  exit 1
+}
 grep -Fq 'CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS=' "${campus_env_example}" || {
   echo "Campus environment omits the required gateway channel model list" >&2
   exit 1

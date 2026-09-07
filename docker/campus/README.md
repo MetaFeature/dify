@@ -106,6 +106,10 @@ also run `docker/campus/manage.sh migrate-model-sync-config` once. It backs up
 upstream check, installs the `qwen3.8-flash` tariff, sets the bootstrap catalog,
 and enables the Campus Web image. Repeating it is a no-op. Restore the reported
 `campus.env` copy together with the earlier source revision to roll it back.
+The Campus Web build uses the digest-pinned Node runtime from its Dockerfile and
+sets pnpm's runtime mismatch policy to `ignore`; this prevents pnpm from
+downloading a second Node binary while retaining the image's declared Node
+version.
 
 After that source-level migration, run
 `docker/campus/manage.sh reconcile-model-providers` once. The command creates a
