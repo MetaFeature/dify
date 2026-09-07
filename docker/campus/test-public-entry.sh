@@ -516,6 +516,10 @@ grep -Fq -- 'pnpm install --no-frozen-lockfile --config.runtime-on-fail=ignore' 
   echo "Campus Web build does not prune the lockfile-only managed Node runtime" >&2
   exit 1
 }
+if grep -Fq 'pnpm build && pnpm build:vinext' "${DOCKER_DIR}/../web/Dockerfile"; then
+  echo "Campus Web build still requires the unused experimental Vinext bundle" >&2
+  exit 1
+fi
 grep -Fq 'CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS=' "${campus_env_example}" || {
   echo "Campus environment omits the required gateway channel model list" >&2
   exit 1

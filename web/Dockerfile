@@ -42,7 +42,7 @@ COPY . .
 WORKDIR /app/web
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV pnpm_config_verify_deps_before_run=false
-RUN pnpm build && pnpm build:vinext
+RUN pnpm build && mkdir -p dist/standalone
 
 
 # production stage

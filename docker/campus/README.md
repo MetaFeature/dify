@@ -112,6 +112,9 @@ downloading a second Node binary while retaining the image's declared Node
 version. The build-layer install allows pnpm to prune only that lockfile runtime
 entry; the source lockfile is copied into the image and is never rewritten in
 the checkout.
+The runtime keeps `EXPERIMENTAL_ENABLE_VINEXT=false`, so the Campus image builds
+the production Next.js bundle and creates only the unused Vinext copy target;
+an experimental Vinext compiler failure cannot block the active Next.js image.
 
 After that source-level migration, run
 `docker/campus/manage.sh reconcile-model-providers` once. The command creates a
