@@ -6,7 +6,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURE_ENV="$(mktemp)"
-trap 'rm -f "${FIXTURE_ENV}"' EXIT
+PUT_LOG="$(mktemp)"
+trap 'unlink "${FIXTURE_ENV}" 2>/dev/null || true; unlink "${PUT_LOG}" 2>/dev/null || true' EXIT
 
 fail() {
   echo "$*" >&2
@@ -91,5 +92,39 @@ JSON
 [[ "$(gateway_catalog_model_spec 13000)" == \
   "llm:qwen3.8-flash,text-embedding:bge-m3" ]] || \
   fail "gateway catalog was not converted to a Dify model spec"
+
+billing_function_source="$(
+  sed -n '/^reconcile_gateway_billing_runtime() {$/,/^sync_model_catalog_runtime() {$/p' \
+    "${SCRIPT_DIR}/manage.sh" | sed '$d'
+)"
+eval "${billing_function_source}"
+cat >"${CAMPUS_ENV_FILE}" <<'EOF'
+CAMPUS_NEWAPI_BILLING_PATCH_JSON={"qwen3.8-flash":{"model_ratio":0.075,"completion_ratio":3.1333333333,"cache_ratio":0.1066666667}}
+EOF
+gateway_sql() {
+  printf '%s\n' '{}'
+}
+gateway_admin_put() {
+  printf '%s\t%s\n' "$2" "$3" >>"${PUT_LOG}"
+  printf '%s\n' '{"success":true}'
+}
+reconcile_gateway_billing_runtime 13000
+[[ "$(wc -l <"${PUT_LOG}" | tr -d ' ')" == "3" ]] || \
+  fail "gateway billing patch did not update all three ratio maps"
+python3 - "${PUT_LOG}" <<'PY'
+import json
+import sys
+
+rows = [line.rstrip("\n").split("\t", 1) for line in open(sys.argv[1], encoding="utf-8")]
+assert {json.loads(payload)["key"] for _, payload in rows} == {
+    "ModelRatio",
+    "CompletionRatio",
+    "CacheRatio",
+}
+for path, payload in rows:
+    assert path == "/api/option/"
+    values = json.loads(json.loads(payload)["value"])
+    assert "qwen3.8-flash" in values
+PY
 
 echo "Campus gateway model routing checks passed."

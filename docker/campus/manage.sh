@@ -1350,11 +1350,11 @@ verify_gateway_pricing() {
     esac
     status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
       -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
-      -d "${request_body}" "http://127.0.0.1:${gateway_port}${request_path}")"
+      -d "${request_body}" "http://127.0.0.1:${gateway_port}${request_path}" </dev/null)"
     log_ratio="$(gateway_sql "select model_name, other::jsonb->>'model_ratio' from logs where type = 2 and token_id = ${probe_id} order by id desc" | \
       awk -F'|' -v model="${probe_model}" '$1 == model { print $2; exit }')"
     if [[ "${status}" != "200" || -z "${log_ratio}" ]] || \
-       ! awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 < 1.0) }'; then
+       ! awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 > 0 && ratio + 0 < 1.0) }'; then
       gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
       [[ "${status}" == "200" ]] || fail "gateway probe for ${probe_model} failed (HTTP ${status})"
       [[ -n "${log_ratio}" ]] || fail "gateway probe for ${probe_model} was not metered"
@@ -1393,7 +1393,7 @@ gateway_admin_post() {
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
     -H 'Content-Type: application/json' -d "${body}" \
-    "http://127.0.0.1:${gateway_port}${path}"
+    "http://127.0.0.1:${gateway_port}${path}" </dev/null
 }
 
 gateway_admin_get() {
@@ -1401,7 +1401,7 @@ gateway_admin_get() {
   local_curl --silent --show-error --max-time 20 \
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
-    "http://127.0.0.1:${gateway_port}${path}"
+    "http://127.0.0.1:${gateway_port}${path}" </dev/null
 }
 
 gateway_admin_put() {
@@ -1410,7 +1410,7 @@ gateway_admin_put() {
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
     -H 'Content-Type: application/json' -d "${body}" \
-    "http://127.0.0.1:${gateway_port}${path}"
+    "http://127.0.0.1:${gateway_port}${path}" </dev/null
 }
 
 gateway_admin_delete() {
@@ -1418,7 +1418,7 @@ gateway_admin_delete() {
   local_curl --silent --show-error --max-time 20 -X DELETE \
     -H "Authorization: Bearer $(env_value CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN)" \
     -H "New-API-User: $(env_value CAMPUS_NEWAPI_ADMIN_USER_ID)" \
-    "http://127.0.0.1:${gateway_port}${path}"
+    "http://127.0.0.1:${gateway_port}${path}" </dev/null
 }
 
 open_bootstrap() {
