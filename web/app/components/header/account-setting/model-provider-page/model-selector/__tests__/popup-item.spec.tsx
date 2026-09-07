@@ -419,6 +419,41 @@ describe('PopupItem', () => {
     expect(screen.getByText('my-api-key'))!.toBeInTheDocument()
   })
 
+  it('should show the shared model credential name for model-level providers', () => {
+    mockUseProviderContext.mockReturnValue({
+      modelProviders: [
+        makeProvider({
+          custom_configuration: {
+            status: CustomConfigurationStatusEnum.active,
+            custom_models: [
+              {
+                model: 'gpt-4',
+                model_type: ModelTypeEnum.textGeneration,
+                current_credential_id: 'credential-1',
+                current_credential_name: 'Campus managed',
+              },
+            ],
+          },
+        }),
+      ],
+    })
+    mockCredentialPanelState.mockReturnValue({
+      variant: 'api-required-configure',
+      priority: 'apiKeyOnly',
+      supportsCredits: false,
+      showPrioritySwitcher: false,
+      hasCredentials: false,
+      isCreditsExhausted: false,
+      credentialName: undefined,
+      credits: 0,
+    })
+
+    renderWithCombobox(<PopupItem {...previewCardProps()} model={makeModel()} onHide={vi.fn()} />)
+
+    expect(screen.getByText('Campus managed'))!.toBeInTheDocument()
+    expect(screen.queryByText(/modelProvider\.selector\.configureRequired/)).not.toBeInTheDocument()
+  })
+
   it('should render the inactive credential badge when the api key is not active', () => {
     mockCredentialPanelState.mockReturnValue({
       variant: 'api-inactive',

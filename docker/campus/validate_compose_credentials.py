@@ -37,6 +37,13 @@ def validate_compose_credentials(config: object) -> None:
     sandbox_service = _mapping(services.get("sandbox"), "sandbox service")
     sandbox_environment = _mapping(sandbox_service.get("environment"), "sandbox environment")
     sandbox_api_key = _required_text(sandbox_environment, "API_KEY", "sandbox credential")
+    weaviate_service = _mapping(services.get("weaviate"), "Weaviate service")
+    weaviate_environment = _mapping(weaviate_service.get("environment"), "Weaviate environment")
+    weaviate_api_key = _required_text(
+        weaviate_environment,
+        "AUTHENTICATION_APIKEY_ALLOWED_KEYS",
+        "Weaviate credential",
+    )
 
     for service_name in ("api", "worker", "worker_beat"):
         service = _mapping(services.get(service_name), f"{service_name} service")
@@ -53,6 +60,13 @@ def validate_compose_credentials(config: object) -> None:
             )
             if code_execution_api_key != sandbox_api_key:
                 raise CredentialConfigurationError(f"{service_name} sandbox credential does not match")
+            client_weaviate_api_key = _required_text(
+                environment,
+                "WEAVIATE_API_KEY",
+                f"{service_name} Weaviate credential",
+            )
+            if client_weaviate_api_key != weaviate_api_key:
+                raise CredentialConfigurationError(f"{service_name} Weaviate credential does not match")
 
         try:
             parsed = urlsplit(broker_url)

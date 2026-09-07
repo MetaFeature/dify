@@ -94,6 +94,25 @@ function PopupItem({
   const hasCredits = !state.isCreditsExhausted
   const isApiKeyActive = state.variant === 'api-active' || state.variant === 'api-fallback'
   const { credentialName } = state
+  const configuredModelCredentialNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (currentProvider?.custom_configuration.custom_models || [])
+            .filter((model) => model.current_credential_id && model.current_credential_name)
+            .map((model) => model.current_credential_name!),
+        ),
+      ),
+    [currentProvider?.custom_configuration.custom_models],
+  )
+  const modelCredentialName =
+    configuredModelCredentialNames.length === 1
+      ? configuredModelCredentialNames[0]
+      : configuredModelCredentialNames.length > 1
+        ? t(($) => $['modelProvider.auth.modelCredentials'], { ns: 'common' })
+        : undefined
+  const displayedCredentialName = credentialName || modelCredentialName
+  const displayedCredentialActive = isApiKeyActive || !!modelCredentialName
 
   const handleCloseDropdown = useCallback(() => {
     setDropdownOpen(false)
@@ -142,10 +161,15 @@ function PopupItem({
                       </span>
                     </>
                   )
-                ) : credentialName ? (
+                ) : displayedCredentialName ? (
                   <>
-                    <StatusDot size="small" status={isApiKeyActive ? 'success' : 'error'} />
-                    <span className="ml-1 truncate text-text-tertiary">{credentialName}</span>
+                    <StatusDot
+                      size="small"
+                      status={displayedCredentialActive ? 'success' : 'error'}
+                    />
+                    <span className="ml-1 truncate text-text-tertiary">
+                      {displayedCredentialName}
+                    </span>
                   </>
                 ) : (
                   <>

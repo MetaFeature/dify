@@ -18,7 +18,7 @@ def campus_model_providers() -> None:
     pass
 
 
-def _reconciler() -> tuple[CampusModelProviderReconciler, list[str]]:
+def _reconciler(model_spec: str | None = None) -> tuple[CampusModelProviderReconciler, list[str]]:
     tenant_ids = list(
         db.session.scalars(select(CampusWorkspaceBinding.dify_tenant_id).order_by(CampusWorkspaceBinding.id))
     )
@@ -28,15 +28,16 @@ def _reconciler() -> tuple[CampusModelProviderReconciler, list[str]]:
             target_provider=dify_config.CAMPUS_MODEL_PROVIDER,
             credential_name=dify_config.CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,
-            models=parse_campus_models(dify_config.CAMPUS_MODEL_PROVIDER_MODELS),
+            models=parse_campus_models(model_spec or dify_config.CAMPUS_MODEL_PROVIDER_MODELS),
         ),
         tenant_ids,
     )
 
 
 @campus_model_providers.command("audit")
-def audit_model_providers() -> None:
-    reconciler, tenant_ids = _reconciler()
+@click.option("--models", "model_spec", help="Gateway catalog as comma-separated type:name entries.")
+def audit_model_providers(model_spec: str | None) -> None:
+    reconciler, tenant_ids = _reconciler(model_spec)
     summary = reconciler.audit(tenant_ids)
     click.echo(json.dumps(asdict(summary), sort_keys=True))
     if not summary.clean:
@@ -44,8 +45,9 @@ def audit_model_providers() -> None:
 
 
 @campus_model_providers.command("reconcile")
-def reconcile_model_providers() -> None:
-    reconciler, tenant_ids = _reconciler()
+@click.option("--models", "model_spec", help="Gateway catalog as comma-separated type:name entries.")
+def reconcile_model_providers(model_spec: str | None) -> None:
+    reconciler, tenant_ids = _reconciler(model_spec)
     summary = reconciler.reconcile(tenant_ids)
     click.echo(json.dumps(asdict(summary), sort_keys=True))
     if not summary.clean:

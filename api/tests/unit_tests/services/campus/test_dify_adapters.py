@@ -14,6 +14,7 @@ from services.campus.dify_adapters import (
     DifyModelConfigurator,
     DifyWorkspaceProvisioner,
     MarketplaceProviderPluginInstaller,
+    RefreshingModelConfigurator,
     parse_campus_models,
 )
 from services.campus.errors import CampusProvisioningError, CampusValidationError
@@ -616,6 +617,38 @@ def test_campus_model_spec_requires_an_llm_track() -> None:
     # configured provider also exposes embedding and reranking slots.
     with pytest.raises(CampusValidationError, match="at least one llm"):
         parse_campus_models("text-embedding:bge-m3")
+
+
+def test_refreshing_model_configurator_resolves_catalog_at_each_provisioning_check() -> None:
+    calls: list[tuple[str, str, str | None]] = []
+
+    class Configurator:
+        def __init__(self, revision: int) -> None:
+            self.revision = revision
+
+        def needs_configuration(self, tenant_id: str) -> bool:
+            calls.append(("needs", tenant_id, str(self.revision)))
+            return True
+
+        def configure(self, tenant_id: str, secret: str) -> None:
+            calls.append(("configure", tenant_id, secret))
+
+    revision = 0
+
+    def factory():
+        nonlocal revision
+        revision += 1
+        return Configurator(revision)
+
+    configurator = RefreshingModelConfigurator(factory)
+
+    assert configurator.needs_configuration("tenant-1") is True
+    configurator.configure("tenant-1", "opaque-secret")
+
+    assert calls == [
+        ("needs", "tenant-1", "1"),
+        ("configure", "tenant-1", "opaque-secret"),
+    ]
 
 
 def test_model_configurator_registers_every_configured_model_with_its_type(sqlite_engine) -> None:

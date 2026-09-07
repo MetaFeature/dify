@@ -26,6 +26,7 @@ class EnvironmentFixture(TypedDict, total=False):
     REDISCLI_AUTH: str
     REDIS_HOST: str
     REDIS_PORT: str
+    WEAVIATE_API_KEY: str
 
 
 class ServiceFixture(TypedDict):
@@ -38,6 +39,7 @@ class ServicesFixture(TypedDict):
     api: ServiceFixture
     worker: ServiceFixture
     worker_beat: ServiceFixture
+    weaviate: ServiceFixture
 
 
 class ComposeConfigFixture(TypedDict):
@@ -52,6 +54,7 @@ def compose_config(redis_password: str, broker_password: str | None = None) -> C
         "CODE_EXECUTION_API_KEY": "sandbox-key",
         "REDIS_HOST": "redis",
         "REDIS_PORT": "6379",
+        "WEAVIATE_API_KEY": "weaviate-key",
     }
     return {
         "services": {
@@ -60,6 +63,7 @@ def compose_config(redis_password: str, broker_password: str | None = None) -> C
             "api": {"environment": dict(shared_environment)},
             "worker": {"environment": dict(shared_environment)},
             "worker_beat": {"environment": dict(shared_environment)},
+            "weaviate": {"environment": {"AUTHENTICATION_APIKEY_ALLOWED_KEYS": "weaviate-key"}},
         }
     }
 
@@ -91,6 +95,16 @@ class ComposeCredentialValidationTest(unittest.TestCase):
         config["services"]["worker"]["environment"]["CODE_EXECUTION_API_KEY"] = stale_key
 
         with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "sandbox credential does not match") as caught:
+            MODULE.validate_compose_credentials(config)
+
+        self.assertNotIn(stale_key, str(caught.exception))
+
+    def test_rejects_stale_weaviate_key_without_disclosing_it(self) -> None:
+        stale_key = "old-weaviate-key-must-not-leak"
+        config = compose_config("current-password")
+        config["services"]["worker"]["environment"]["WEAVIATE_API_KEY"] = stale_key
+
+        with self.assertRaisesRegex(MODULE.CredentialConfigurationError, "Weaviate credential does not match") as caught:
             MODULE.validate_compose_credentials(config)
 
         self.assertNotIn(stale_key, str(caught.exception))

@@ -16,6 +16,7 @@ from services.campus.dify_adapters import (
     DifyModelConfigurator,
     DifySessionIssuer,
     DifyWorkspaceProvisioner,
+    RefreshingModelConfigurator,
     parse_campus_models,
 )
 from services.campus.domain import IdentitySource
@@ -135,14 +136,12 @@ def platform_provisioner() -> PlatformProvisioningService:
     if not principal_email:
         raise CampusProvisioningError("Campus service principal is not configured")
     session = db.session()
-    return PlatformProvisioningService(
-        session=session,
-        workspace_provisioner=DifyWorkspaceProvisioner(
-            session=session,
-            service_principal_email=principal_email,
-        ),
-        gateway_provisioner=newapi_client(),
-        model_configurator=DifyModelConfigurator(
+    gateway = newapi_client()
+
+    def current_model_configurator() -> DifyModelConfigurator:
+        gateway_models = gateway.get_model_catalog()
+        model_spec = ",".join(f"{model.model_type}:{model.name}" for model in gateway_models)
+        return DifyModelConfigurator(
             session=session,
             provider=dify_config.CAMPUS_MODEL_PROVIDER,
             provider_plugin_unique_identifier=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_UNIQUE_IDENTIFIER,
@@ -151,10 +150,19 @@ def platform_provisioner() -> PlatformProvisioningService:
             api_key_field=dify_config.CAMPUS_MODEL_PROVIDER_API_KEY_FIELD,
             base_url_field=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,
-            models=parse_campus_models(dify_config.CAMPUS_MODEL_PROVIDER_MODELS),
+            models=parse_campus_models(model_spec),
             api_protocol=dify_config.CAMPUS_MODEL_PROVIDER_API_PROTOCOL,
             plugin_package_path=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_PACKAGE_PATH,
+        )
+
+    return PlatformProvisioningService(
+        session=session,
+        workspace_provisioner=DifyWorkspaceProvisioner(
+            session=session,
+            service_principal_email=principal_email,
         ),
+        gateway_provisioner=gateway,
+        model_configurator=RefreshingModelConfigurator(current_model_configurator),
         quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
     )
 

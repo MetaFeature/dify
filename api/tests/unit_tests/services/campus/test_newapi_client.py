@@ -115,6 +115,43 @@ def test_usage_and_adjustment_map_only_public_metering_fields():
     assert not hasattr(usage, "channel")
 
 
+def test_model_catalog_maps_only_typed_public_model_fields():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/campus/models/catalog"
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "message": "",
+                "data": {
+                    "revision": "a" * 64,
+                    "models": [
+                        {"name": "qwen3.8-flash", "model_type": "llm"},
+                        {"name": "bge-m3", "model_type": "text-embedding"},
+                    ],
+                    "excluded": [{"name": "unpriced-model", "reason": "unpriced"}],
+                },
+            },
+        )
+
+    client = NewApiClient(
+        base_url="http://newapi:3000",
+        admin_access_token="admin-secret",
+        admin_user_id=1,
+        group="campus",
+        model_limits=(),
+        requester=httpx.Client(transport=httpx.MockTransport(handler)).request,
+    )
+
+    catalog = client.get_model_catalog()
+
+    assert [(model.model_type, model.name) for model in catalog] == [
+        ("llm", "qwen3.8-flash"),
+        ("text-embedding", "bge-m3"),
+    ]
+    assert not hasattr(catalog[0], "channel")
+
+
 def test_newapi_business_error_is_raised_even_when_http_status_is_200():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"success": False, "message": "quota exhausted"})

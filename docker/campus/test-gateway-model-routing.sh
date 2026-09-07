@@ -56,6 +56,11 @@ if (validate_gateway_channel_models) >/dev/null 2>&1; then
   fail "catalog accepted a configured Dify model with no gateway channel"
 fi
 
+cat >>"${CAMPUS_ENV_FILE}" <<'EOF'
+CAMPUS_NEWAPI_PRESERVE_CHANNEL_MODELS=true
+EOF
+validate_gateway_channel_models
+
 write_valid_catalog
 sed -i.bak 's/CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS=$/CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS=2/' "${CAMPUS_ENV_FILE}"
 rm -f "${CAMPUS_ENV_FILE}.bak"

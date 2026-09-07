@@ -7,6 +7,7 @@ x-campus-dify-build: &campus-dify-build
     DIFY_API_BASE_IMAGE: ${CAMPUS_DIFY_API_BASE_IMAGE:-langgenius/dify-api@sha256:bd3e8b15cfc47e89dc7a0d17431e6f3289244f4b442b96e2372bd0f0646f3d58}
 
 x-campus-dify-image: &campus-dify-image njit/dify-api-campus:${CAMPUS_IMAGE_TAG:-dev}
+x-campus-dify-web-image: &campus-dify-web-image njit/dify-web-campus:${CAMPUS_WEB_IMAGE_TAG:-dev}
 
 services:
   api:
@@ -56,6 +57,14 @@ services:
     build: *campus-dify-build
     environment:
       MIGRATION_ENABLED: "false"
+
+  web:
+    image: *campus-dify-web-image
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        COMMIT_SHA: ${CAMPUS_WEB_COMMIT_SHA:-campus}
 
   worker:
     image: *campus-dify-image
@@ -204,6 +213,11 @@ services:
       retries: 20
     networks:
       - campus_gateway
+
+  weaviate:
+    restart: always
+    environment:
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:?set WEAVIATE_API_KEY}
 
 networks:
   campus_portal:

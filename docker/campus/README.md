@@ -100,6 +100,13 @@ pin, credential scope, and two non-secret field names. Repeating it is a no-op.
 To roll back, restore both the prior source revision and the reported protected
 environment copy before recreating the API container.
 
+An existing deployment created before gateway-owned model synchronization must
+also run `docker/campus/manage.sh migrate-model-sync-config` once. It backs up
+`campus.env`, enables live channel-model preservation and the five-minute
+upstream check, installs the `qwen3.8-flash` tariff, sets the bootstrap catalog,
+and enables the Campus Web image. Repeating it is a no-op. Restore the reported
+`campus.env` copy together with the earlier source revision to roll it back.
+
 After that source-level migration, run
 `docker/campus/manage.sh reconcile-model-providers` once. The command creates a
 full runtime backup, copies the existing encrypted managed gateway key into any
@@ -257,8 +264,11 @@ Compose services without removing them, so the boot task and `restart: always`
 policies start the platform again at the next Windows boot.
 
 `njit-campus-heartbeat.timer` runs a non-billable component probe every minute.
-It checks the API, Portal, worker processes, NewAPI, nginx, container health and
-the protected loopback route. Three consecutive failures trigger a scoped
+It checks the API, Portal, worker processes, NewAPI, nginx, Weaviate, container
+health, the protected loopback route and model-catalog convergence. The Campus
+Compose wrapper explicitly activates the configured vector-store profile, and
+the rendered configuration requires Dify's Weaviate client key to match the
+server allowlist. Three consecutive failures trigger a scoped
 Compose recovery. One-click Stop stops the timer for the current boot without
 disabling it, so planned maintenance remains stopped and monitoring returns at
 the next boot.
@@ -299,10 +309,10 @@ US dollar. A ratio of `1.0` therefore means $2 per million input tokens.
 A model with no ratio entry does **not** fail: `GetModelRatio` returns a
 fallback of `37.5` — about $75 per million tokens, roughly five hundred times
 the real price — and `SelfUseModeEnabled` decides whether that silently bills or
-is rejected. Two invariants keep this away from students, both asserted by
-`manage.sh verify`: `SelfUseModeEnabled` stays `false`, and every model enabled
-in the gateway's `abilities` table has a price. The practical rule is that a
-model is added to a channel's model list only once it is priced.
+is rejected. The Campus catalog endpoint hides every unpriced ability, and
+`manage.sh verify` also requires `SelfUseModeEnabled=false`. An upstream model
+can therefore appear in the NewAPI channel editor before its tariff is known
+without reaching a student or using the fallback ratio.
 
 Prices come from [models.dev](https://models.dev/api.json), preferring the
 model's own provider over a reseller. Conversion:
@@ -318,8 +328,7 @@ mapping is applied.
 | Student-facing model | type | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `deepseek-v4-flash` | LLM | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
-| `deepseek-v4-flash-0817` | LLM | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
-| `glm-5.3-flash` | LLM | 0.075 | 0.25 | 0.015 | 0.0375 | 3.3333 | 0.2 |
+| `qwen3.8-flash` | LLM | 0.15 | 0.47 | 0.016 | 0.075 | 3.1333 | 0.1067 |
 | `bge-m3` | text embedding | 0.02 | n/a | n/a | 0.01 | 0 | n/a |
 | `bge-reranker-v2-m3` | rerank | 0.01 | n/a | n/a | 0.005 | 0 | n/a |
 
@@ -327,16 +336,36 @@ Setting the `ModelRatio` option **replaces** the gateway's built-in default
 table rather than merging into it, so only the models listed above have a price.
 That is deliberate: an unlisted model is unroutable rather than mispriced.
 
-The active Campus catalog contains three LLMs, one text-embedding model and one
-reranker. Channel 1 serves `deepseek-v4-flash`. Channel 2 uses the Tianyi
-OpenAI-compatible origin and serves `deepseek-v4-flash-0817`,
-`glm-5.3-flash`, `bge-m3` and `bge-reranker-v2-m3`. Its former Custom-channel
+The publishable Campus catalog currently contains two LLMs, one text-embedding
+model and one reranker. Channel 1 serves `deepseek-v4-flash`. Channel 2 uses the
+Tianyi OpenAI-compatible origin and publishes `qwen3.8-flash`, `bge-m3` and
+`bge-reranker-v2-m3` to Dify. Its former Custom-channel
 configuration pointed at the single `/v1/chat/completions` endpoint, which made
 embedding and rerank requests arrive as malformed chat traffic. Per-channel
-routing now preserves the same credential while using the common HTTPS origin,
-so NewAPI selects `/v1/chat/completions`, `/v1/embeddings` or `/v1/rerank` from
-the incoming request. Upstream-advertised image and audio model names remain
-unpublished until their specific endpoint, Dify model type and price all pass.
+routing now preserves the same credential while using the common HTTPS origin;
+the ordinary NewAPI channel editor also normalizes a pasted full chat URL back
+to `https://ai.ctaigw.cn`. NewAPI then
+selects `/v1/chat/completions`, `/v1/embeddings` or `/v1/rerank` from
+the incoming request.
+
+NewAPI is the live model-catalog authority. Every five minutes the system
+heartbeat asks enabled Campus channels for their upstream model lists and adds
+new names without removing models automatically. Every heartbeat reads
+`GET /api/campus/models/catalog`; the endpoint publishes only explicitly priced
+LLM, embedding and rerank models that Dify can call. Case-only aliases collapse
+to one canonical name. The heartbeat audits all student workspaces, reconciles
+model-level credentials when the catalog differs and invalidates Dify's model
+caches. Existing and newly provisioned workspaces therefore adopt a NewAPI
+channel edit without restarting Dify. Image generation and audio models remain
+visible in NewAPI but are not misclassified as chat models in Dify.
+
+Inside Dify, the gateway endpoint is always
+`http://model-gateway:3000/v1`. `127.0.0.1:13000` is only a Windows/WSL
+administrator entrance; using it in a plugin credential points back to the
+plugin container and fails with connection refused. The Campus web image shows
+the shared model-level credential name in model selectors, so a configured
+OpenAI-compatible provider no longer displays the provider-level
+"Configure required" status.
 
 Upstream model names are isolated behind the channel's model mapping. The
 student-facing name is lowercase and stable; the mapping rewrites it to whatever
@@ -369,11 +398,11 @@ always ratio first, model list second.
 
 ### Reconciling existing workspaces
 
-A workspace is configured at the student's first sign-in, so widening
-`CAMPUS_MODEL_PROVIDER_MODELS` does not by itself reach students who already
-have one. The provisioner compares each workspace's registered models against
-the configured list on every sign-in and reconciles when they differ, which
-costs one query in the common case. The gateway token is fetched again through
+A workspace is configured at the student's first sign-in.
+`CAMPUS_MODEL_PROVIDER_MODELS` is now a bootstrap fallback; the runtime
+provisioner reads the current priced catalog from NewAPI, and the heartbeat
+reconciles existing workspaces even when no student signs in. The gateway token
+is fetched again through
 create-or-get, which returns the existing token untouched; if it reports having
 created a new one, the bound token is gone and provisioning fails rather than
 silently restoring the student's spent allowance.

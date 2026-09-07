@@ -495,6 +495,18 @@ grep -Fq '/api/campus/channels/${id}/${endpoint}' "${manager}" || {
   echo "Campus deployment does not constrain the active gateway channel model list" >&2
   exit 1
 }
+grep -Fq '/api/campus/models/catalog' "${manager}" || {
+  echo "Campus heartbeat does not consume the gateway-owned model catalog" >&2
+  exit 1
+}
+grep -Fq 'vector_store_probe' "${manager}" || {
+  echo "Campus heartbeat does not probe the configured vector store" >&2
+  exit 1
+}
+grep -Fq -- '--profile "${vector_store}"' "${manager}" || {
+  echo "Campus Compose commands do not activate the configured vector-store profile" >&2
+  exit 1
+}
 grep -Fq 'CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS=' "${campus_env_example}" || {
   echo "Campus environment omits the required gateway channel model list" >&2
   exit 1

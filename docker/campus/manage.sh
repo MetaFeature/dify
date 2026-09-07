@@ -22,6 +22,7 @@ CAMPUS_HEARTBEAT_SERVICE="njit-campus-heartbeat.service"
 CAMPUS_HEARTBEAT_TIMER="njit-campus-heartbeat.timer"
 CAMPUS_HEARTBEAT_FAILURE_FILE="/run/njit-campus-heartbeat.failures"
 CAMPUS_HEARTBEAT_LOCK_FILE="/run/lock/njit-campus-heartbeat.lock"
+CAMPUS_MODEL_UPSTREAM_SYNC_FILE="/run/njit-campus-model-upstream-sync.timestamp"
 APPROVED_MODEL_PROVIDER="langgenius/openai_api_compatible/openai_api_compatible"
 APPROVED_MODEL_CREDENTIAL_SCOPE="model"
 APPROVED_MODEL_API_KEY_FIELD="api_key"
@@ -38,7 +39,22 @@ env_has_key() {
   [[ -f "${CAMPUS_ENV_FILE}" ]] && grep -q "^${key}=" "${CAMPUS_ENV_FILE}"
 }
 
+compose_env_value() {
+  local key="$1" value
+  value="$(env_value "${key}")"
+  if [[ -n "${value}" ]] || env_has_key "${key}"; then
+    printf '%s\n' "${value}"
+    return
+  fi
+  [[ -f "${DOCKER_DIR}/.env" ]] || return
+  awk -v key="${key}" 'index($0, key "=") == 1 { sub(/^[^=]*=/, ""); print; exit }' "${DOCKER_DIR}/.env"
+}
+
 configure_compose() {
+  local vector_store compose_profiles
+  vector_store="$(compose_env_value VECTOR_STORE)"
+  vector_store="${vector_store:-weaviate}"
+  compose_profiles="$(compose_env_value COMPOSE_PROFILES)"
   COMPOSE=(
     docker compose
     --env-file "${DOCKER_DIR}/.env"
@@ -47,6 +63,10 @@ configure_compose() {
     -f docker-compose.yaml
     -f docker-compose.campus.yaml
   )
+  COMPOSE+=(--profile "${vector_store}")
+  if [[ -z "${compose_profiles}" || ",${compose_profiles}," == *,collaboration,* ]]; then
+    COMPOSE+=(--profile collaboration)
+  fi
   if [[ "$(env_value CAMPUS_PUBLIC_ENTRY_ENABLED)" == "true" ]]; then
     COMPOSE+=(-f "${PUBLIC_COMPOSE_FILE}")
   fi
@@ -211,6 +231,38 @@ migrate_provider_config() {
   echo "Campus provider configuration migrated; rollback copy: ${destination}/campus.env"
 }
 
+migrate_model_sync_config() {
+  local stamp destination current expected
+  local -a settings=(
+    'CAMPUS_WEB_IMAGE_TAG=phase-1'
+    'CAMPUS_WEB_COMMIT_SHA=campus-hot-model-sync'
+    'CAMPUS_NEWAPI_PRESERVE_CHANNEL_MODELS=true'
+    'CAMPUS_NEWAPI_UPSTREAM_SYNC_INTERVAL_SECONDS=300'
+    'CAMPUS_NEWAPI_BILLING_PATCH_JSON={"qwen3.8-flash":{"model_ratio":0.075,"completion_ratio":3.1333333333,"cache_ratio":0.1066666667}}'
+    'CAMPUS_NEWAPI_CHANNEL_MODELS_JSON={"1":{"channel_type":43,"base_url":"","models":["deepseek-v4-flash","deepseek-v4-pro","deepseek-v4-flash-vision-exp"]},"2":{"channel_type":1,"base_url":"https://ai.ctaigw.cn","models":["bge-m3","bge-reranker-v2-m3","qwen3.8-flash","qwen-audio-3.0-asr-flash","doubao-seedream-5.0-pro"]}}'
+    'CAMPUS_MODEL_PROVIDER_MODELS=llm:deepseek-v4-flash,llm:qwen3.8-flash,text-embedding:bge-m3,rerank:bge-reranker-v2-m3'
+  )
+  for expected in "${settings[@]}"; do
+    current="$(env_value "${expected%%=*}")"
+    [[ "${current}" == "${expected#*=}" ]] || break
+  done
+  if [[ "${current}" == "${expected#*=}" ]]; then
+    echo "Campus model synchronization configuration is already current."
+    return
+  fi
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  destination="${BACKUP_ROOT}/model-sync-config-${stamp}"
+  install -d -m 700 "${destination}"
+  cp -p "${CAMPUS_ENV_FILE}" "${destination}/campus.env"
+  chmod 600 "${destination}/campus.env"
+  for expected in "${settings[@]}"; do
+    set_env_value "${expected%%=*}" "${expected#*=}"
+  done
+  validate
+  echo "Campus model synchronization configuration migrated; rollback copy: ${destination}/campus.env"
+}
+
 validate() {
   command -v docker >/dev/null || fail "docker is required"
   command -v curl >/dev/null || fail "curl is required"
@@ -227,12 +279,34 @@ validate() {
   validate_campus_model_list
   "${SCRIPT_DIR}/test-model-list.sh"
   validate_gateway_channel_models
+  validate_gateway_billing_patch
   "${SCRIPT_DIR}/test-gateway-model-routing.sh"
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
   "${COMPOSE[@]}" config --quiet
   "${COMPOSE[@]}" config --format json | \
     python3 "${SCRIPT_DIR}/validate_compose_credentials.py"
+}
+
+validate_gateway_billing_patch() {
+  local billing_patch
+  billing_patch="$(env_value CAMPUS_NEWAPI_BILLING_PATCH_JSON)"
+  [[ -z "${billing_patch}" ]] && return
+  python3 -c '
+import json
+import math
+import re
+import sys
+
+payload = json.loads(sys.argv[1])
+assert isinstance(payload, dict) and payload
+allowed = {"model_ratio", "completion_ratio", "cache_ratio"}
+for model, values in payload.items():
+    assert isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9._/-]+", model)
+    assert isinstance(values, dict) and values and not (set(values) - allowed)
+    for value in values.values():
+        assert isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+' "${billing_patch}" || fail "invalid CAMPUS_NEWAPI_BILLING_PATCH_JSON"
 }
 
 gateway_channel_model_rows() {
@@ -301,10 +375,11 @@ print(json.dumps({"models": list(dict.fromkeys(models))}, separators=(",", ":"))
 }
 
 validate_gateway_channel_models() {
-  local configured_models rows retired_ids
+  local configured_models rows retired_ids preserve_models
   configured_models="$(env_value CAMPUS_MODEL_PROVIDER_MODELS)"
   rows="$(gateway_channel_model_rows)" || fail "invalid Campus gateway channel model catalog"
   retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
+  preserve_models="$(env_value CAMPUS_NEWAPI_PRESERVE_CHANNEL_MODELS)"
   if ! env_has_key CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS; then
     retired_ids="2"
   fi
@@ -325,13 +400,13 @@ routable = {
     for model in json.loads(payload)["models"]
 }
 missing = sorted(configured - routable)
-if missing:
+if sys.argv[4] != "true" and missing:
     raise ValueError("configured Dify models have no channel assignment: " + ", ".join(missing))
 retired = {item.strip() for item in sys.argv[3].split(",") if item.strip()}
 overlap = sorted(active_ids & retired)
 if overlap:
     raise ValueError("channels cannot be active and retired: " + ", ".join(overlap))
-' "${configured_models}" "${rows}" "${retired_ids}" || \
+' "${configured_models}" "${rows}" "${retired_ids}" "${preserve_models}" || \
     fail "Campus gateway channel model catalog is inconsistent"
 }
 
@@ -679,6 +754,119 @@ repair_wsl_loopback_routing() {
   echo "Campus WSL loopback routing repaired; application rollback backup: ${backup_destination}"
 }
 
+vector_store_service() {
+  local vector_store
+  vector_store="$(compose_env_value VECTOR_STORE)"
+  printf '%s\n' "${vector_store:-weaviate}"
+}
+
+vector_store_probe() {
+  local vector_store
+  vector_store="$(vector_store_service)"
+  service_running "${vector_store}" || return 1
+  case "${vector_store}" in
+    weaviate)
+      "${COMPOSE[@]}" exec -T api python -c '
+import urllib.request
+
+with urllib.request.urlopen("http://weaviate:8080/v1/.well-known/ready", timeout=4) as response:
+    assert response.status == 200
+' </dev/null >/dev/null 2>&1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+verify_vector_store() {
+  local vector_store
+  vector_store="$(vector_store_service)"
+  vector_store_probe || fail "Campus vector store ${vector_store} is unavailable"
+  printf 'Campus vector store: service=%s status=ready\n' "${vector_store}"
+}
+
+gateway_catalog_model_spec() {
+  local gateway_port="$1" response
+  response="$(gateway_admin_get "${gateway_port}" /api/campus/models/catalog)"
+  python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload.get("success") is True
+models = (payload.get("data") or {}).get("models") or []
+spec = ",".join(f"{item[\"model_type\"]}:{item[\"name\"]}" for item in models)
+assert any(item.startswith("llm:") for item in spec.split(","))
+print(spec)
+' <<<"${response}"
+}
+
+sync_gateway_upstream_models_if_due() {
+  local gateway_port="$1" interval now previous=0 response
+  interval="$(env_value CAMPUS_NEWAPI_UPSTREAM_SYNC_INTERVAL_SECONDS)"
+  interval="${interval:-300}"
+  [[ "${interval}" =~ ^[1-9][0-9]*$ ]] || return 1
+  now="$(date +%s)"
+  if [[ -f "${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}" ]]; then
+    read -r previous <"${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}" || previous=0
+  fi
+  [[ "${previous}" =~ ^[0-9]+$ ]] || previous=0
+  if ((now - previous < interval)); then
+    return 0
+  fi
+  response="$(gateway_admin_post "${gateway_port}" /api/campus/models/sync '{}')" || return 1
+  grep -q '"success":true' <<<"${response}" || return 1
+  printf '%s\n' "${now}" >"${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}"
+}
+
+reconcile_gateway_billing_runtime() {
+  local gateway_port="$1" billing_patch option field current request
+  billing_patch="$(env_value CAMPUS_NEWAPI_BILLING_PATCH_JSON)"
+  [[ -z "${billing_patch}" ]] && return
+  while IFS=$'\t' read -r option field; do
+    current="$(gateway_sql "select value from options where key = '${option}'")"
+    [[ -n "${current}" ]] || current='{}'
+    request="$(python3 -c '
+import json
+import sys
+
+option, field, current_raw, patch_raw = sys.argv[1:]
+current = json.loads(current_raw)
+patch = json.loads(patch_raw)
+for model, values in patch.items():
+    if field in values:
+        current[model] = values[field]
+print(json.dumps({"key": option, "value": json.dumps(current, separators=(",", ":"))}, separators=(",", ":")))
+' "${option}" "${field}" "${current}" "${billing_patch}")"
+    gateway_admin_put "${gateway_port}" /api/option/ "${request}" | \
+      grep -q '"success":true' || fail "could not update Campus gateway ${option}"
+  done <<'EOF'
+ModelRatio	model_ratio
+CompletionRatio	completion_ratio
+CacheRatio	cache_ratio
+EOF
+}
+
+sync_model_catalog_runtime() {
+  local gateway_port model_spec
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
+  gateway_port="${gateway_port:-13000}"
+  if ! sync_gateway_upstream_models_if_due "${gateway_port}"; then
+    echo "Campus gateway upstream model discovery failed; retaining the last publishable catalog." >&2
+  fi
+  if ! model_spec="$(gateway_catalog_model_spec "${gateway_port}")"; then
+    echo "Campus gateway returned no publishable LLM catalog" >&2
+    return 1
+  fi
+  if ! "${COMPOSE[@]}" exec -T api flask campus-model-providers audit --models "${model_spec}" \
+    </dev/null >/dev/null 2>&1; then
+    "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile --models "${model_spec}" </dev/null
+  fi
+  printf 'Campus model catalog: models=%s status=synchronized\n' \
+    "$(tr ',' '\n' <<<"${model_spec}" | sed '/^$/d' | wc -l | tr -d ' ')"
+}
+
 verify_control_plane() {
   local campus_port admin_port gateway_port status
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
@@ -687,9 +875,10 @@ verify_control_plane() {
   campus_port="${campus_port:-18080}"
   admin_port="${admin_port:-18081}"
   gateway_port="${gateway_port:-13000}"
-  for service in api portal model-gateway worker worker_beat nginx; do
+  for service in api api_websocket portal model-gateway worker worker_beat nginx; do
     require_running_service "${service}"
   done
+  require_running_service "$(vector_store_service)"
   verify_wsl_loopback_routing
   wait_for_campus_health "${campus_port}"
   status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
@@ -698,15 +887,17 @@ verify_control_plane() {
   local_curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${gateway_port}/api/status" | grep -q '"success":true' || \
     fail "Campus model gateway is unavailable"
+  verify_vector_store
   echo "Campus control plane is ready."
 }
 
 heartbeat_probe() {
   local campus_port admin_port gateway_port service container_id health status
   systemctl is-active --quiet docker.service || return 1
-  for service in api portal model-gateway worker worker_beat nginx; do
+  for service in api api_websocket portal model-gateway worker worker_beat nginx; do
     service_running "${service}" || return 1
   done
+  service_running "$(vector_store_service)" || return 1
   for service in api portal model-gateway; do
     container_id="$("${COMPOSE[@]}" ps -q "${service}")"
     [[ -n "${container_id}" ]] || return 1
@@ -726,6 +917,7 @@ heartbeat_probe() {
       "${target}" 2>/dev/null || true)"
     [[ "${status}" == "200" ]] || return 1
   done
+  vector_store_probe || return 1
 }
 
 wait_for_heartbeat_probe() {
@@ -746,7 +938,7 @@ heartbeat_runtime() {
     echo "Campus heartbeat skipped because another check is still running."
     return
   fi
-  if heartbeat_probe; then
+  if heartbeat_probe && sync_model_catalog_runtime; then
     rm -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}"
     echo "Campus heartbeat: healthy."
     return
@@ -766,9 +958,10 @@ heartbeat_runtime() {
   "${COMPOSE[@]}" up -d
   ensure_wsl_loopback_routing
   if ! wait_for_heartbeat_probe 20; then
-    "${COMPOSE[@]}" restart api portal model-gateway worker worker_beat nginx
+    "${COMPOSE[@]}" restart api api_websocket portal model-gateway worker worker_beat nginx "$(vector_store_service)"
     wait_for_heartbeat_probe 90 || fail "Campus heartbeat recovery did not restore the control plane"
   fi
+  sync_model_catalog_runtime
   rm -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}"
   echo "Campus heartbeat: recovery succeeded."
 }
@@ -778,6 +971,7 @@ start_runtime() {
   "${COMPOSE[@]}" up -d
   ensure_wsl_loopback_routing
   verify_control_plane
+  sync_model_catalog_runtime
   ensure_campus_heartbeat
 }
 
@@ -786,6 +980,7 @@ restart_runtime() {
   "${COMPOSE[@]}" up -d --force-recreate
   ensure_wsl_loopback_routing
   verify_control_plane
+  sync_model_catalog_runtime
   ensure_campus_heartbeat
 }
 
@@ -879,8 +1074,11 @@ verify_workspace_isolation() {
 }
 
 reconcile_model_providers_runtime() {
+  local gateway_port model_spec
   require_running_service api
-  "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"; gateway_port="${gateway_port:-13000}"
+  model_spec="$(gateway_catalog_model_spec "${gateway_port}")"
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers reconcile --models "${model_spec}" </dev/null
 }
 
 reconcile_model_accounts_runtime() {
@@ -889,17 +1087,21 @@ reconcile_model_accounts_runtime() {
 }
 
 reconcile_gateway_routes_runtime() {
-  local gateway_port="$1" rows retired_ids id endpoint payload active_ids
+  local gateway_port="$1" rows retired_ids id endpoint payload active_ids preserve_models
   rows="$(gateway_channel_model_rows)" || fail "invalid Campus gateway channel model catalog"
   retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
   if ! env_has_key CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS; then
     retired_ids="2"
   fi
   active_ids="$(cut -f1 <<<"${rows}" | paste -sd, -)"
+  preserve_models="$(env_value CAMPUS_NEWAPI_PRESERVE_CHANNEL_MODELS)"
   while IFS=$'\t' read -r id endpoint payload; do
     [[ -n "${id}" && -n "${endpoint}" && -n "${payload}" ]] || continue
     [[ "${endpoint}" == "models" || "${endpoint}" == "routing" ]] || \
       fail "invalid Campus gateway channel reconciliation endpoint"
+    if [[ "${preserve_models}" == "true" && "${endpoint}" == "routing" ]]; then
+      payload="$(python3 -c 'import json,sys; payload=json.loads(sys.argv[1]); payload.pop("models", None); print(json.dumps(payload,separators=(",",":")))' "${payload}")"
+    fi
     gateway_admin_put "${gateway_port}" "/api/campus/channels/${id}/${endpoint}" "${payload}" | \
       grep -q '"success":true' || fail "could not set Campus gateway channel ${id} routing"
     gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":1}' | \
@@ -915,8 +1117,11 @@ reconcile_gateway_routes_runtime() {
 }
 
 audit_model_providers_runtime() {
+  local gateway_port model_spec
   require_running_service api
-  "${COMPOSE[@]}" exec -T api flask campus-model-providers audit
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"; gateway_port="${gateway_port:-13000}"
+  model_spec="$(gateway_catalog_model_spec "${gateway_port}")"
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers audit --models "${model_spec}" </dev/null
 }
 
 assert_api_concurrency_capacity() {
@@ -977,6 +1182,7 @@ verify() {
   for service in api portal model-gateway; do
     assert_service_healthy "${service}"
   done
+  verify_vector_store
   audit_model_providers_runtime
   assert_api_concurrency_capacity "$(env_value CAMPUS_BASELINE_CONCURRENCY || true)"
   verify_workspace_isolation
@@ -1089,36 +1295,24 @@ gateway_sql() {
 # silently. These assertions are what keep that from reaching a student.
 verify_gateway_pricing() {
   local gateway_port="$1"
-  local enabled_models entry required_model unpriced self_use probe_type probe_model probe_id probe_secret
-  local status log_ratio sql request_path request_body probe_spec
+  local enabled_models entry required_model self_use probe_type probe_model probe_id probe_secret model_spec
+  local status log_ratio request_path request_body probe_spec
   local probe_specs=()
 
+  model_spec="$(gateway_catalog_model_spec "${gateway_port}")"
   enabled_models="$(gateway_sql "select distinct model from abilities where enabled order by model")"
   while IFS= read -r entry; do
     [[ -n "${entry}" ]] || continue
     required_model="${entry#*:}"
     grep -Fxq "${required_model}" <<<"${enabled_models}" || \
       fail "configured Campus model has no enabled gateway route: ${required_model}"
-  done < <(env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n')
-
-  sql="$(
-    cat <<'SQL'
-select a.model
-from (select distinct model from abilities where enabled) a
-where not exists (select 1 from options o where o.key = 'ModelRatio' and o.value::jsonb ? a.model)
-  and not exists (select 1 from options o where o.key = 'ModelPrice' and o.value::jsonb ? a.model)
-order by a.model
-SQL
-  )"
-  unpriced="$(gateway_sql "${sql}")"
-  [[ -z "${unpriced}" ]] || \
-    fail "gateway routes models with no price: $(printf '%s' "${unpriced}" | tr '\n' ' ')"
+  done < <(tr ',' '\n' <<<"${model_spec}")
 
   self_use="$(gateway_sql "select value from options where key = 'SelfUseModeEnabled'")"
   [[ -z "${self_use}" || "${self_use}" == "false" ]] || \
     fail "gateway self-use mode is on, so an unpriced model would bill at the fallback ratio"
 
-  mapfile -t probe_specs < <(env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n')
+  mapfile -t probe_specs < <(tr ',' '\n' <<<"${model_spec}")
   ((${#probe_specs[@]} > 0)) || fail "CAMPUS_MODEL_PROVIDER_MODELS names no model to probe"
 
   # A probe token proves the student path end to end: group routing, upstream
@@ -1507,9 +1701,11 @@ deploy() {
   install_campus_heartbeat
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   gateway_port="${gateway_port:-13000}"
+  reconcile_gateway_billing_runtime "${gateway_port}"
   reconcile_gateway_routes_runtime "${gateway_port}"
   reconcile_model_accounts_runtime
-  reconcile_model_providers_runtime
+  rm -f "${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}"
+  sync_model_catalog_runtime
   verify
 }
 
@@ -1534,7 +1730,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {start|stop|restart|status|heartbeat|gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
+  echo "usage: $0 {start|stop|restart|status|heartbeat|gateway-up|migrate-provider-config|migrate-model-sync-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
   exit 2
 }
 
@@ -1553,6 +1749,7 @@ case "${1:-}" in
       "${COMPOSE[@]}" up -d --build model-gateway-db model-gateway-redis model-gateway
     ;;
   migrate-provider-config) migrate_provider_config ;;
+  migrate-model-sync-config) migrate_model_sync_config ;;
   reconcile-model-providers) reconcile_model_providers ;;
   validate) validate ;;
   backup) backup ;;

@@ -3,7 +3,7 @@
 import hashlib
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -475,6 +475,19 @@ class DifyModelConfigurator:
                 credential_id=credential_id,
                 credential_name=self._credential_name,
             )
+
+
+class RefreshingModelConfigurator:
+    """Resolve the gateway-owned model catalog only when provisioning needs it."""
+
+    def __init__(self, factory: Callable[[], DifyModelConfigurator]) -> None:
+        self._factory = factory
+
+    def configure(self, dify_tenant_id: str, gateway_secret: str) -> None:
+        self._factory().configure(dify_tenant_id, gateway_secret)
+
+    def needs_configuration(self, dify_tenant_id: str) -> bool:
+        return self._factory().needs_configuration(dify_tenant_id)
 
 
 class DifySessionIssuer:

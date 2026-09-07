@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.helper import ssrf_proxy
 from core.tools.errors import ToolSSRFError
-from services.campus.domain import GatewayUsage, ManagedGatewayToken, ModelUsage
+from services.campus.domain import GatewayModel, GatewayUsage, ManagedGatewayToken, ModelUsage
 from services.campus.errors import ModelGatewayError
 
 type Requester = Callable[..., httpx.Response]
@@ -46,6 +46,17 @@ class _UsageData(_StrictModel):
     remaining_quota: int = Field(ge=0)
     used_quota: int = Field(ge=0)
     by_model: list[_ModelUsageData] = Field(default_factory=list)
+
+
+class _ModelCatalogItem(_StrictModel):
+    name: str = Field(min_length=1, max_length=255)
+    model_type: str = Field(pattern=r"^(llm|text-embedding|rerank|speech2text|tts)$")
+
+
+class _ModelCatalogData(_StrictModel):
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    models: list[_ModelCatalogItem] = Field(min_length=1)
+    excluded: list[dict[str, str]] = Field(default_factory=list)
 
 
 class NewApiClient:
@@ -139,6 +150,10 @@ class NewApiClient:
             json={"delta_quota": delta_quota, "request_id": request_id},
         )
         return self._to_gateway_usage(_UsageData.model_validate(data))
+
+    def get_model_catalog(self) -> tuple[GatewayModel, ...]:
+        catalog = _ModelCatalogData.model_validate(self._request("GET", "/api/campus/models/catalog"))
+        return tuple(GatewayModel(name=item.name, model_type=item.model_type) for item in catalog.models)
 
     def _request(self, method: str, path: str, *, json: dict[str, object] | None = None) -> object | None:
         try:

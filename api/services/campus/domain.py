@@ -126,6 +126,12 @@ class ManagedGatewayToken:
 
 
 @dataclass(frozen=True)
+class GatewayModel:
+    name: str
+    model_type: str
+
+
+@dataclass(frozen=True)
 class ProvisionedPlatform:
     workspace: ProvisionedWorkspace
     gateway_token_id: str
