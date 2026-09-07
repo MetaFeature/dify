@@ -821,10 +821,15 @@ sync_gateway_upstream_models_if_due() {
 }
 
 reconcile_gateway_billing_runtime() {
-  local gateway_port="$1" billing_patch option field current request
+  local gateway_port="$1" billing_patch mapping option field current request
   billing_patch="$(env_value CAMPUS_NEWAPI_BILLING_PATCH_JSON)"
   [[ -z "${billing_patch}" ]] && return
-  while IFS=$'\t' read -r option field; do
+  for mapping in \
+    'ModelRatio:model_ratio' \
+    'CompletionRatio:completion_ratio' \
+    'CacheRatio:cache_ratio'; do
+    option="${mapping%%:*}"
+    field="${mapping#*:}"
     current="$(gateway_sql "select value from options where key = '${option}'")"
     [[ -n "${current}" ]] || current='{}'
     request="$(python3 -c '
@@ -841,11 +846,7 @@ print(json.dumps({"key": option, "value": json.dumps(current, separators=(",", "
 ' "${option}" "${field}" "${current}" "${billing_patch}")"
     gateway_admin_put "${gateway_port}" /api/option/ "${request}" | \
       grep -q '"success":true' || fail "could not update Campus gateway ${option}"
-  done <<'EOF'
-ModelRatio	model_ratio
-CompletionRatio	completion_ratio
-CacheRatio	cache_ratio
-EOF
+  done
 }
 
 sync_model_catalog_runtime() {
@@ -1287,7 +1288,7 @@ verify() {
 
 gateway_sql() {
   "${COMPOSE[@]}" exec -T model-gateway-db sh -ec \
-    'PGPASSWORD="$POSTGRES_PASSWORD" psql -qtAX -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' "$1"
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -qtAX -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$0"' "$1" </dev/null
 }
 
 # An unpriced model does not fail loudly: the gateway falls back to a ratio of
