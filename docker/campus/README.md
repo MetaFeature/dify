@@ -370,6 +370,15 @@ caches. Existing and newly provisioned workspaces therefore adopt a NewAPI
 channel edit without restarting Dify. Image generation and audio models remain
 visible in NewAPI but are not misclassified as chat models in Dify.
 
+The catalog contract is also the speech extension seam. Dify always consumes
+the OpenAI-compatible `/v1/audio/transcriptions` shape. A provider-specific JSON
+or asynchronous speech API must first gain a request/response converter in
+NewAPI and an explicit `audio-transcription` endpoint in NewAPI model metadata;
+the priced catalog then emits `speech2text` and the heartbeat provisions it in
+every workspace without a Dify code change. Tianyi's current
+`qwen-audio-3.0-asr-flash` endpoint uses JSON multimodal generation rather than
+OpenAI multipart, so it remains unpublished until that adapter is implemented.
+
 Inside Dify, the gateway endpoint is always
 `http://model-gateway:3000/v1`. `127.0.0.1:13000` is only a Windows/WSL
 administrator entrance; using it in a plugin credential points back to the
