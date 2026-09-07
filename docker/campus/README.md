@@ -109,7 +109,9 @@ and enables the Campus Web image. Repeating it is a no-op. Restore the reported
 The Campus Web build uses the digest-pinned Node runtime from its Dockerfile and
 sets pnpm's runtime mismatch policy to `ignore`; this prevents pnpm from
 downloading a second Node binary while retaining the image's declared Node
-version.
+version. The build-layer install allows pnpm to prune only that lockfile runtime
+entry; the source lockfile is copied into the image and is never rewritten in
+the checkout.
 
 After that source-level migration, run
 `docker/campus/manage.sh reconcile-model-providers` once. The command creates a
