@@ -103,8 +103,8 @@ environment copy before recreating the API container.
 An existing deployment created before gateway-owned model synchronization must
 also run `docker/campus/manage.sh migrate-model-sync-config` once. It backs up
 `campus.env`, enables live channel-model preservation and the five-minute
-upstream check, installs the `qwen3.8-flash` tariff, sets the bootstrap catalog,
-and enables the Campus Web image. Repeating it is a no-op. Restore the reported
+upstream check, removes the retired Dify-owned billing patch, sets the bootstrap
+catalog, and enables the Campus Web image. Repeating it is a no-op. Restore the reported
 `campus.env` copy together with the earlier source revision to roll it back.
 The Campus Web build uses the digest-pinned Node runtime from its Dockerfile and
 sets pnpm's runtime mismatch policy to `ignore`; this prevents pnpm from
@@ -311,9 +311,11 @@ secrets and must not appear in student responses or logs.
 
 ## Model pricing
 
-The gateway bills `quota = model_ratio x group_ratio x (prompt_tokens +
-completion_tokens x completion_ratio)`, and `QuotaPerUnit` is 500,000 quota per
-US dollar. A ratio of `1.0` therefore means $2 per million input tokens.
+NewAPI owns every billing mode. Ratio models use
+`quota = model_ratio x group_ratio x (prompt_tokens + completion_tokens x
+completion_ratio)`, while tiered models use NewAPI's versioned billing
+expression and fixed-price models use `ModelPrice`. `QuotaPerUnit` is 500,000
+quota per US dollar. Dify neither stores nor patches these rules.
 
 A model with no ratio entry does **not** fail: `GetModelRatio` returns a
 fallback of `37.5` — about $75 per million tokens, roughly five hundred times
@@ -323,8 +325,8 @@ is rejected. The Campus catalog endpoint hides every unpriced ability, and
 can therefore appear in the NewAPI channel editor before its tariff is known
 without reaching a student or using the fallback ratio.
 
-Prices come from [models.dev](https://models.dev/api.json), preferring the
-model's own provider over a reseller. Conversion:
+Simple ratio prices can come from [models.dev](https://models.dev/api.json),
+preferring the model's own provider over a reseller. Conversion:
 
 - `ModelRatio` = models.dev `input` / 2
 - `CompletionRatio` = `output` / `input`
@@ -334,16 +336,16 @@ Ratios are keyed on the name the **student** requests, not the upstream name:
 billing reads `GetModelRatio(info.OriginModelName)`, before any channel model
 mapping is applied.
 
-| Student-facing model | type | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `deepseek-v4-flash` | LLM | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
-| `qwen3.8-flash` | LLM | 0.15 | 0.47 | 0.016 | 0.075 | 3.1333 | 0.1067 |
-| `bge-m3` | text embedding | 0.02 | n/a | n/a | 0.01 | 0 | n/a |
-| `bge-reranker-v2-m3` | rerank | 0.01 | n/a | n/a | 0.005 | 0 | n/a |
+| Student-facing model | Dify type | NewAPI billing mode | Billing proof |
+| --- | --- | --- | --- |
+| `deepseek-v4-flash` | LLM | ratio | `ModelRatio=0.07`, completion ratio 2 |
+| `qwen3.8-flash` | LLM | tiered expression | base tier input 0.8, output 2.7, cached input 0.1 |
+| `bge-m3` | text embedding | ratio | `ModelRatio=0.01` |
+| `bge-reranker-v2-m3` | rerank | ratio | `ModelRatio=0.005` |
 
-Setting the `ModelRatio` option **replaces** the gateway's built-in default
-table rather than merging into it, so only the models listed above have a price.
-That is deliberate: an unlisted model is unroutable rather than mispriced.
+The publishable catalog accepts a model only when NewAPI can prove one of those
+billing modes. Verification checks the actual consume log for a positive ratio,
+positive fixed price, or matched tier and a positive settled quota.
 
 The publishable Campus catalog currently contains two LLMs, one text-embedding
 model and one reranker. Channel 1 serves `deepseek-v4-flash`. Channel 2 uses the

@@ -51,9 +51,12 @@ class _UsageData(_StrictModel):
 class _ModelCatalogItem(_StrictModel):
     name: str = Field(min_length=1, max_length=255)
     model_type: str = Field(pattern=r"^(llm|text-embedding|rerank|speech2text|tts)$")
+    endpoints: list[str] = Field(min_length=1)
+    billing_mode: str = Field(pattern=r"^(ratio|fixed_price|tiered_expr)$")
 
 
 class _ModelCatalogData(_StrictModel):
+    contract_version: int = Field(ge=1)
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     models: list[_ModelCatalogItem] = Field(min_length=1)
     excluded: list[dict[str, str]] = Field(default_factory=list)
@@ -153,7 +156,15 @@ class NewApiClient:
 
     def get_model_catalog(self) -> tuple[GatewayModel, ...]:
         catalog = _ModelCatalogData.model_validate(self._request("GET", "/api/campus/models/catalog"))
-        return tuple(GatewayModel(name=item.name, model_type=item.model_type) for item in catalog.models)
+        return tuple(
+            GatewayModel(
+                name=item.name,
+                model_type=item.model_type,
+                endpoints=tuple(item.endpoints),
+                billing_mode=item.billing_mode,
+            )
+            for item in catalog.models
+        )
 
     def _request(self, method: str, path: str, *, json: dict[str, object] | None = None) -> object | None:
         try:

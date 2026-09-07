@@ -152,6 +152,18 @@ set_env_value() {
   mv "${env_tmp}" "${CAMPUS_ENV_FILE}"
 }
 
+remove_env_key() {
+  local key="$1" env_tmp source_mode
+  [[ "${key}" =~ ^[A-Z0-9_]+$ ]] || fail "invalid environment key"
+  env_has_key "${key}" || return
+  env_tmp="$(mktemp "${CAMPUS_ENV_FILE}.XXXXXX")"
+  awk -v key="${key}" 'index($0, key "=") != 1 { print }' "${CAMPUS_ENV_FILE}" >"${env_tmp}"
+  source_mode="$(stat -c '%a' "${CAMPUS_ENV_FILE}" 2>/dev/null || stat -f '%Lp' "${CAMPUS_ENV_FILE}")"
+  [[ "${source_mode}" =~ ^[0-7]{3,4}$ ]] || fail "could not preserve Campus environment file mode"
+  chmod "${source_mode}" "${env_tmp}"
+  mv "${env_tmp}" "${CAMPUS_ENV_FILE}"
+}
+
 validate_gateway_build_images() {
   local key expected value approved_provider_plugin
   while read -r key expected; do
@@ -232,21 +244,25 @@ migrate_provider_config() {
 }
 
 migrate_model_sync_config() {
-  local stamp destination current expected
+  local stamp destination current expected needs_change=false
   local -a settings=(
     'CAMPUS_WEB_IMAGE_TAG=phase-1'
     'CAMPUS_WEB_COMMIT_SHA=campus-hot-model-sync'
     'CAMPUS_NEWAPI_PRESERVE_CHANNEL_MODELS=true'
     'CAMPUS_NEWAPI_UPSTREAM_SYNC_INTERVAL_SECONDS=300'
-    'CAMPUS_NEWAPI_BILLING_PATCH_JSON={"qwen3.8-flash":{"model_ratio":0.075,"completion_ratio":3.1333333333,"cache_ratio":0.1066666667}}'
     'CAMPUS_NEWAPI_CHANNEL_MODELS_JSON={"1":{"channel_type":43,"base_url":"","models":["deepseek-v4-flash","deepseek-v4-pro","deepseek-v4-flash-vision-exp"]},"2":{"channel_type":1,"base_url":"https://ai.ctaigw.cn","models":["bge-m3","bge-reranker-v2-m3","qwen3.8-flash","qwen-audio-3.0-asr-flash","doubao-seedream-5.0-pro"]}}'
     'CAMPUS_MODEL_PROVIDER_MODELS=llm:deepseek-v4-flash,llm:qwen3.8-flash,text-embedding:bge-m3,rerank:bge-reranker-v2-m3'
   )
   for expected in "${settings[@]}"; do
     current="$(env_value "${expected%%=*}")"
-    [[ "${current}" == "${expected#*=}" ]] || break
+    if [[ "${current}" != "${expected#*=}" ]]; then
+      needs_change=true
+    fi
   done
-  if [[ "${current}" == "${expected#*=}" ]]; then
+  if env_has_key CAMPUS_NEWAPI_BILLING_PATCH_JSON; then
+    needs_change=true
+  fi
+  if [[ "${needs_change}" == "false" ]]; then
     echo "Campus model synchronization configuration is already current."
     return
   fi
@@ -259,6 +275,7 @@ migrate_model_sync_config() {
   for expected in "${settings[@]}"; do
     set_env_value "${expected%%=*}" "${expected#*=}"
   done
+  remove_env_key CAMPUS_NEWAPI_BILLING_PATCH_JSON
   validate
   echo "Campus model synchronization configuration migrated; rollback copy: ${destination}/campus.env"
 }
@@ -279,34 +296,12 @@ validate() {
   validate_campus_model_list
   "${SCRIPT_DIR}/test-model-list.sh"
   validate_gateway_channel_models
-  validate_gateway_billing_patch
   "${SCRIPT_DIR}/test-gateway-model-routing.sh"
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
   "${COMPOSE[@]}" config --quiet
   "${COMPOSE[@]}" config --format json | \
     python3 "${SCRIPT_DIR}/validate_compose_credentials.py"
-}
-
-validate_gateway_billing_patch() {
-  local billing_patch
-  billing_patch="$(env_value CAMPUS_NEWAPI_BILLING_PATCH_JSON)"
-  [[ -z "${billing_patch}" ]] && return
-  python3 -c '
-import json
-import math
-import re
-import sys
-
-payload = json.loads(sys.argv[1])
-assert isinstance(payload, dict) and payload
-allowed = {"model_ratio", "completion_ratio", "cache_ratio"}
-for model, values in payload.items():
-    assert isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9._/-]+", model)
-    assert isinstance(values, dict) and values and not (set(values) - allowed)
-    for value in values.values():
-        assert isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
-' "${billing_patch}" || fail "invalid CAMPUS_NEWAPI_BILLING_PATCH_JSON"
 }
 
 gateway_channel_model_rows() {
@@ -820,35 +815,6 @@ sync_gateway_upstream_models_if_due() {
   printf '%s\n' "${now}" >"${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}"
 }
 
-reconcile_gateway_billing_runtime() {
-  local gateway_port="$1" billing_patch mapping option field current request
-  billing_patch="$(env_value CAMPUS_NEWAPI_BILLING_PATCH_JSON)"
-  [[ -z "${billing_patch}" ]] && return
-  for mapping in \
-    'ModelRatio:model_ratio' \
-    'CompletionRatio:completion_ratio' \
-    'CacheRatio:cache_ratio'; do
-    option="${mapping%%:*}"
-    field="${mapping#*:}"
-    current="$(gateway_sql "select value from options where key = '${option}'")"
-    [[ -n "${current}" ]] || current='{}'
-    request="$(python3 -c '
-import json
-import sys
-
-option, field, current_raw, patch_raw = sys.argv[1:]
-current = json.loads(current_raw)
-patch = json.loads(patch_raw)
-for model, values in patch.items():
-    if field in values:
-        current[model] = values[field]
-print(json.dumps({"key": option, "value": json.dumps(current, separators=(",", ":"))}, separators=(",", ":")))
-' "${option}" "${field}" "${current}" "${billing_patch}")"
-    gateway_admin_put "${gateway_port}" /api/option/ "${request}" | \
-      grep -q '"success":true' || fail "could not update Campus gateway ${option}"
-  done
-}
-
 sync_model_catalog_runtime() {
   local gateway_port model_spec
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
@@ -1297,7 +1263,8 @@ gateway_sql() {
 verify_gateway_pricing() {
   local gateway_port="$1"
   local enabled_models entry required_model self_use probe_type probe_model probe_id probe_secret model_spec
-  local status log_ratio request_path request_body probe_spec
+  local status log_record log_ratio log_price billing_mode matched_tier log_quota billing_proof request_path request_body probe_spec
+  local probe_audio_file=""
   local probe_specs=()
 
   model_spec="$(gateway_catalog_model_spec "${gateway_port}")"
@@ -1344,25 +1311,58 @@ verify_gateway_pricing() {
         request_path=/v1/rerank
         request_body="{\"model\":\"${probe_model}\",\"query\":\"deep learning\",\"documents\":[\"deep learning\",\"database systems\"],\"top_n\":2}"
         ;;
+      speech2text)
+        request_path=/v1/audio/transcriptions
+        probe_audio_file="$(mktemp --suffix=.wav)"
+        python3 - "${probe_audio_file}" <<'PY'
+import sys
+import wave
+
+with wave.open(sys.argv[1], "wb") as output:
+    output.setnchannels(1)
+    output.setsampwidth(2)
+    output.setframerate(8000)
+    output.writeframes(b"\x00\x00" * 800)
+PY
+        request_body=""
+        ;;
       *)
         gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
         fail "gateway verification has no probe for Campus model type ${probe_type}"
         ;;
     esac
-    status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
-      -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
-      -d "${request_body}" "http://127.0.0.1:${gateway_port}${request_path}" </dev/null)"
-    log_ratio="$(gateway_sql "select model_name, other::jsonb->>'model_ratio' from logs where type = 2 and token_id = ${probe_id} order by id desc" | \
-      awk -F'|' -v model="${probe_model}" '$1 == model { print $2; exit }')"
-    if [[ "${status}" != "200" || -z "${log_ratio}" ]] || \
-       ! awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 > 0 && ratio + 0 < 1.0) }'; then
-      gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
-      [[ "${status}" == "200" ]] || fail "gateway probe for ${probe_model} failed (HTTP ${status})"
-      [[ -n "${log_ratio}" ]] || fail "gateway probe for ${probe_model} was not metered"
-      fail "gateway metered ${probe_model} at ratio ${log_ratio}, which is the unpriced fallback"
+    if [[ "${probe_type}" == "speech2text" ]]; then
+      status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
+        -H "Authorization: Bearer sk-${probe_secret}" \
+        -F "model=${probe_model}" -F "file=@${probe_audio_file};type=audio/wav" \
+        "http://127.0.0.1:${gateway_port}${request_path}" </dev/null)"
+      unlink "${probe_audio_file}"
+      probe_audio_file=""
+    else
+      status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
+        -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
+        -d "${request_body}" "http://127.0.0.1:${gateway_port}${request_path}" </dev/null)"
     fi
-    printf 'Gateway model probe: type=%s model=%s ratio=%s status=ready\n' \
-      "${probe_type}" "${probe_model}" "${log_ratio}"
+    log_record="$(gateway_sql "select concat_ws('|', coalesce(other::jsonb->>'model_ratio',''), coalesce(other::jsonb->>'model_price',''), coalesce(other::jsonb->>'billing_mode',''), coalesce(other::jsonb->>'matched_tier',''), quota::text) from logs where type = 2 and token_id = ${probe_id} and model_name = '${probe_model}' order by id desc limit 1")"
+    IFS='|' read -r log_ratio log_price billing_mode matched_tier log_quota <<<"${log_record}"
+    billing_proof=""
+    if [[ "${billing_mode}" == "tiered_expr" && -n "${matched_tier}" ]]; then
+      billing_proof="tiered:${matched_tier}"
+    elif awk -v price="${log_price:-0}" 'BEGIN { exit !(price + 0 > 0) }'; then
+      billing_proof="fixed-price:${log_price}"
+    elif awk -v ratio="${log_ratio:-0}" 'BEGIN { exit !(ratio + 0 > 0 && ratio + 0 < 1.0) }'; then
+      billing_proof="ratio:${log_ratio}"
+    fi
+    if [[ "${status}" != "200" || -z "${billing_proof}" ]] || \
+       ! [[ "${log_quota}" =~ ^[1-9][0-9]*$ ]]; then
+      gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
+      [[ -z "${probe_audio_file}" ]] || unlink "${probe_audio_file}"
+      [[ "${status}" == "200" ]] || fail "gateway probe for ${probe_model} failed (HTTP ${status})"
+      [[ -n "${log_record}" ]] || fail "gateway probe for ${probe_model} was not metered"
+      fail "gateway probe for ${probe_model} has no positive configured billing proof"
+    fi
+    printf 'Gateway model probe: type=%s model=%s billing=%s quota=%s status=ready\n' \
+      "${probe_type}" "${probe_model}" "${billing_proof}" "${log_quota}"
   done
   gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
 }
@@ -1702,7 +1702,6 @@ deploy() {
   install_campus_heartbeat
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   gateway_port="${gateway_port:-13000}"
-  reconcile_gateway_billing_runtime "${gateway_port}"
   reconcile_gateway_routes_runtime "${gateway_port}"
   reconcile_model_accounts_runtime
   rm -f "${CAMPUS_MODEL_UPSTREAM_SYNC_FILE}"

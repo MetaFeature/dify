@@ -129,6 +129,8 @@ class ManagedGatewayToken:
 class GatewayModel:
     name: str
     model_type: str
+    endpoints: tuple[str, ...] = ()
+    billing_mode: str = "ratio"
 
 
 @dataclass(frozen=True)

@@ -124,10 +124,21 @@ def test_model_catalog_maps_only_typed_public_model_fields():
                 "success": True,
                 "message": "",
                 "data": {
+                    "contract_version": 1,
                     "revision": "a" * 64,
                     "models": [
-                        {"name": "qwen3.8-flash", "model_type": "llm"},
-                        {"name": "bge-m3", "model_type": "text-embedding"},
+                        {
+                            "name": "qwen3.8-flash",
+                            "model_type": "llm",
+                            "endpoints": ["openai"],
+                            "billing_mode": "tiered_expr",
+                        },
+                        {
+                            "name": "bge-m3",
+                            "model_type": "text-embedding",
+                            "endpoints": ["embeddings"],
+                            "billing_mode": "ratio",
+                        },
                     ],
                     "excluded": [{"name": "unpriced-model", "reason": "unpriced"}],
                 },
@@ -150,6 +161,8 @@ def test_model_catalog_maps_only_typed_public_model_fields():
         ("text-embedding", "bge-m3"),
     ]
     assert not hasattr(catalog[0], "channel")
+    assert catalog[0].endpoints == ("openai",)
+    assert catalog[0].billing_mode == "tiered_expr"
 
 
 def test_newapi_business_error_is_raised_even_when_http_status_is_200():
