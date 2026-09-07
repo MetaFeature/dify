@@ -78,4 +78,18 @@ EOF
   fail "legacy shared channel model configuration is no longer compatible"
 validate_gateway_channel_models
 
+catalog_function_source="$(
+  sed -n '/^gateway_catalog_model_spec() {$/,/^sync_gateway_upstream_models_if_due() {$/p' \
+    "${SCRIPT_DIR}/manage.sh" | sed '$d'
+)"
+eval "${catalog_function_source}"
+gateway_admin_get() {
+  cat <<'JSON'
+{"success":true,"data":{"revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","models":[{"name":"qwen3.8-flash","model_type":"llm"},{"name":"bge-m3","model_type":"text-embedding"}],"excluded":[]}}
+JSON
+}
+[[ "$(gateway_catalog_model_spec 13000)" == \
+  "llm:qwen3.8-flash,text-embedding:bge-m3" ]] || \
+  fail "gateway catalog was not converted to a Dify model spec"
+
 echo "Campus gateway model routing checks passed."

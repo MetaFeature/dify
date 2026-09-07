@@ -796,7 +796,7 @@ import sys
 payload = json.load(sys.stdin)
 assert payload.get("success") is True
 models = (payload.get("data") or {}).get("models") or []
-spec = ",".join(f"{item[\"model_type\"]}:{item[\"name\"]}" for item in models)
+spec = ",".join("{}:{}".format(item["model_type"], item["name"]) for item in models)
 assert any(item.startswith("llm:") for item in spec.split(","))
 print(spec)
 ' <<<"${response}"
