@@ -236,6 +236,23 @@ function Test-WslKeepaliveTask {
     }
 }
 
+function Test-WslCampusHeartbeat {
+    $enabled = @(
+        & wsl.exe -d $WslDistributionName -u root -e `
+            systemctl is-enabled njit-campus-heartbeat.timer 2>$null
+    ) -join ""
+    if ($LASTEXITCODE -ne 0 -or $enabled.Trim() -ne "enabled") {
+        throw "The Campus component heartbeat timer is not enabled in WSL."
+    }
+    $active = @(
+        & wsl.exe -d $WslDistributionName -u root -e `
+            systemctl is-active njit-campus-heartbeat.timer 2>$null
+    ) -join ""
+    if ($LASTEXITCODE -ne 0 -or $active.Trim() -ne "active") {
+        throw "The Campus component heartbeat timer is not active in WSL."
+    }
+}
+
 function Test-CampusControlShortcuts {
     if (-not (Test-Path -LiteralPath $CampusControlScript)) {
         throw "The installed Campus control script is missing."
@@ -467,6 +484,7 @@ switch ($Action) {
         Test-CampusFirewallRules
         Test-WslHostAddressLoopbackConfiguration
         Test-WslKeepaliveTask -RequireRunning
+        Test-WslCampusHeartbeat
         Test-CampusControlShortcuts
         Test-CampusHostAddressLoopback
         Write-Output "Campus Dify intranet firewall rules verified for TCP $Port."

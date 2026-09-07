@@ -10,11 +10,14 @@ firewall_script="${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1"
 control_script="${SCRIPT_DIR}/windows/campus-control.ps1"
 loopback_script="${SCRIPT_DIR}/wsl-loopback-routing.sh"
 loopback_unit="${SCRIPT_DIR}/systemd/njit-campus-wsl-loopback-routing.service"
+heartbeat_service="${SCRIPT_DIR}/systemd/njit-campus-heartbeat.service"
+heartbeat_timer="${SCRIPT_DIR}/systemd/njit-campus-heartbeat.timer"
 approved_plugin_file="${SCRIPT_DIR}/approved-provider-plugin.txt"
 credential_validator="${SCRIPT_DIR}/validate_compose_credentials.py"
 credential_validator_test="${SCRIPT_DIR}/tests/test_compose_credentials.py"
 provider_config_test="${SCRIPT_DIR}/test-provider-config.sh"
 provider_config_migration_test="${SCRIPT_DIR}/test-provider-config-migration.sh"
+gateway_model_routing_test="${SCRIPT_DIR}/test-gateway-model-routing.sh"
 workspace_isolation_sql="${SCRIPT_DIR}/verify-workspace-isolation.sql"
 baseline_runner="${SCRIPT_DIR}/nonbillable_baseline.py"
 baseline_runner_test="${SCRIPT_DIR}/tests/test_nonbillable_baseline.py"
@@ -46,12 +49,20 @@ python3 "${credential_validator_test}"
   echo "Campus provider configuration migration test is missing or not executable" >&2
   exit 1
 }
+[[ -x "${gateway_model_routing_test}" ]] || {
+  echo "Campus gateway model routing test is missing or not executable" >&2
+  exit 1
+}
 grep -Fq 'test-provider-config.sh' "${manager}" || {
   echo "Campus validation does not exercise the provider configuration contract" >&2
   exit 1
 }
 grep -Fq 'test-provider-config-migration.sh' "${manager}" || {
   echo "Campus validation does not exercise the provider migration contract" >&2
+  exit 1
+}
+grep -Fq 'test-gateway-model-routing.sh' "${manager}" || {
+  echo "Campus validation does not exercise per-channel gateway model routing" >&2
   exit 1
 }
 grep -Fq 'validate_compose_credentials.py' "${manager}" || {
@@ -110,6 +121,10 @@ printf '%s\n' "${redirect_function}" | grep -Fq 'local_curl' || {
   echo "Campus WSL loopback routing helper or systemd unit is missing" >&2
   exit 1
 }
+[[ -f "${heartbeat_service}" && -f "${heartbeat_timer}" ]] || {
+  echo "Campus heartbeat systemd units are missing" >&2
+  exit 1
+}
 [[ -f "${control_script}" ]] || {
   echo "Campus one-click Windows control script is missing" >&2
   exit 1
@@ -157,6 +172,38 @@ for contract in \
 done
 grep -Fq 'install_wsl_loopback_routing' "${manager}" || {
   echo "Campus deployment does not install the WSL loopback repair" >&2
+  exit 1
+}
+for contract in \
+  'ExecStart=/opt/njit-campus-phase1/dify/docker/campus/manage.sh heartbeat' \
+  'Requires=docker.service'; do
+  grep -Fq "${contract}" "${heartbeat_service}" || {
+    echo "Campus heartbeat service omits required contract: ${contract}" >&2
+    exit 1
+  }
+done
+for contract in \
+  'OnBootSec=2min' \
+  'OnUnitActiveSec=1min' \
+  'Persistent=true' \
+  'WantedBy=timers.target'; do
+  grep -Fq "${contract}" "${heartbeat_timer}" || {
+    echo "Campus heartbeat timer omits required contract: ${contract}" >&2
+    exit 1
+  }
+done
+for contract in \
+  'install_campus_heartbeat' \
+  'verify_campus_heartbeat' \
+  'heartbeat_probe' \
+  'three consecutive failures'; do
+  grep -Fq "${contract}" "${manager}" || {
+    echo "Campus manager omits heartbeat contract: ${contract}" >&2
+    exit 1
+  }
+done
+grep -Fq 'Test-WslCampusHeartbeat' "${firewall_script}" || {
+  echo "Windows verification does not enforce the Campus heartbeat timer" >&2
   exit 1
 }
 verify_function="$(sed -n '/^verify() {$/,/^}/p' "${manager}")"
@@ -444,12 +491,16 @@ grep -Fq 'configured Campus model has no enabled gateway route' "${manager}" || 
   echo "Campus verification does not reject unroutable configured models" >&2
   exit 1
 }
-grep -Fq '/api/campus/channels/${id}/models' "${manager}" || {
+grep -Fq '/api/campus/channels/${id}/${endpoint}' "${manager}" || {
   echo "Campus deployment does not constrain the active gateway channel model list" >&2
   exit 1
 }
 grep -Fq 'CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS=' "${campus_env_example}" || {
   echo "Campus environment omits the required gateway channel model list" >&2
+  exit 1
+}
+grep -Fq 'CAMPUS_NEWAPI_CHANNEL_MODELS_JSON=' "${campus_env_example}" || {
+  echo "Campus environment omits the per-channel gateway model catalog" >&2
   exit 1
 }
 

@@ -256,6 +256,13 @@ status. Install or refresh them from an elevated PowerShell session:
 Compose services without removing them, so the boot task and `restart: always`
 policies start the platform again at the next Windows boot.
 
+`njit-campus-heartbeat.timer` runs a non-billable component probe every minute.
+It checks the API, Portal, worker processes, NewAPI, nginx, container health and
+the protected loopback route. Three consecutive failures trigger a scoped
+Compose recovery. One-click Stop stops the timer for the current boot without
+disabling it, so planned maintenance remains stopped and monitoring returns at
+the next boot.
+
 Then run `docker/campus/manage.sh promote`. The command takes a Campus backup,
 rebinds the upstream nginx to `127.0.0.1:18082`, publishes Campus nginx on
 `10.20.10.193:80`, retains `127.0.0.1:18080` for health checks, and verifies
@@ -308,19 +315,28 @@ Ratios are keyed on the name the **student** requests, not the upstream name:
 billing reads `GetModelRatio(info.OriginModelName)`, before any channel model
 mapping is applied.
 
-| Student-facing model | models.dev source | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
+| Student-facing model | type | input | output | cache_read | ModelRatio | CompletionRatio | CacheRatio |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `deepseek-v4-flash` | `deepseek` | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
+| `deepseek-v4-flash` | LLM | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
+| `deepseek-v4-flash-0817` | LLM | 0.14 | 0.28 | 0.0028 | 0.07 | 2 | 0.02 |
+| `glm-5.3-flash` | LLM | 0.075 | 0.25 | 0.015 | 0.0375 | 3.3333 | 0.2 |
+| `bge-m3` | text embedding | 0.02 | n/a | n/a | 0.01 | 0 | n/a |
+| `bge-reranker-v2-m3` | rerank | 0.01 | n/a | n/a | 0.005 | 0 | n/a |
 
 Setting the `ModelRatio` option **replaces** the gateway's built-in default
 table rather than merging into it, so only the models listed above have a price.
 That is deliberate: an unlisted model is unroutable rather than mispriced.
 
-The active Campus catalog contains only `deepseek-v4-flash`, whose dedicated
-channel passes the real gateway probe. The stale Tianyi channel is retired
-because its LLM returns `model_not_activated` and its additional image/audio
-models are unpriced. A model enters the Campus catalog only after its channel
-test, price, Dify credential, and metered invocation all pass.
+The active Campus catalog contains three LLMs, one text-embedding model and one
+reranker. Channel 1 serves `deepseek-v4-flash`. Channel 2 uses the Tianyi
+OpenAI-compatible origin and serves `deepseek-v4-flash-0817`,
+`glm-5.3-flash`, `bge-m3` and `bge-reranker-v2-m3`. Its former Custom-channel
+configuration pointed at the single `/v1/chat/completions` endpoint, which made
+embedding and rerank requests arrive as malformed chat traffic. Per-channel
+routing now preserves the same credential while using the common HTTPS origin,
+so NewAPI selects `/v1/chat/completions`, `/v1/embeddings` or `/v1/rerank` from
+the incoming request. Upstream-advertised image and audio model names remain
+unpublished until their specific endpoint, Dify model type and price all pass.
 
 Upstream model names are isolated behind the channel's model mapping. The
 student-facing name is lowercase and stable; the mapping rewrites it to whatever
@@ -341,8 +357,11 @@ a Campus-managed row showing
 student number and name, planned total, used quota, remaining quota, request
 count, and a synchronization status. Setting a planned total updates the
 NewAPI user and the workspace's hidden token in one transaction; it cannot be
-set below already-consumed usage. The summary above the table aggregates every
-Campus user and never exposes token keys.
+set below already-consumed usage. The summary above the table distinguishes the
+aggregate planned quota from the per-student amount and also shows raw quota
+units. With the current policy it shows 500,000 quota/USD, 10,000,000 planned
+quota per student and the aggregate across the roster. It never exposes token
+keys.
 
 Nothing about this is exposed on a campus interface. Adding a model to a channel
 before giving it a ratio is the one mistake that bills silently, so the order is

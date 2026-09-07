@@ -16,6 +16,12 @@ WSL_LOOPBACK_ROUTING_SOURCE="${SCRIPT_DIR}/wsl-loopback-routing.sh"
 WSL_LOOPBACK_ROUTING_UNIT_SOURCE="${SCRIPT_DIR}/systemd/njit-campus-wsl-loopback-routing.service"
 WSL_LOOPBACK_ROUTING_INSTALLED="/usr/local/sbin/njit-campus-wsl-loopback-routing"
 WSL_LOOPBACK_ROUTING_UNIT="njit-campus-wsl-loopback-routing.service"
+CAMPUS_HEARTBEAT_SERVICE_SOURCE="${SCRIPT_DIR}/systemd/njit-campus-heartbeat.service"
+CAMPUS_HEARTBEAT_TIMER_SOURCE="${SCRIPT_DIR}/systemd/njit-campus-heartbeat.timer"
+CAMPUS_HEARTBEAT_SERVICE="njit-campus-heartbeat.service"
+CAMPUS_HEARTBEAT_TIMER="njit-campus-heartbeat.timer"
+CAMPUS_HEARTBEAT_FAILURE_FILE="/run/njit-campus-heartbeat.failures"
+CAMPUS_HEARTBEAT_LOCK_FILE="/run/lock/njit-campus-heartbeat.lock"
 APPROVED_MODEL_PROVIDER="langgenius/openai_api_compatible/openai_api_compatible"
 APPROVED_MODEL_CREDENTIAL_SCOPE="model"
 APPROVED_MODEL_API_KEY_FIELD="api_key"
@@ -25,6 +31,11 @@ env_value() {
   local key="$1"
   [[ -f "${CAMPUS_ENV_FILE}" ]] || return 0
   awk -v key="${key}" 'index($0, key "=") == 1 { sub(/^[^=]*=/, ""); print; exit }' "${CAMPUS_ENV_FILE}"
+}
+
+env_has_key() {
+  local key="$1"
+  [[ -f "${CAMPUS_ENV_FILE}" ]] && grep -q "^${key}=" "${CAMPUS_ENV_FILE}"
 }
 
 configure_compose() {
@@ -215,11 +226,113 @@ validate() {
   "${SCRIPT_DIR}/test-provider-config-migration.sh"
   validate_campus_model_list
   "${SCRIPT_DIR}/test-model-list.sh"
+  validate_gateway_channel_models
+  "${SCRIPT_DIR}/test-gateway-model-routing.sh"
   "${SCRIPT_DIR}/test-nginx-routes.sh"
   "${SCRIPT_DIR}/test-public-entry.sh"
   "${COMPOSE[@]}" config --quiet
   "${COMPOSE[@]}" config --format json | \
     python3 "${SCRIPT_DIR}/validate_compose_credentials.py"
+}
+
+gateway_channel_model_rows() {
+  local channel_models_json required_ids required_models
+  channel_models_json="$(env_value CAMPUS_NEWAPI_CHANNEL_MODELS_JSON)"
+  if [[ -n "${channel_models_json}" ]]; then
+    python3 -c '
+import json
+import sys
+
+catalog = json.loads(sys.argv[1])
+if not isinstance(catalog, dict) or not catalog:
+    raise ValueError("channel model catalog must be a non-empty object")
+for raw_id, raw_route in catalog.items():
+    channel_id = str(raw_id).strip()
+    if not channel_id.isdigit() or int(channel_id) < 1:
+        raise ValueError("channel id must be a positive integer")
+    endpoint = "models"
+    if isinstance(raw_route, dict):
+        raw_models = raw_route.get("models")
+        channel_type = raw_route.get("channel_type")
+        base_url = raw_route.get("base_url", "")
+        if not isinstance(channel_type, int) or channel_type < 1:
+            raise ValueError(f"channel {channel_id} requires a positive channel_type")
+        if not isinstance(base_url, str):
+            raise ValueError(f"channel {channel_id} has an invalid base_url")
+        endpoint = "routing"
+    else:
+        raw_models = raw_route
+    if not isinstance(raw_models, list) or not raw_models:
+        raise ValueError(f"channel {channel_id} requires at least one model")
+    models = []
+    for raw_model in raw_models:
+        if not isinstance(raw_model, str) or not raw_model.strip():
+            raise ValueError(f"channel {channel_id} contains an invalid model")
+        model = raw_model.strip()
+        if model not in models:
+            models.append(model)
+    payload = {"models": models}
+    if endpoint == "routing":
+        payload.update(channel_type=channel_type, base_url=base_url)
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    print(f"{int(channel_id)}\t{endpoint}\t{payload_json}")
+' "${channel_models_json}"
+    return
+  fi
+
+  required_ids="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_IDS)"
+  required_models="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS)"
+  required_ids="${required_ids:-1}"
+  required_models="${required_models:-deepseek-v4-flash}"
+  local id models_json
+  models_json="$(python3 -c '
+import json
+import sys
+
+models = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+if not models:
+    raise ValueError("at least one channel model is required")
+print(json.dumps({"models": list(dict.fromkeys(models))}, separators=(",", ":")))
+' "${required_models}")"
+  for id in ${required_ids//,/ }; do
+    [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid required Campus gateway channel id"
+    printf '%s\tmodels\t%s\n' "${id}" "${models_json}"
+  done
+}
+
+validate_gateway_channel_models() {
+  local configured_models rows retired_ids
+  configured_models="$(env_value CAMPUS_MODEL_PROVIDER_MODELS)"
+  rows="$(gateway_channel_model_rows)" || fail "invalid Campus gateway channel model catalog"
+  retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
+  if ! env_has_key CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS; then
+    retired_ids="2"
+  fi
+  python3 -c '
+import json
+import sys
+
+configured = {
+    entry.split(":", 1)[1].strip()
+    for entry in sys.argv[1].split(",")
+    if ":" in entry and entry.split(":", 1)[1].strip()
+}
+rows = [line.split("\t", 2) for line in sys.argv[2].splitlines() if line.strip()]
+active_ids = {channel_id for channel_id, _, _ in rows}
+routable = {
+    model
+    for _, _, payload in rows
+    for model in json.loads(payload)["models"]
+}
+missing = sorted(configured - routable)
+if missing:
+    raise ValueError("configured Dify models have no channel assignment: " + ", ".join(missing))
+retired = {item.strip() for item in sys.argv[3].split(",") if item.strip()}
+overlap = sorted(active_ids & retired)
+if overlap:
+    raise ValueError("channels cannot be active and retired: " + ", ".join(overlap))
+' "${configured_models}" "${rows}" "${retired_ids}" || \
+    fail "Campus gateway channel model catalog is inconsistent"
 }
 
 validate_campus_model_list() {
@@ -232,6 +345,8 @@ validate_campus_model_list() {
     name="${entry#*:}"
     [[ "${entry}" == *:* && -n "${name}" ]] || \
       fail "CAMPUS_MODEL_PROVIDER_MODELS entry must be type:name, got '${entry}'"
+    [[ "${name}" =~ ^[A-Za-z0-9._/-]+$ ]] || \
+      fail "CAMPUS_MODEL_PROVIDER_MODELS contains an unsafe model name: '${name}'"
     case "${model_type}" in
       llm) seen_llm=true ;;
       text-embedding|rerank|speech2text|tts) ;;
@@ -496,6 +611,64 @@ verify_wsl_loopback_routing() {
   sudo -n "${WSL_LOOPBACK_ROUTING_INSTALLED}" verify
 }
 
+backup_campus_heartbeat() {
+  local stamp destination target
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  destination="${BACKUP_ROOT}/heartbeat-${stamp}"
+  umask 077
+  mkdir -p "${destination}"
+  for target in \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_SERVICE}" \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_TIMER}"; do
+    if sudo -n test -f "${target}"; then
+      sudo -n cat "${target}" >"${destination}/$(basename -- "${target}").before"
+    else
+      printf '%s\n' "${target}" >>"${destination}/MISSING_BEFORE_DEPLOY.txt"
+    fi
+  done
+  chmod 600 "${destination}"/*
+  echo "${destination}"
+}
+
+install_campus_heartbeat() {
+  local backup_destination
+  [[ -f "${CAMPUS_HEARTBEAT_SERVICE_SOURCE}" && -f "${CAMPUS_HEARTBEAT_TIMER_SOURCE}" ]] || \
+    fail "missing Campus heartbeat systemd units"
+  command -v systemctl >/dev/null || fail "systemd is required for Campus heartbeat installation"
+  backup_destination="$(backup_campus_heartbeat)"
+  sudo -n install -m 644 "${CAMPUS_HEARTBEAT_SERVICE_SOURCE}" \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_SERVICE}"
+  sudo -n install -m 644 "${CAMPUS_HEARTBEAT_TIMER_SOURCE}" \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_TIMER}"
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl enable --now "${CAMPUS_HEARTBEAT_TIMER}"
+  echo "Campus heartbeat installed; rollback backup: ${backup_destination}"
+}
+
+ensure_campus_heartbeat() {
+  if sudo -n cmp -s "${CAMPUS_HEARTBEAT_SERVICE_SOURCE}" \
+       "/etc/systemd/system/${CAMPUS_HEARTBEAT_SERVICE}" && \
+     sudo -n cmp -s "${CAMPUS_HEARTBEAT_TIMER_SOURCE}" \
+       "/etc/systemd/system/${CAMPUS_HEARTBEAT_TIMER}"; then
+    sudo -n systemctl enable --now "${CAMPUS_HEARTBEAT_TIMER}" >/dev/null
+    return
+  fi
+  install_campus_heartbeat
+}
+
+verify_campus_heartbeat() {
+  systemctl is-enabled --quiet "${CAMPUS_HEARTBEAT_TIMER}" || \
+    fail "Campus heartbeat timer is not enabled"
+  systemctl is-active --quiet "${CAMPUS_HEARTBEAT_TIMER}" || \
+    fail "Campus heartbeat timer is not active"
+  sudo -n cmp -s "${CAMPUS_HEARTBEAT_SERVICE_SOURCE}" \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_SERVICE}" || \
+    fail "installed Campus heartbeat service differs from the deployment source"
+  sudo -n cmp -s "${CAMPUS_HEARTBEAT_TIMER_SOURCE}" \
+    "/etc/systemd/system/${CAMPUS_HEARTBEAT_TIMER}" || \
+    fail "installed Campus heartbeat timer differs from the deployment source"
+}
+
 repair_wsl_loopback_routing() {
   local backup_destination
   validate
@@ -528,11 +701,76 @@ verify_control_plane() {
   echo "Campus control plane is ready."
 }
 
+heartbeat_probe() {
+  local campus_port admin_port gateway_port service container_id health status
+  systemctl is-active --quiet docker.service || return 1
+  for service in api portal model-gateway worker worker_beat nginx; do
+    service_running "${service}" || return 1
+  done
+  for service in api portal model-gateway; do
+    container_id="$("${COMPOSE[@]}" ps -q "${service}")"
+    [[ -n "${container_id}" ]] || return 1
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "${container_id}" 2>/dev/null || true)"
+    [[ "${health}" == "healthy" ]] || return 1
+  done
+  sudo -n "${WSL_LOOPBACK_ROUTING_INSTALLED}" verify >/dev/null 2>&1 || return 1
+  campus_port="$(env_value EXPOSE_NGINX_PORT)"; campus_port="${campus_port:-18080}"
+  admin_port="$(env_value CAMPUS_ADMIN_PORT)"; admin_port="${admin_port:-18081}"
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"; gateway_port="${gateway_port:-13000}"
+  for target in \
+    "http://127.0.0.1:${campus_port}/health" \
+    "http://127.0.0.1:${admin_port}/" \
+    "http://127.0.0.1:${gateway_port}/api/status"; do
+    status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 4 \
+      "${target}" 2>/dev/null || true)"
+    [[ "${status}" == "200" ]] || return 1
+  done
+}
+
+heartbeat_runtime() {
+  local failures=0 campus_port
+  command -v flock >/dev/null || fail "flock is required for the Campus heartbeat"
+  exec 9>"${CAMPUS_HEARTBEAT_LOCK_FILE}"
+  if ! flock -n 9; then
+    echo "Campus heartbeat skipped because another check is still running."
+    return
+  fi
+  if heartbeat_probe; then
+    rm -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}"
+    echo "Campus heartbeat: healthy."
+    return
+  fi
+  if [[ -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}" ]]; then
+    read -r failures <"${CAMPUS_HEARTBEAT_FAILURE_FILE}" || failures=0
+  fi
+  [[ "${failures}" =~ ^[0-9]+$ ]] || failures=0
+  failures=$((failures + 1))
+  printf '%s\n' "${failures}" >"${CAMPUS_HEARTBEAT_FAILURE_FILE}"
+  if ((failures < 3)); then
+    echo "Campus heartbeat: failed ${failures}/3; waiting for the next probe before recovery."
+    return
+  fi
+
+  echo "Campus heartbeat: three consecutive failures; starting scoped recovery."
+  "${COMPOSE[@]}" up -d
+  ensure_wsl_loopback_routing
+  if ! heartbeat_probe; then
+    "${COMPOSE[@]}" restart api portal model-gateway worker worker_beat nginx
+    campus_port="$(env_value EXPOSE_NGINX_PORT)"
+    wait_for_campus_health "${campus_port:-18080}"
+  fi
+  heartbeat_probe || fail "Campus heartbeat recovery did not restore the control plane"
+  rm -f "${CAMPUS_HEARTBEAT_FAILURE_FILE}"
+  echo "Campus heartbeat: recovery succeeded."
+}
+
 start_runtime() {
   validate
   "${COMPOSE[@]}" up -d
   ensure_wsl_loopback_routing
   verify_control_plane
+  ensure_campus_heartbeat
 }
 
 restart_runtime() {
@@ -540,6 +778,7 @@ restart_runtime() {
   "${COMPOSE[@]}" up -d --force-recreate
   ensure_wsl_loopback_routing
   verify_control_plane
+  ensure_campus_heartbeat
 }
 
 status_runtime() {
@@ -550,9 +789,10 @@ status_runtime() {
   campus_port="${campus_port:-18080}"
   admin_port="${admin_port:-18081}"
   gateway_port="${gateway_port:-13000}"
-  printf 'docker=%s loopback_service=%s\n' \
+  printf 'docker=%s loopback_service=%s heartbeat_timer=%s\n' \
     "$(systemctl is-active docker.service 2>/dev/null || true)" \
-    "$(systemctl is-active "${WSL_LOOPBACK_ROUTING_UNIT}" 2>/dev/null || true)"
+    "$(systemctl is-active "${WSL_LOOPBACK_ROUTING_UNIT}" 2>/dev/null || true)" \
+    "$(systemctl is-active "${CAMPUS_HEARTBEAT_TIMER}" 2>/dev/null || true)"
   "${COMPOSE[@]}" ps
   for target in \
     "canary http://127.0.0.1:${campus_port}/health" \
@@ -641,31 +881,25 @@ reconcile_model_accounts_runtime() {
 }
 
 reconcile_gateway_routes_runtime() {
-  local gateway_port="$1" required_ids required_models required_models_json retired_ids id
-  required_ids="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_IDS)"
-  required_models="$(env_value CAMPUS_NEWAPI_REQUIRED_CHANNEL_MODELS)"
+  local gateway_port="$1" rows retired_ids id endpoint payload active_ids
+  rows="$(gateway_channel_model_rows)" || fail "invalid Campus gateway channel model catalog"
   retired_ids="$(env_value CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS)"
-  required_ids="${required_ids:-1}"
-  required_models="${required_models:-deepseek-v4-flash}"
-  retired_ids="${retired_ids:-2}"
-  required_models_json="$(python3 -c '
-import json
-import sys
-
-models = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
-assert models
-print(json.dumps({"models": models}, separators=(",", ":")))
-' "${required_models}")"
-  for id in ${required_ids//,/ }; do
-    [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid required Campus gateway channel id"
-    gateway_admin_put "${gateway_port}" "/api/campus/channels/${id}/models" "${required_models_json}" | \
-      grep -q '"success":true' || fail "could not set Campus gateway channel ${id} models"
+  if ! env_has_key CAMPUS_NEWAPI_RETIRED_CHANNEL_IDS; then
+    retired_ids="2"
+  fi
+  active_ids="$(cut -f1 <<<"${rows}" | paste -sd, -)"
+  while IFS=$'\t' read -r id endpoint payload; do
+    [[ -n "${id}" && -n "${endpoint}" && -n "${payload}" ]] || continue
+    [[ "${endpoint}" == "models" || "${endpoint}" == "routing" ]] || \
+      fail "invalid Campus gateway channel reconciliation endpoint"
+    gateway_admin_put "${gateway_port}" "/api/campus/channels/${id}/${endpoint}" "${payload}" | \
+      grep -q '"success":true' || fail "could not set Campus gateway channel ${id} routing"
     gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":1}' | \
       grep -q '"success":true' || fail "could not enable Campus gateway channel ${id}"
-  done
+  done <<<"${rows}"
   for id in ${retired_ids//,/ }; do
     [[ "${id}" =~ ^[1-9][0-9]*$ ]] || fail "invalid retired Campus gateway channel id"
-    grep -Eq "(^|,)${id}(,|$)" <<<"${required_ids}" && \
+    grep -Eq "(^|,)${id}(,|$)" <<<"${active_ids}" && \
       fail "Campus gateway channel ${id} cannot be both required and retired"
     gateway_admin_post "${gateway_port}" "/api/channel/${id}/status" '{"status":2}' | \
       grep -q '"success":true' || fail "could not retire Campus gateway channel ${id}"
@@ -728,6 +962,7 @@ verify() {
     require_running_service "${service}"
   done
   verify_wsl_loopback_routing
+  verify_campus_heartbeat
   wait_for_campus_health "${campus_port}"
   assert_branding_logo "http://127.0.0.1:${campus_port}/logo/logo.svg"
   assert_branding_logo "http://127.0.0.1:${admin_port}/logo/logo.svg"
@@ -846,7 +1081,9 @@ gateway_sql() {
 # silently. These assertions are what keep that from reaching a student.
 verify_gateway_pricing() {
   local gateway_port="$1"
-  local enabled_models entry required_model unpriced self_use probe_model probe_id probe_secret status log_ratio sql
+  local enabled_models entry required_model unpriced self_use probe_type probe_model probe_id probe_secret
+  local status log_ratio sql request_path request_body probe_spec
+  local probe_specs=()
 
   enabled_models="$(gateway_sql "select distinct model from abilities where enabled order by model")"
   while IFS= read -r entry; do
@@ -873,8 +1110,8 @@ SQL
   [[ -z "${self_use}" || "${self_use}" == "false" ]] || \
     fail "gateway self-use mode is on, so an unpriced model would bill at the fallback ratio"
 
-  probe_model="$(campus_probe_model)"
-  [[ -n "${probe_model}" ]] || fail "CAMPUS_MODEL_PROVIDER_MODELS names no llm to probe"
+  mapfile -t probe_specs < <(env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n')
+  ((${#probe_specs[@]} > 0)) || fail "CAMPUS_MODEL_PROVIDER_MODELS names no model to probe"
 
   # A probe token proves the student path end to end: group routing, upstream
   # reachability, and that metering lands with a sane ratio. Deleting it is a
@@ -888,17 +1125,43 @@ SQL
   probe_secret="$(gateway_sql "select key from tokens where id = ${probe_id}")"
   [[ -n "${probe_secret}" ]] || fail "gateway probe token has no secret"
 
-  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
-    -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
-    -d "{\"model\":\"${probe_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"1+1=?\"}],\"max_tokens\":8}" \
-    "http://127.0.0.1:${gateway_port}/v1/chat/completions")"
-  log_ratio="$(gateway_sql "select other::jsonb->>'model_ratio' from logs where type = 2 and token_id = ${probe_id} order by id desc limit 1")"
+  for probe_spec in "${probe_specs[@]}"; do
+    probe_type="${probe_spec%%:*}"
+    probe_model="${probe_spec#*:}"
+    case "${probe_type}" in
+      llm)
+        request_path=/v1/chat/completions
+        request_body="{\"model\":\"${probe_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"1+1=?\"}],\"max_tokens\":8}"
+        ;;
+      text-embedding)
+        request_path=/v1/embeddings
+        request_body="{\"model\":\"${probe_model}\",\"input\":[\"hello world\"]}"
+        ;;
+      rerank)
+        request_path=/v1/rerank
+        request_body="{\"model\":\"${probe_model}\",\"query\":\"deep learning\",\"documents\":[\"deep learning\",\"database systems\"],\"top_n\":2}"
+        ;;
+      *)
+        gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
+        fail "gateway verification has no probe for Campus model type ${probe_type}"
+        ;;
+    esac
+    status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
+      -H "Authorization: Bearer sk-${probe_secret}" -H 'Content-Type: application/json' \
+      -d "${request_body}" "http://127.0.0.1:${gateway_port}${request_path}")"
+    log_ratio="$(gateway_sql "select model_name, other::jsonb->>'model_ratio' from logs where type = 2 and token_id = ${probe_id} order by id desc" | \
+      awk -F'|' -v model="${probe_model}" '$1 == model { print $2; exit }')"
+    if [[ "${status}" != "200" || -z "${log_ratio}" ]] || \
+       ! awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 < 1.0) }'; then
+      gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
+      [[ "${status}" == "200" ]] || fail "gateway probe for ${probe_model} failed (HTTP ${status})"
+      [[ -n "${log_ratio}" ]] || fail "gateway probe for ${probe_model} was not metered"
+      fail "gateway metered ${probe_model} at ratio ${log_ratio}, which is the unpriced fallback"
+    fi
+    printf 'Gateway model probe: type=%s model=%s ratio=%s status=ready\n' \
+      "${probe_type}" "${probe_model}" "${log_ratio}"
+  done
   gateway_admin_delete "${gateway_port}" "/api/token/${probe_id}" >/dev/null || true
-
-  [[ "${status}" == "200" ]] || fail "gateway probe call failed (HTTP ${status})"
-  [[ -n "${log_ratio}" ]] || fail "gateway probe call was not metered"
-  awk -v ratio="${log_ratio}" 'BEGIN { exit !(ratio + 0 < 1.0) }' || \
-    fail "gateway metered the probe at ratio ${log_ratio}, which is the unpriced fallback"
 }
 
 verify_gateway_accounting() {
@@ -920,12 +1183,6 @@ assert data.get("unlabeled_users") == 0
 assert data.get("quota_mismatches") == 0
 assert data.get("planned_quota") == data.get("remaining_quota") + data.get("used_quota")
 ' "${student_count}" <<<"${response}" || fail "Campus gateway accounting summary is invalid"
-}
-
-# The first llm in the configured model list is what a student's workspace is
-# validated against, so it is the right model to probe.
-campus_probe_model() {
-  env_value CAMPUS_MODEL_PROVIDER_MODELS | tr ',' '\n' | awk -F: '$1 == "llm" { print $2; exit }'
 }
 
 gateway_admin_post() {
@@ -1239,6 +1496,7 @@ deploy() {
   "${COMPOSE[@]}" up -d --no-deps --force-recreate portal
   "${COMPOSE[@]}" up -d --no-deps --force-recreate nginx
   install_wsl_loopback_routing
+  install_campus_heartbeat
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   gateway_port="${gateway_port:-13000}"
   reconcile_gateway_routes_runtime "${gateway_port}"
@@ -1268,7 +1526,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {start|stop|restart|status|gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
+  echo "usage: $0 {start|stop|restart|status|heartbeat|gateway-up|migrate-provider-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
   exit 2
 }
 
@@ -1276,6 +1534,7 @@ case "${1:-}" in
   start) start_runtime ;;
   restart) restart_runtime ;;
   status) status_runtime ;;
+  heartbeat) heartbeat_runtime ;;
   gateway-up)
     validate_gateway_bootstrap
     if project_has_state; then
@@ -1300,6 +1559,7 @@ case "${1:-}" in
   rollback-promotion) rollback_promotion ;;
   stop)
     validate
+    sudo -n systemctl stop "${CAMPUS_HEARTBEAT_TIMER}" "${CAMPUS_HEARTBEAT_SERVICE}" 2>/dev/null || true
     "${COMPOSE[@]}" stop
     ;;
   *) usage ;;

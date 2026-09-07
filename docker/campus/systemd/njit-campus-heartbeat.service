@@ -1,0 +1,12 @@
+[Unit]
+Description=NJIT Campus component heartbeat and recovery
+Requires=docker.service
+After=docker.service network-online.target njit-campus-wsl-loopback-routing.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/njit-campus-phase1/dify/docker/campus/manage.sh heartbeat
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

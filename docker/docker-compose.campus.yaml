@@ -42,7 +42,7 @@ services:
       CAMPUS_MODEL_PROVIDER_API_KEY_FIELD: ${CAMPUS_MODEL_PROVIDER_API_KEY_FIELD:-api_key}
       CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD: ${CAMPUS_MODEL_PROVIDER_BASE_URL_FIELD:-endpoint_url}
       CAMPUS_MODEL_PROVIDER_BASE_URL: http://model-gateway:3000/v1
-      CAMPUS_MODEL_PROVIDER_MODELS: ${CAMPUS_MODEL_PROVIDER_MODELS:-llm:deepseek-v4-flash}
+      CAMPUS_MODEL_PROVIDER_MODELS: ${CAMPUS_MODEL_PROVIDER_MODELS:-llm:deepseek-v4-flash,llm:deepseek-v4-flash-0817,llm:glm-5.3-flash,text-embedding:bge-m3,rerank:bge-reranker-v2-m3}
       CAMPUS_MODEL_PROVIDER_API_PROTOCOL: ${CAMPUS_MODEL_PROVIDER_API_PROTOCOL:-chat}
     depends_on:
       model-gateway:

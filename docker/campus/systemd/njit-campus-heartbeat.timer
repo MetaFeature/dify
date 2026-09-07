@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the NJIT Campus component heartbeat every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=njit-campus-heartbeat.service
+
+[Install]
+WantedBy=timers.target
