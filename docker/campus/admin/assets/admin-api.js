@@ -102,6 +102,13 @@ export class AdminApi {
     return this.#request('/admin/students/sync', { method: 'POST', body: JSON.stringify(payload) })
   }
 
+  /** @param {File} file @returns {Promise<{ data: import('./admin-domain.js').RosterRow[] }>} */
+  async parseRosterWorkbook(file) {
+    const body = new FormData()
+    body.append('file', file)
+    return this.#send(`${CONSOLE_API_BASE}/admin/students/import/parse`, { method: 'POST', body })
+  }
+
   /**
    * Read the signed-in Dify console account, so an authorization failure can
    * name who is actually signed in instead of only saying access was denied.
@@ -194,17 +201,33 @@ export class AdminApi {
     return this.#request('/admin/administrators')
   }
 
-  /** @param {string} accountId @returns {Promise<{ result: string }>} */
-  async addAdministrator(accountId) {
-    return this.#request('/admin/administrators', {
+  /** @param {{ name: string, email: string, password: string }} payload @returns {Promise<{ result: string }>} */
+  async createAdministrator(payload) {
+    return this.#request('/admin/administrators/create', {
       method: 'POST',
-      body: JSON.stringify({ account_id: accountId }),
+      body: JSON.stringify(payload),
     })
   }
 
   /** @param {string} accountId @returns {Promise<void>} */
   async removeAdministrator(accountId) {
     await this.#request(`/admin/administrators/${encodeURIComponent(accountId)}`, { method: 'DELETE' })
+  }
+
+  async presentationDraft() {
+    return this.#request('/admin/presentation')
+  }
+
+  async savePresentationDraft(payload) {
+    return this.#request('/admin/presentation', { method: 'PUT', body: JSON.stringify(payload) })
+  }
+
+  async publishPresentation() {
+    return this.#request('/admin/presentation/publish', { method: 'POST' })
+  }
+
+  async restorePresentation() {
+    return this.#request('/admin/presentation', { method: 'DELETE' })
   }
 
   /**

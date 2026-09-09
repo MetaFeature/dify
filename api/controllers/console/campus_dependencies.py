@@ -33,6 +33,7 @@ from services.campus.lab_manual_service import LabManualService
 from services.campus.load_admission import SystemLoadAdmission
 from services.campus.model_account_service import StudentModelAccountService
 from services.campus.newapi_client import NewApiClient
+from services.campus.portal_presentation_service import PortalPresentationService
 from services.campus.portal_session_service import PortalSessionService
 from services.campus.provisioning_service import PlatformProvisioningService
 from services.campus.reservation_service import ReservationService
@@ -74,6 +75,10 @@ def identity_source() -> IdentitySource:
 
 def lab_manuals() -> LabManualService:
     return LabManualService(session=db.session(), storage=storage)
+
+
+def portal_presentation() -> PortalPresentationService:
+    return PortalPresentationService(session=db.session())
 
 
 def newapi_client() -> NewApiClient:
@@ -193,8 +198,11 @@ def portal_token() -> str:
     return token
 
 
-def portal_student() -> CampusStudent:
+def portal_student(*, allow_initial_password: bool = False) -> CampusStudent:
     try:
-        return portal_sessions().resolve(portal_token(), now=datetime.now(UTC))
+        student = portal_sessions().resolve(portal_token(), now=datetime.now(UTC))
     except (PortalSessionError, StudentNotFoundError, StudentSuspendedError) as error:
         raise Unauthorized("Campus portal session is invalid") from error
+    if not allow_initial_password and credential_service().must_change_password(student.id):
+        raise Forbidden("Initial password must be changed before using the platform")
+    return student

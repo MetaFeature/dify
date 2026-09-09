@@ -36,29 +36,27 @@ test('the model gateway tab keeps the pricing guardrail in front of the administ
   assert.match(panel, /manage\.sh verify/)
 })
 
-test('the lab manual tab offers only the two tracks that have a manual', () => {
-  // The large-model track is completed in Dify; offering it here would let an
-  // administrator author a manual the platform never serves.
+test('the learning-document tab offers all tracks in the required order', () => {
   const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
   const options = [...panel.matchAll(/<option value="([a-z-]+)"/g)].map(match => match[1])
 
-  assert.deepEqual(options, ['deep-learning', 'agent'])
+  assert.deepEqual(options, ['large-model', 'agent', 'deep-learning'])
 })
 
-test('the manual tab tells the administrator their formatting will not survive', () => {
-  // Sanitizing strips inline styles. Not saying so is what makes an upload look
-  // broken to whoever wrote it.
+test('the learning-document tab explains preserved interaction and isolation', () => {
   const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
 
-  assert.match(panel, /清洗/)
-  assert.match(panel, /排版不会生效/)
+  assert.match(panel, /JavaScript/)
+  assert.match(panel, /隔离的沙箱页面/)
+  assert.match(panel, /外部网络请求和表单提交会被阻止/)
 })
 
-test('a saved chapter always reports what sanitizing removed', () => {
+test('a saved document reports that its HTML is preserved for the sandbox', () => {
   const submit = script.slice(script.indexOf("elements.manualForm.addEventListener('submit'"))
   const handler = submit.slice(0, submit.indexOf('\n})'))
 
   assert.match(handler, /renderSanitizeReport\(saved\.removed\)/)
+  assert.match(script, /HTML 已完整保存/)
 })
 
 test('editing a chapter reads its body rather than opening an empty form', () => {

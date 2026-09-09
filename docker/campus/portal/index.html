@@ -19,9 +19,7 @@
 
       <section id="login-view" class="login-layout">
         <article class="hero-card">
-          <p class="eyebrow">CAMPUS AI WORKSPACE</p>
-          <h1>预约你的专属<br>AI 实践空间</h1>
-          <p>在开放时段内进入隔离的 Dify 工作区，完成课程实践、模型调用与作品导出。</p>
+          <div id="login-content"><p class="eyebrow">CAMPUS AI WORKSPACE</p><h1>预约你的专属<br>AI 实践空间</h1><p>在开放时段内进入隔离的 Dify 工作区，完成课程实践、模型调用与作品导出。</p></div>
           <div class="hero-steps" aria-label="使用步骤">
             <span><b>01</b>身份认证</span><span><b>02</b>预约时段</span><span><b>03</b>进入空间</span>
           </div>
@@ -39,9 +37,20 @@
         </form>
       </section>
 
+      <section id="required-password-view" class="panel auth-panel" hidden>
+        <h1>首次登录必须修改密码</h1>
+        <p class="muted">当前初始密码由学号后四位生成。设置至少 8 位且同时包含字母和数字的新密码后，才能使用平台。</p>
+        <form id="required-password-form">
+          <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
+          <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required maxlength="128"></label>
+          <button class="primary" type="submit">修改密码并继续</button>
+          <p id="required-password-message" class="message" role="status" hidden></p>
+        </form>
+      </section>
+
       <section id="tracks-view" class="tracks" hidden>
         <div class="welcome-row">
-          <div><p class="eyebrow">EXPERIMENTS</p><h1>选择实验</h1><p class="muted">大模型实验在平台的 Dify 工作区完成；另两类实验在自己的电脑上完成，平台提供实验手册。</p></div>
+          <div><p class="eyebrow">EXPERIMENTS</p><h1>选择实验</h1><p class="muted">大模型实验在平台的 Dify 工作区完成；智能体实验和深度学习实验在自己的电脑上完成。三个实验均可查看实验手册与课件。</p></div>
           <button id="tracks-refresh" class="secondary" type="button">刷新</button>
         </div>
         <div id="track-list" class="track-list" aria-live="polite"></div>
@@ -50,7 +59,7 @@
 
       <section id="manual-view" class="manual" hidden>
         <div class="welcome-row">
-          <div><p class="eyebrow">LAB MANUAL</p><h1 id="manual-title">实验手册</h1><p class="muted">按章节阅读；在自己的电脑上按步骤操作。</p></div>
+          <div><p class="eyebrow">LEARNING DOCUMENTS</p><h1 id="manual-title">实验手册与课件</h1><p class="muted">点击文件名，在新页面打开完整的交互式 HTML 内容。</p></div>
           <button id="manual-back" class="secondary" type="button">返回实验选择</button>
         </div>
         <div class="manual-layout">

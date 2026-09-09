@@ -365,6 +365,7 @@ class DifyModelConfigurator:
         for model in self._models:
             model_credentials = self._model_credentials(model, gateway_secret)
             self._upsert_model_credential(model, model_credentials, dify_tenant_id, registered)
+        self._synchronize_default_speech_model(dify_tenant_id)
 
     def _upsert_provider_credential(self, dify_tenant_id: str, gateway_secret: str) -> None:
         """Persist a provider credential only for rollback plugins that declare one."""
@@ -414,6 +415,8 @@ class DifyModelConfigurator:
             credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
         elif model.model_type is ModelType.RERANK:
             credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
+        elif model.model_type is ModelType.SPEECH2TEXT:
+            credentials["language"] = "zh"
         return credentials
 
     def needs_configuration(self, dify_tenant_id: str) -> bool:
@@ -424,7 +427,31 @@ class DifyModelConfigurator:
         a migration step.
         """
         registered = self._registered_models(dify_tenant_id)
-        return any((model.name, model.model_type) not in registered for model in self._models)
+        if any((model.name, model.model_type) not in registered for model in self._models):
+            return True
+        speech_model = next((model for model in self._models if model.model_type is ModelType.SPEECH2TEXT), None)
+        default_reader = getattr(self._provider_service, "get_default_model_of_model_type", None)
+        if speech_model is None or not callable(default_reader):
+            return False
+        current = default_reader(dify_tenant_id, ModelType.SPEECH2TEXT.value)
+        current_provider = getattr(getattr(current, "provider", None), "provider", None)
+        return (
+            current is None
+            or getattr(current, "model", None) != speech_model.name
+            or current_provider != self._provider
+        )
+
+    def _synchronize_default_speech_model(self, dify_tenant_id: str) -> None:
+        speech_model = next((model for model in self._models if model.model_type is ModelType.SPEECH2TEXT), None)
+        default_writer = getattr(self._provider_service, "update_default_model_of_model_type", None)
+        if speech_model is None or not callable(default_writer):
+            return
+        default_writer(
+            dify_tenant_id,
+            ModelType.SPEECH2TEXT.value,
+            self._provider,
+            speech_model.name,
+        )
 
     def _registered_models(self, dify_tenant_id: str) -> dict[tuple[str, ModelType], str]:
         """Map this workspace's managed model registrations to their credential ids."""

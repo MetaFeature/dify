@@ -8,6 +8,7 @@ const elements = {
   authView: requiredElement('#auth-view', HTMLElement),
   authMessage: requiredElement('#auth-message', HTMLElement),
   authAction: requiredElement('#auth-action', HTMLButtonElement),
+  logout: requiredElement('#admin-logout', HTMLButtonElement),
   adminView: requiredElement('#admin-view', HTMLElement),
   message: requiredElement('#admin-message', HTMLElement),
   tabs: [...document.querySelectorAll('.tab')].filter(tab => tab instanceof HTMLButtonElement),
@@ -26,6 +27,10 @@ const elements = {
   rosterReport: requiredElement('#roster-report', HTMLElement),
   adminAddForm: requiredElement('#admin-add-form', HTMLFormElement),
   adminTable: requiredElement('#admin-table', HTMLElement),
+  presentationForm: requiredElement('#presentation-form', HTMLFormElement),
+  presentationLoginHtml: requiredElement('#presentation-login-html', HTMLTextAreaElement),
+  presentationPublish: requiredElement('#presentation-publish', HTMLButtonElement),
+  presentationRestore: requiredElement('#presentation-restore', HTMLButtonElement),
   manualTrack: requiredElement('#manual-track', HTMLSelectElement),
   manualForm: requiredElement('#manual-form', HTMLFormElement),
   manualChapterId: requiredElement('#manual-chapter-id', HTMLInputElement),
@@ -41,6 +46,8 @@ const elements = {
 let studentOffset = 0
 /** @type {import('./admin-domain.js').RosterRow[] | null} */
 let pendingRoster = null
+/** @type {import('./admin-domain.js').RosterRow[] | null} */
+let parsedWorkbookRoster = null
 
 for (const tab of elements.tabs) {
   tab.addEventListener('click', () => {
@@ -169,14 +176,38 @@ elements.studentTable.addEventListener('click', async (event) => {
 
 elements.rosterFile.addEventListener('change', async () => {
   const file = elements.rosterFile.files && elements.rosterFile.files[0]
-  if (file)
-    elements.rosterText.value = await file.text()
+  parsedWorkbookRoster = null
+  pendingRoster = null
+  elements.rosterConfirm.hidden = true
+  if (!file)
+    return
+  if (file.name.toLowerCase().endsWith('.xlsx')) {
+    elements.rosterFile.disabled = true
+    try {
+      const parsed = await api.parseRosterWorkbook(file)
+      parsedWorkbookRoster = parsed.data
+      elements.rosterText.value = ''
+      elements.rosterText.placeholder = `已读取 ${parsed.data.length} 行 XLSX 名单；点击“解析并预览”继续。`
+      elements.rosterReport.textContent = `已读取 ${parsed.data.length} 名学生。`
+    }
+    catch (error) {
+      renderRosterErrors([messageFor(error)])
+    }
+    finally {
+      elements.rosterFile.disabled = false
+    }
+    return
+  }
+  elements.rosterText.placeholder = '也可以直接粘贴 CSV 内容'
+  elements.rosterText.value = await file.text()
 })
 
 elements.rosterPreview.addEventListener('click', async () => {
   pendingRoster = null
   elements.rosterConfirm.hidden = true
-  const { rows, errors } = parseRosterCsv(elements.rosterText.value)
+  const { rows, errors } = parsedWorkbookRoster
+    ? { rows: parsedWorkbookRoster, errors: [] }
+    : parseRosterCsv(elements.rosterText.value)
   if (errors.length || !rows.length) {
     renderRosterErrors(errors.length ? errors : ['没有可导入的数据行'])
     return
@@ -189,7 +220,8 @@ elements.rosterPreview.addEventListener('click', async () => {
     const summary = document.createElement('p')
     summary.className = 'preview-summary'
     summary.innerHTML = `将新增 <b>${preview.created}</b> 名学生，更新 <b>${preview.updated}</b> 名学生，`
-      + `其中 <b>${preview.password_resets}</b> 名学生的密码将被重置（其登录会话将全部退出）。请确认后导入。`
+      + `其中 <b>${preview.password_resets}</b> 名学生的密码将被重置，`
+      + `<b>${preview.default_passwords}</b> 名新学生将使用学号后四位初始密码并须首次登录修改。请确认后导入。`
     elements.rosterReport.append(summary)
     elements.rosterConfirm.hidden = false
   }
@@ -213,6 +245,7 @@ elements.rosterConfirm.addEventListener('click', async () => {
       false,
     )
     pendingRoster = null
+    parsedWorkbookRoster = null
     elements.rosterConfirm.hidden = true
     await loadStudents()
   }
@@ -228,14 +261,62 @@ elements.adminAddForm.addEventListener('submit', async (event) => {
   event.preventDefault()
   const form = new FormData(elements.adminAddForm)
   try {
-    await api.addAdministrator(String(form.get('accountId')).trim())
+    await api.createAdministrator({
+      name: String(form.get('name')).trim(),
+      email: String(form.get('email')).trim(),
+      password: String(form.get('password')),
+    })
     elements.adminAddForm.reset()
-    showMessage('管理员已授权。', false)
+    showMessage('管理员账号已创建并授权。', false)
     await loadAdministrators()
   }
   catch (error) {
     showMessage(messageFor(error), true)
   }
+})
+
+elements.logout.addEventListener('click', async () => {
+  elements.logout.disabled = true
+  try {
+    await api.logout()
+  }
+  finally {
+    window.location.assign('/signin')
+  }
+})
+
+elements.presentationForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  try {
+    await api.savePresentationDraft(presentationPayload())
+    showMessage('页面设置草稿已保存；发布前学生端不会变化。', false)
+  }
+  catch (error) {
+    showMessage(messageFor(error), true)
+  }
+})
+
+elements.presentationPublish.addEventListener('click', async () => {
+  elements.presentationPublish.disabled = true
+  try {
+    await api.savePresentationDraft(presentationPayload())
+    await api.publishPresentation()
+    showMessage('页面设置已发布到学生端。', false)
+  }
+  catch (error) {
+    showMessage(messageFor(error), true)
+  }
+  finally {
+    elements.presentationPublish.disabled = false
+  }
+})
+
+elements.presentationRestore.addEventListener('click', async () => {
+  if (!window.confirm('确定恢复平台默认页面设置吗？'))
+    return
+  const restored = await api.restorePresentation()
+  renderPresentation(restored)
+  showMessage('已恢复平台默认页面设置。', false)
 })
 
 elements.adminTable.addEventListener('click', async (event) => {
@@ -370,6 +451,40 @@ async function loadAdministrators() {
   }
 }
 
+async function loadPresentation() {
+  renderPresentation(await api.presentationDraft())
+}
+
+function renderPresentation(presentation) {
+  elements.presentationLoginHtml.value = presentation.login_html
+  const byTrack = new Map(presentation.tracks.map(item => [item.track, item]))
+  for (const row of document.querySelectorAll('[data-presentation-track]')) {
+    if (!(row instanceof HTMLTableRowElement))
+      continue
+    const item = byTrack.get(row.dataset.presentationTrack || '')
+    if (!item)
+      continue
+    row.querySelector('[name="title"]').value = item.title
+    row.querySelector('[name="description"]').value = item.description
+    row.querySelector('[name="position"]').value = String(item.position)
+  }
+}
+
+function presentationPayload() {
+  const tracks = []
+  for (const row of document.querySelectorAll('[data-presentation-track]')) {
+    if (!(row instanceof HTMLTableRowElement))
+      continue
+    tracks.push({
+      track: row.dataset.presentationTrack,
+      title: row.querySelector('[name="title"]').value.trim(),
+      description: row.querySelector('[name="description"]').value.trim(),
+      position: Number.parseInt(row.querySelector('[name="position"]').value, 10),
+    })
+  }
+  return { login_html: elements.presentationLoginHtml.value, tracks }
+}
+
 /** @param {string} value */
 function escapeHtml(value) {
   return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] || char)
@@ -462,7 +577,7 @@ async function bootstrap() {
     return
   }
   elements.adminView.hidden = false
-  await Promise.all([loadSlots(), loadStudents(), loadAdministrators(), loadManualChapters()])
+  await Promise.all([loadSlots(), loadStudents(), loadAdministrators(), loadPresentation(), loadManualChapters()])
 }
 
 bootstrap()
@@ -530,6 +645,14 @@ elements.manualTable.addEventListener('click', async (event) => {
       await startEditingChapter(chapterId)
       return
     }
+    else if (action === 'preview') {
+      window.open(
+        `/console/api/campus/lab-manuals/documents/${encodeURIComponent(chapterId)}/content`,
+        '_blank',
+        'noopener',
+      )
+      return
+    }
     await loadManualChapters()
   }
   catch (error) {
@@ -570,36 +693,8 @@ function resetManualForm() {
  * @param {Record<string, number> | undefined} removed
  */
 function renderSanitizeReport(removed) {
-  const entries = Object.entries(removed || {})
-  if (!entries.length) {
-    elements.manualReport.textContent = '清洗后没有内容被移除。'
-    return
-  }
-  /** @type {Record<string, string>} */
-  const labels = {
-    'script': '脚本',
-    'style': '样式表',
-    'style attribute': '内联样式',
-    'event handler': '事件处理器',
-    'unsafe link': '不安全链接',
-    'remote image': '外链图片',
-    'iframe': '内嵌框架',
-    'form': '表单',
-    'input': '输入控件',
-    'object': '嵌入对象',
-    'noscript': 'noscript',
-    'template': 'template',
-    'link': 'link',
-    'base': 'base',
-    'svg': 'svg',
-  }
-  const summary = document.createElement('p')
-  summary.className = 'muted'
-  summary.textContent = `已移除：${entries
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => `${labels[name] || name} ×${count}`)
-    .join('、')}。手册外观由平台统一控制。`
-  elements.manualReport.replaceChildren(summary)
+  void removed
+  elements.manualReport.textContent = 'HTML 已完整保存；学生端将在隔离沙箱中打开。'
 }
 
 async function loadManualChapters() {
@@ -621,6 +716,7 @@ async function loadManualChapters() {
         <td>${escapeHtml(chapter.title)}</td>
         <td><span class="badge ${published ? 'active' : 'suspended'}">${published ? '已发布' : '草稿'}</span></td>
         <td>
+          <button class="secondary compact" type="button" data-manual-action="preview" data-chapter="${escapeHtml(chapter.id)}">预览</button>
           <button class="secondary compact" type="button" data-manual-action="edit" data-chapter="${escapeHtml(chapter.id)}">编辑</button>
           <button class="secondary compact" type="button" data-manual-action="${published ? 'unpublish' : 'publish'}" data-chapter="${escapeHtml(chapter.id)}">${published ? '撤回' : '发布'}</button>
           <button class="secondary compact" type="button" data-manual-action="up" data-chapter="${escapeHtml(chapter.id)}" data-position="${chapter.position - 1}" ${index === 0 ? 'disabled' : ''}>上移</button>

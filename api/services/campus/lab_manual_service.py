@@ -1,9 +1,8 @@
-"""Author and read the lab manuals for the non-Dify experiment tracks.
+"""Author and read interactive HTML learning documents for experiment tracks.
 
 A manual belongs to one experiment track and is a list of ordered chapters.
-Administrators author them; students read only the published ones. Chapter HTML
-is sanitized once here, on the way in, so reading a chapter never re-parses
-untrusted markup.
+Administrators author them; students read only the published ones. Uploaded HTML
+is stored intact and must only be served with the isolated-reader CSP.
 """
 
 import json
@@ -23,9 +22,9 @@ from models.campus import (
     LabManualChapterStatus,
 )
 from services.campus.errors import CampusValidationError
-from services.campus.lab_manual_html import sanitize_lab_manual_html
 
 MAX_TITLE_LENGTH = 255
+MAX_DOCUMENT_CHARACTERS = 2_000_000
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 IMAGE_URL_PREFIX = "/console/api/campus/lab-manuals/images"
 
@@ -169,11 +168,11 @@ class LabManualService:
         """Append a draft chapter to one track's manual."""
         self._require_manual_track(track)
         clean_title = self._require_title(title)
-        sanitized = sanitize_lab_manual_html(raw_html)
+        document_html = self._require_document_html(raw_html)
         chapter = CampusLabManualChapter(
             track=track,
             title=clean_title,
-            body_html=sanitized.html,
+            body_html=document_html,
             position=self._next_position(track),
             status=LabManualChapterStatus.DRAFT,
         )
@@ -183,10 +182,10 @@ class LabManualService:
             actor_account_id,
             "lab_manual.chapter_created",
             chapter,
-            {"track": track.value, "position": chapter.position, "removed": dict(sanitized.removed)},
+            {"track": track.value, "position": chapter.position},
         )
         self._session.commit()
-        return self._outcome(chapter, sanitized.removed)
+        return self._outcome(chapter, {})
 
     def update_chapter(
         self, chapter_id: str, *, title: str, raw_html: str, actor_account_id: str | None = None
@@ -194,17 +193,17 @@ class LabManualService:
         """Replace a chapter's title and body, leaving its place and status alone."""
         chapter = self._require_chapter(chapter_id)
         clean_title = self._require_title(title)
-        sanitized = sanitize_lab_manual_html(raw_html)
+        document_html = self._require_document_html(raw_html)
         chapter.title = clean_title
-        chapter.body_html = sanitized.html
+        chapter.body_html = document_html
         self._record(
             actor_account_id,
             "lab_manual.chapter_updated",
             chapter,
-            {"removed": dict(sanitized.removed)},
+            {},
         )
         self._session.commit()
-        return self._outcome(chapter, sanitized.removed)
+        return self._outcome(chapter, {})
 
     def set_chapter_status(
         self, chapter_id: str, status: LabManualChapterStatus, *, actor_account_id: str | None = None
@@ -310,6 +309,15 @@ class LabManualService:
         if len(clean) > MAX_TITLE_LENGTH:
             raise CampusValidationError(f"Lab manual chapter title is longer than {MAX_TITLE_LENGTH} characters")
         return clean
+
+    @staticmethod
+    def _require_document_html(raw_html: str) -> str:
+        document_html = raw_html.strip()
+        if not document_html:
+            raise CampusValidationError("Learning document HTML is required")
+        if len(document_html) > MAX_DOCUMENT_CHARACTERS:
+            raise CampusValidationError("Learning document HTML is larger than 2,000,000 characters")
+        return document_html
 
     @staticmethod
     def _outcome(chapter: CampusLabManualChapter, removed: Mapping[str, int]) -> ChapterOutcome:

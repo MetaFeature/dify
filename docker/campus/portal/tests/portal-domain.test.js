@@ -124,9 +124,27 @@ test('experiment tracks are presented with the platform label and the right dest
   ])
 
   assert.deepEqual(cards, [
-    { track: 'large-model', title: '大模型实验', destination: 'reservations', detail: '在 Dify 工作区完成，需先预约时段', available: true },
-    { track: 'deep-learning', title: '深度学习实验', destination: 'manual', detail: '共 3 章 · 在自己的电脑上完成', available: true },
-    { track: 'agent', title: '智能体实验', destination: 'manual', detail: '实验手册尚未发布', available: false },
+    {
+      track: 'large-model',
+      title: '大模型实验',
+      detail: '在 Dify 工作区完成，需预约时段',
+      manualAvailable: false,
+      reservationsAvailable: true,
+    },
+    {
+      track: 'deep-learning',
+      title: '深度学习实验',
+      detail: '在自己的电脑上完成 · 3 份课件',
+      manualAvailable: true,
+      reservationsAvailable: false,
+    },
+    {
+      track: 'agent',
+      title: '智能体实验',
+      detail: '在自己的电脑上完成',
+      manualAvailable: false,
+      reservationsAvailable: false,
+    },
   ])
 })
 
@@ -138,5 +156,22 @@ test('an unknown track is dropped rather than shown without a name', () => {
 test('a manual with no published chapter is not presented as ready', () => {
   const [card] = experimentTrackCards([{ track: 'deep-learning', kind: 'manual', chapters: 0 }])
 
-  assert.equal(card.available, false)
+  assert.equal(card.manualAvailable, false)
+})
+
+test('published presentation controls labels and experiment order', () => {
+  const cards = experimentTrackCards(
+    [
+      { track: 'large-model', kind: 'dify', chapters: 1 },
+      { track: 'deep-learning', kind: 'manual', chapters: 1 },
+      { track: 'agent', kind: 'manual', chapters: 1 },
+    ],
+    [
+      { track: 'large-model', title: '实验一', description: '平台完成', position: 1 },
+      { track: 'agent', title: '实验二', description: '本机完成', position: 2 },
+      { track: 'deep-learning', title: '实验三', description: '本机完成', position: 3 },
+    ],
+  )
+
+  assert.deepEqual(cards.map(card => card.title), ['实验一', '实验二', '实验三'])
 })

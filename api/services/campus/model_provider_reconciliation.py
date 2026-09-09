@@ -102,6 +102,7 @@ class ModelProviderReconciliationSummary:
     legacy_database_rows: int = 0
     legacy_workflow_references: int = 0
     obsolete_target_models: int = 0
+    speech_default_drift: int = 0
 
     @property
     def clean(self) -> bool:
@@ -113,6 +114,7 @@ class ModelProviderReconciliationSummary:
                 self.legacy_database_rows,
                 self.legacy_workflow_references,
                 self.obsolete_target_models,
+                self.speech_default_drift,
             )
         )
 
@@ -151,6 +153,8 @@ class CampusModelProviderReconciler:
             legacy_plugins += sum(plugin_id in LEGACY_MODEL_PLUGIN_IDS for plugin_id in plugin_ids)
 
         missing_credentials = 0
+        speech_default_drift = 0
+        speech_model = next((model for model in self._models if model.model_type is ModelType.SPEECH2TEXT), None)
         for tenant_id in tenant_ids:
             registered = set(
                 self._session.execute(
@@ -162,6 +166,18 @@ class CampusModelProviderReconciler:
                 ).all()
             )
             missing_credentials += sum((model.name, model.model_type) not in registered for model in self._models)
+            if speech_model is not None:
+                default = self._session.scalar(
+                    select(TenantDefaultModel).where(
+                        TenantDefaultModel.tenant_id == tenant_id,
+                        TenantDefaultModel.model_type == ModelType.SPEECH2TEXT,
+                    )
+                )
+                speech_default_drift += int(
+                    default is None
+                    or default.provider_name != self._target_provider
+                    or default.model_name != speech_model.name
+                )
 
         return ModelProviderReconciliationSummary(
             tenants=len(tenant_ids),
@@ -171,6 +187,7 @@ class CampusModelProviderReconciler:
             legacy_database_rows=self._legacy_database_row_count(tenant_ids),
             legacy_workflow_references=self._legacy_workflow_reference_count(tenant_ids),
             obsolete_target_models=self._obsolete_target_model_count(tenant_ids),
+            speech_default_drift=speech_default_drift,
         )
 
     def reconcile(self, tenant_ids: Sequence[str]) -> ModelProviderReconciliationSummary:
@@ -293,6 +310,8 @@ class CampusModelProviderReconciler:
             credentials.update(max_chunks="1", context_size=OPENAI_COMPATIBLE_CONTEXT_SIZE)
         elif model.model_type is ModelType.RERANK:
             credentials.update(context_size=OPENAI_COMPATIBLE_CONTEXT_SIZE)
+        elif model.model_type is ModelType.SPEECH2TEXT:
+            credentials.update(language="zh")
         return credentials
 
     def _rewrite_tenant_references(self, tenant_id: str) -> None:
@@ -342,12 +361,15 @@ class CampusModelProviderReconciler:
         targets_by_type: dict[ModelType, str] = {}
         for model in self._models:
             targets_by_type.setdefault(model.model_type, model.name)
-        for default in self._session.scalars(
-            select(TenantDefaultModel).where(
-                TenantDefaultModel.tenant_id == tenant_id,
-                TenantDefaultModel.provider_name.in_((*LEGACY_MODEL_PROVIDERS, self._target_provider)),
+        defaults = list(
+            self._session.scalars(
+                select(TenantDefaultModel).where(
+                    TenantDefaultModel.tenant_id == tenant_id,
+                    TenantDefaultModel.provider_name.in_((*LEGACY_MODEL_PROVIDERS, self._target_provider)),
+                )
             )
-        ):
+        )
+        for default in defaults:
             target_model = targets_by_type.get(default.model_type)
             if target_model is None:
                 self._session.delete(default)
@@ -356,6 +378,26 @@ class CampusModelProviderReconciler:
                 allowed_names = {model.name for model in self._models if model.model_type == default.model_type}
                 if default.model_name not in allowed_names:
                     default.model_name = target_model
+        speech_target = targets_by_type.get(ModelType.SPEECH2TEXT)
+        if speech_target is not None and not any(default.model_type is ModelType.SPEECH2TEXT for default in defaults):
+            speech_default = self._session.scalar(
+                select(TenantDefaultModel).where(
+                    TenantDefaultModel.tenant_id == tenant_id,
+                    TenantDefaultModel.model_type == ModelType.SPEECH2TEXT,
+                )
+            )
+            if speech_default is None:
+                self._session.add(
+                    TenantDefaultModel(
+                        tenant_id=tenant_id,
+                        provider_name=self._target_provider,
+                        model_name=speech_target,
+                        model_type=ModelType.SPEECH2TEXT,
+                    )
+                )
+            else:
+                speech_default.provider_name = self._target_provider
+                speech_default.model_name = speech_target
 
     def _delete_obsolete_target_models(self, tenant_id: str) -> None:
         allowed = {(model.name, model.model_type) for model in self._models}

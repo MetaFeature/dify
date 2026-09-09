@@ -26,6 +26,7 @@ class SyncResult:
     created: int
     updated: int
     password_resets: int = 0
+    default_passwords: int = 0
 
 
 @dataclass(frozen=True)

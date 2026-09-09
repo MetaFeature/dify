@@ -155,7 +155,7 @@ export async function launchWorkspace(launchSession, navigate) {
 }
 
 /** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
-/** @typedef {{ track: string, title: string, destination: 'reservations' | 'manual', detail: string, available: boolean }} ExperimentTrackCard */
+/** @typedef {{ track: string, title: string, detail: string, manualAvailable: boolean, reservationsAvailable: boolean }} ExperimentTrackCard */
 
 /**
  * The three tracks, named the way the platform names them. The backend enum is
@@ -176,31 +176,27 @@ const TRACK_TITLES = /** @type {Record<string, string>} */ ({
  * @param {ExperimentTrackSummary[]} tracks
  * @returns {ExperimentTrackCard[]}
  */
-export function experimentTrackCards(tracks) {
+export function experimentTrackCards(tracks, presentation = []) {
+  const presented = new Map(presentation.map(item => [item.track, item]))
   /** @type {ExperimentTrackCard[]} */
   const cards = []
   for (const summary of tracks) {
-    const title = TRACK_TITLES[summary.track]
+    const configured = presented.get(summary.track)
+    const title = configured?.title || TRACK_TITLES[summary.track]
     if (!title)
       continue
-    if (summary.kind === 'manual') {
-      const published = summary.chapters > 0
-      cards.push({
-        track: summary.track,
-        title,
-        destination: 'manual',
-        detail: published ? `共 ${summary.chapters} 章 · 在自己的电脑上完成` : '实验手册尚未发布',
-        available: published,
-      })
-      continue
-    }
+    const published = summary.chapters > 0
     cards.push({
       track: summary.track,
       title,
-      destination: 'reservations',
-      detail: '在 Dify 工作区完成，需先预约时段',
-      available: true,
+      detail: `${configured?.description || (summary.kind === 'dify' ? '在 Dify 工作区完成，需预约时段' : '在自己的电脑上完成')}${published ? ` · ${summary.chapters} 份课件` : ''}`,
+      manualAvailable: published,
+      reservationsAvailable: summary.kind === 'dify',
     })
   }
-  return cards
+  return cards.sort((left, right) => {
+    const leftPosition = presented.get(left.track)?.position || 99
+    const rightPosition = presented.get(right.track)?.position || 99
+    return leftPosition - rightPosition
+  })
 }

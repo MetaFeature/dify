@@ -167,6 +167,12 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
                     model_name="gpt-5.6",
                     model_type=ModelType.LLM,
                 ),
+                TenantDefaultModel(
+                    tenant_id="tenant-1",
+                    provider_name="other/speech/speech",
+                    model_name="old-transcriber",
+                    model_type=ModelType.SPEECH2TEXT,
+                ),
                 Workflow(
                     tenant_id="tenant-1",
                     app_id="app-1",
@@ -201,7 +207,9 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
             target_provider=TARGET_PROVIDER,
             credential_name="Campus managed",
             base_url="http://model-gateway:3000/v1",
-            models=parse_campus_models("llm:deepseek-v4-flash,llm:glm-5.3-flash"),
+            models=parse_campus_models(
+                "llm:deepseek-v4-flash,llm:glm-5.3-flash,speech2text:qwen-audio-3.0-asr-flash"
+            ),
             plugin_manager=plugins,
         )
         summary = reconciler.reconcile(["tenant-1"])
@@ -210,12 +218,19 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
         assert plugins.uninstalled == ["openai-installation", "deepseek-installation"]
         assert session.query(Provider).count() == 0
         target_credentials = session.query(ProviderModelCredential).order_by(ProviderModelCredential.model_name).all()
-        assert [credential.model_name for credential in target_credentials] == ["deepseek-v4-flash", "glm-5.3-flash"]
+        assert [credential.model_name for credential in target_credentials] == [
+            "deepseek-v4-flash",
+            "glm-5.3-flash",
+            "qwen-audio-3.0-asr-flash",
+        ]
         assert {json.loads(credential.encrypted_config)["api_key"] for credential in target_credentials} == {
             "opaque-encrypted-gateway-key"
         }
-        default = session.query(TenantDefaultModel).one()
-        assert (default.provider_name, default.model_name) == (TARGET_PROVIDER, "deepseek-v4-flash")
+        defaults = session.query(TenantDefaultModel).order_by(TenantDefaultModel.model_type).all()
+        assert {(default.model_type, default.provider_name, default.model_name) for default in defaults} == {
+            (ModelType.LLM, TARGET_PROVIDER, "deepseek-v4-flash"),
+            (ModelType.SPEECH2TEXT, TARGET_PROVIDER, "qwen-audio-3.0-asr-flash"),
+        }
         workflow = session.query(Workflow).one()
         assert json.loads(workflow.graph)["nodes"][0]["data"]["model"] == {
             "provider": TARGET_PROVIDER,
@@ -226,7 +241,7 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
 
         assert second_summary.clean
         assert plugins.uninstalled == ["openai-installation", "deepseek-installation"]
-        assert session.query(ProviderModelCredential).count() == 2
+        assert session.query(ProviderModelCredential).count() == 3
 
         workflow.graph = json.dumps(
             {

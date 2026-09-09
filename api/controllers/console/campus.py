@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import flask_login
 from flask import Response, make_response, request
@@ -15,6 +16,7 @@ from controllers.console.campus_dependencies import (
     lab_manuals,
     launch_service,
     newapi_client,
+    portal_presentation,
     portal_sessions,
     portal_student,
     portal_token,
@@ -28,6 +30,7 @@ from controllers.console.campus_schemas import (
     LabManualResponse,
     PortalLoginResponse,
     PortalPasswordChangePayload,
+    PortalPresentationResponse,
     ReservationCreatePayload,
     ReservationListResponse,
     ReservationResponse,
@@ -49,7 +52,7 @@ from libs.token import (
     set_csrf_token_to_cookie,
     set_refresh_token_to_cookie,
 )
-from models.campus import MANUAL_TRACKS, ExperimentTrack
+from models.campus import MANUAL_TRACKS, ExperimentTrack, LabManualChapterStatus
 from services.account_service import AccountService
 from services.campus.allowance_service import AllowanceService
 from services.campus.domain import AllowanceSummary, ReservationResult
@@ -69,6 +72,7 @@ from services.campus.errors import (
     StudentPasswordStrengthError,
     StudentSuspendedError,
 )
+from services.campus.portal_presentation_service import PortalPresentation
 
 
 class PendingReservationExistsHTTPError(BaseHTTPException):
@@ -97,6 +101,25 @@ def _allowance_response(summary: AllowanceSummary) -> dict[str, object]:
     return dump_response(AllowanceResponse, summary)
 
 
+def _presentation_response(presentation: PortalPresentation) -> dict[str, object]:
+    return dump_response(
+        PortalPresentationResponse,
+        {
+            "login_html": presentation.login_html,
+            "tracks": [
+                {
+                    "track": item.track,
+                    "title": item.title,
+                    "description": item.description,
+                    "position": item.position,
+                }
+                for item in presentation.tracks
+            ],
+            "is_custom": presentation.is_custom,
+        },
+    )
+
+
 @console_ns.route("/campus/auth/virtual")
 class CampusVirtualLoginApi(Resource):
     @console_ns.expect(console_ns.models[VirtualLoginPayload.__name__])
@@ -115,7 +138,16 @@ class CampusVirtualLoginApi(Resource):
             )
         except (PortalSessionError, StudentNotFoundError, StudentSuspendedError) as error:
             raise Unauthorized("Student identity could not be verified") from error
-        response = make_response(dump_response(PortalLoginResponse, issued))
+        response = make_response(
+            dump_response(
+                PortalLoginResponse,
+                {
+                    "student_id": issued.student_id,
+                    "expires_at": issued.expires_at,
+                    "must_change_password": credential_service().must_change_password(issued.student_id),
+                },
+            )
+        )
         response.set_cookie(
             dify_config.CAMPUS_PORTAL_COOKIE_NAME,
             issued.token,
@@ -283,7 +315,7 @@ class CampusPasswordChangeApi(Resource):
     @setup_required
     def post(self) -> ResponseReturnValue:
         require_campus_enabled()
-        student = portal_student()
+        student = portal_student(allow_initial_password=True)
         payload = PortalPasswordChangePayload.model_validate(console_ns.payload or {})
         try:
             credential_service().change_password(
@@ -328,19 +360,23 @@ class CampusExperimentTrackListApi(Resource):
         manuals = lab_manuals()
         tracks = []
         for track in ExperimentTrack:
-            if track in MANUAL_TRACKS:
-                tracks.append(
-                    {
-                        "track": track,
-                        "kind": "manual",
-                        "chapters": len(manuals.published_chapters(track)),
-                    }
-                )
-            else:
-                # Completed in Dify behind the reservation gate, so it has no
-                # chapter count of its own.
-                tracks.append({"track": track, "kind": "dify", "chapters": 0})
+            tracks.append(
+                {
+                    "track": track,
+                    "kind": "dify" if track is ExperimentTrack.LARGE_MODEL else "manual",
+                    "chapters": len(manuals.published_chapters(track)),
+                }
+            )
         return dump_response(ExperimentTrackListResponse, {"data": tracks})
+
+
+@console_ns.route("/campus/presentation")
+class CampusPortalPresentationApi(Resource):
+    @console_ns.response(200, "Published Portal presentation", console_ns.models[PortalPresentationResponse.__name__])
+    @setup_required
+    def get(self) -> ResponseReturnValue:
+        require_campus_enabled()
+        return _presentation_response(portal_presentation().published())
 
 
 @console_ns.route("/campus/lab-manuals/<string:track>")
@@ -371,12 +407,40 @@ class CampusLabManualApi(Resource):
                         "title": chapter.title,
                         "position": chapter.position,
                         "status": chapter.status,
-                        "body_html": chapter.body_html,
                     }
                     for chapter in chapters
                 ],
             },
         )
+
+
+@console_ns.route("/campus/lab-manuals/documents/<string:chapter_id>/content")
+class CampusLearningDocumentContentApi(Resource):
+    @setup_required
+    def get(self, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        administrator = _is_administrator_reader()
+        if not administrator:
+            portal_student()
+        try:
+            document = lab_manuals().chapter(chapter_id)
+        except CampusValidationError as error:
+            raise NotFound(str(error)) from error
+        if not administrator and document.status is not LabManualChapterStatus.PUBLISHED:
+            raise NotFound("Learning document was not found")
+        response = make_response(document.body_html)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        response.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(document.title)}.html"
+        response.headers["Content-Security-Policy"] = (
+            "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
+            "default-src 'none'; script-src 'unsafe-inline' 'self' data: blob:; "
+            "style-src 'unsafe-inline' data: blob:; img-src data: blob:; "
+            "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
 
 @console_ns.route("/campus/lab-manuals/images/<string:image_id>")
@@ -419,3 +483,14 @@ def _require_manual_reader() -> None:
         else:
             return
     portal_student()
+
+
+def _is_administrator_reader() -> bool:
+    account, _ = current_account_with_tenant_optional()
+    if account is None:
+        return False
+    try:
+        admin_service().require_admin(account.id, display_name=account.name)
+    except CampusAdministratorRequiredError:
+        return False
+    return True

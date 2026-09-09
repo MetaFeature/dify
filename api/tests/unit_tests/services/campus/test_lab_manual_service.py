@@ -38,22 +38,22 @@ def test_a_new_chapter_lands_at_the_end_as_a_draft(manuals: LabManualService) ->
     assert first.body_html == "<p>先装 conda</p>"
 
 
-def test_creating_a_chapter_reports_what_sanitizing_removed(manuals: LabManualService) -> None:
-    # An administrator whose formatting vanished needs to be told, or the page
-    # just looks broken to them.
+def test_creating_a_document_preserves_interactive_html(manuals: LabManualService) -> None:
     outcome = manuals.create_chapter(
         TRACK,
         title="装环境",
         raw_html='<style>p{color:red}</style><p style="margin:0">先装 conda</p><script>x()</script>',
     )
 
-    assert outcome.body_html == "<p>先装 conda</p>"
-    assert outcome.removed == {"style": 1, "script": 1, "style attribute": 1}
+    assert outcome.body_html == (
+        '<style>p{color:red}</style><p style="margin:0">先装 conda</p><script>x()</script>'
+    )
+    assert outcome.removed == {}
 
 
-def test_a_chapter_with_nothing_readable_is_rejected(manuals: LabManualService) -> None:
-    with pytest.raises(CampusValidationError, match="no readable content"):
-        manuals.create_chapter(TRACK, title="空的", raw_html="<style>p{}</style>")
+def test_an_empty_document_is_rejected(manuals: LabManualService) -> None:
+    with pytest.raises(CampusValidationError, match="HTML is required"):
+        manuals.create_chapter(TRACK, title="空的", raw_html="  ")
 
 
 def test_a_chapter_needs_a_title(manuals: LabManualService) -> None:
@@ -61,11 +61,10 @@ def test_a_chapter_needs_a_title(manuals: LabManualService) -> None:
         manuals.create_chapter(TRACK, title="   ", raw_html="<p>x</p>")
 
 
-def test_the_large_model_track_has_no_manual(manuals: LabManualService) -> None:
-    # That track is completed in Dify, so publishing a manual for it would
-    # advertise a path the platform does not serve.
-    with pytest.raises(CampusValidationError, match="no lab manual"):
-        manuals.create_chapter(ExperimentTrack.LARGE_MODEL, title="x", raw_html="<p>x</p>")
+def test_the_large_model_track_accepts_learning_documents(manuals: LabManualService) -> None:
+    created = manuals.create_chapter(ExperimentTrack.LARGE_MODEL, title="x", raw_html="<p>x</p>")
+
+    assert created.track is ExperimentTrack.LARGE_MODEL
 
 
 def test_editing_a_chapter_replaces_its_body_and_keeps_its_place(manuals: LabManualService) -> None:
@@ -167,16 +166,14 @@ def test_acting_on_a_chapter_that_is_gone_fails_clearly(manuals: LabManualServic
             act()
 
 
-def test_a_published_body_is_stored_sanitized_not_sanitized_on_read(
+def test_an_interactive_body_is_stored_unchanged_for_isolated_serving(
     manuals: LabManualService, manual_session: Session
 ) -> None:
-    # Serving a chapter must be a plain string read, so the row itself has to be
-    # clean. Reading the column directly is the only way to prove that.
     manuals.create_chapter(TRACK, title="x", raw_html='<p onclick="x()">hi</p><script>bad()</script>')
 
     stored = manual_session.scalar(select(CampusLabManualChapter.body_html))
 
-    assert stored == "<p>hi</p>"
+    assert stored == '<p onclick="x()">hi</p><script>bad()</script>'
 
 
 def test_authoring_actions_are_attributable(manual_session: Session, manuals: LabManualService) -> None:
@@ -333,8 +330,9 @@ def test_uploading_an_image_is_attributable(image_session: Session, images) -> N
     assert event.target_type == "lab_manual_image"
 
 
-def test_the_large_model_track_takes_no_images(images) -> None:
+def test_the_large_model_track_accepts_learning_document_images(images) -> None:
     manuals, _ = images
 
-    with pytest.raises(CampusValidationError, match="no lab manual"):
-        manuals.add_image(ExperimentTrack.LARGE_MODEL, data=PNG, mime_type="image/png")
+    uploaded = manuals.add_image(ExperimentTrack.LARGE_MODEL, data=PNG, mime_type="image/png")
+
+    assert uploaded.mime_type == "image/png"

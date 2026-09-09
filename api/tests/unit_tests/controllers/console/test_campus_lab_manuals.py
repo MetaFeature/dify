@@ -26,6 +26,7 @@ def _routes() -> set[str]:
     [
         "/campus/experiment-tracks",
         "/campus/lab-manuals/<string:track>",
+        "/campus/lab-manuals/documents/<string:chapter_id>/content",
         "/campus/admin/lab-manuals/<string:track>/chapters",
         "/campus/admin/lab-manuals/chapters/<string:chapter_id>",
         "/campus/admin/lab-manuals/chapters/<string:chapter_id>/status",
@@ -159,6 +160,21 @@ def test_served_images_cannot_act_as_documents() -> None:
     assert "nosniff" in source
     assert "Content-Security-Policy" in source
     assert "sandbox" in source
+
+
+def test_interactive_documents_run_in_an_opaque_sandbox_without_portal_authority() -> None:
+    import inspect
+
+    from controllers.console import campus
+
+    source = inspect.getsource(campus.CampusLearningDocumentContentApi)
+
+    assert "allow-scripts" in source
+    assert "allow-same-origin" not in source
+    assert "connect-src 'none'" in source
+    assert "form-action 'none'" in source
+    assert "frame-ancestors 'none'" in source
+    assert "LabManualChapterStatus.PUBLISHED" in source
 
 
 def test_image_upload_is_administrator_only_and_attributed() -> None:

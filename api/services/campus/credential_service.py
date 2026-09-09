@@ -26,7 +26,13 @@ from services.campus.errors import (
 from services.campus.time_utils import to_naive_utc
 
 
-def upsert_credential(session: Session, student_id: str, password: str) -> None:
+def upsert_credential(
+    session: Session,
+    student_id: str,
+    password: str,
+    *,
+    must_change_password: bool = False,
+) -> None:
     """Set or replace one student's credential without committing."""
     salt = secrets.token_bytes(16)
     password_hashed = base64.b64encode(hash_password(password, salt)).decode()
@@ -38,11 +44,13 @@ def upsert_credential(session: Session, student_id: str, password: str) -> None:
                 student_id=student_id,
                 password_hashed=password_hashed,
                 password_salt=password_salt,
+                must_change_password=must_change_password,
             )
         )
     else:
         credential.password_hashed = password_hashed
         credential.password_salt = password_salt
+        credential.must_change_password = must_change_password
 
 
 def revoke_portal_sessions(session: Session, student_id: str, now_utc: datetime) -> None:
@@ -143,6 +151,13 @@ class StudentCredentialService:
             raise StudentPasswordStrengthError(str(error)) from error
         upsert_credential(self._session, student_id, new_password)
         self._session.commit()
+
+    def must_change_password(self, student_id: str) -> bool:
+        """Report whether a derived initial credential still needs replacement."""
+        value = self._session.scalar(
+            select(CampusStudentCredential.must_change_password).where(CampusStudentCredential.student_id == student_id)
+        )
+        return bool(value)
 
     def credentialed_student_ids(self, student_ids: list[str]) -> set[str]:
         """Return the subset of the given students that hold a credential row."""

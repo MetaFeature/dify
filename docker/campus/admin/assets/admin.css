@@ -88,7 +88,13 @@ textarea { width: 100%; padding: 12px; border: 1px solid #d7deea; border-radius:
 /* Lab manual tab: an authoring form above the chapter list. */
 .manual-form { display: grid; gap: 10px; margin-bottom: 14px; }
 .manual-form textarea { width: 100%; padding: 10px 12px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; font-size: 13px; resize: vertical; }
+.manual-form input { width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid #d7deea; border-radius: 9px; }
 .manual-actions { display: flex; gap: 8px; }
 #tab-manuals .section-heading select { height: 34px; padding: 0 8px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; }
 #manual-report { margin-bottom: 14px; }
 #manual-report p { margin: 0; }
+
+#tab-presentation th:first-child { width: 16%; }
+#tab-presentation th:nth-child(2) { width: 24%; }
+#tab-presentation th:nth-child(3) { width: 48%; }
+#tab-presentation th:last-child { width: 12%; }

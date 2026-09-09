@@ -16,6 +16,7 @@ from controllers.console.campus_dependencies import (
     lab_manuals,
     model_account_service,
     newapi_client,
+    portal_presentation,
     require_admin,
     require_campus_enabled,
     reservation_service,
@@ -23,6 +24,7 @@ from controllers.console.campus_dependencies import (
     virtual_student_numbers,
 )
 from controllers.console.campus_schemas import (
+    AdministratorCreatePayload,
     AdministratorListResponse,
     AdministratorPayload,
     AdminSlotListResponse,
@@ -35,7 +37,10 @@ from controllers.console.campus_schemas import (
     LabManualChapterResponse,
     LabManualChapterSavedResponse,
     LabManualChapterStatusPayload,
+    PortalPresentationPayload,
+    PortalPresentationResponse,
     ResultResponse,
+    RosterParsedResponse,
     RosterSyncResponse,
     SlotCapacityPayload,
     SlotCapacityResponse,
@@ -70,10 +75,31 @@ from services.campus.errors import (
     ReservationWindowError,
     StudentNotFoundError,
 )
+from services.campus.portal_presentation_service import PortalPresentation, TrackPresentation
+from services.campus.roster_import import MAX_ROSTER_BYTES, parse_roster_xlsx
 
 
 def _allowance_response(summary: AllowanceSummary) -> dict[str, object]:
     return dump_response(AllowanceResponse, summary)
+
+
+def _portal_presentation_response(presentation: PortalPresentation) -> dict[str, object]:
+    return dump_response(
+        PortalPresentationResponse,
+        {
+            "login_html": presentation.login_html,
+            "tracks": [
+                {
+                    "track": item.track,
+                    "title": item.title,
+                    "description": item.description,
+                    "position": item.position,
+                }
+                for item in presentation.tracks
+            ],
+            "is_custom": presentation.is_custom,
+        },
+    )
 
 
 def _identity_from(student: StudentIdentityPayload) -> StudentIdentity:
@@ -263,6 +289,40 @@ class CampusAdminStudentSyncPreviewApi(Resource):
         return dump_response(RosterSyncResponse, preview)
 
 
+@console_ns.route("/campus/admin/students/import/parse")
+class CampusAdminStudentImportParseApi(Resource):
+    @console_ns.response(200, "Parsed roster workbook", console_ns.models[RosterParsedResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def post(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            raise BadRequest("Roster XLSX file is required")
+        if not upload.filename.lower().endswith(".xlsx"):
+            raise BadRequest("Roster file must use the .xlsx format")
+        try:
+            rows = parse_roster_xlsx(upload.stream.read(MAX_ROSTER_BYTES + 1))
+        except CampusValidationError as error:
+            raise BadRequest(str(error)) from error
+        return dump_response(
+            RosterParsedResponse,
+            {
+                "data": [
+                    {
+                        "student_number": row.student_number,
+                        "display_name": row.display_name,
+                        "cohort": row.cohort,
+                        "password": row.password,
+                    }
+                    for row in rows
+                ]
+            },
+        )
+
+
 @console_ns.route("/campus/admin/students/<string:student_number>/password")
 class CampusAdminStudentPasswordApi(Resource):
     @console_ns.expect(console_ns.models[StudentPasswordResetPayload.__name__])
@@ -369,6 +429,31 @@ class CampusAdministratorApi(Resource):
         return ResultResponse(result="success").model_dump(mode="json"), 201
 
 
+@console_ns.route("/campus/admin/administrators/create")
+class CampusAdministratorCreateApi(Resource):
+    @console_ns.expect(console_ns.models[AdministratorCreatePayload.__name__])
+    @console_ns.response(201, "Administrator account created", console_ns.models[ResultResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def post(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = AdministratorCreatePayload.model_validate(console_ns.payload or {})
+        try:
+            admin_service().create_admin_account(
+                email=payload.email,
+                name=payload.name,
+                password=payload.password,
+                actor_account_id=current_user.id,
+            )
+        except CampusConflictError as error:
+            raise Conflict(str(error)) from error
+        except ValueError as error:
+            raise BadRequest(str(error)) from error
+        return ResultResponse(result="success").model_dump(mode="json"), 201
+
+
 @console_ns.route("/campus/admin/administrators/<string:account_id>")
 class CampusAdministratorDeleteApi(Resource):
     @console_ns.response(204, "Administrator revoked")
@@ -392,6 +477,68 @@ def _track_or_404(track: str) -> ExperimentTrack:
         return ExperimentTrack(track)
     except ValueError as error:
         raise NotFound("Unknown experiment track") from error
+
+
+@console_ns.route("/campus/admin/presentation")
+class CampusAdminPortalPresentationApi(Resource):
+    @console_ns.response(200, "Portal presentation draft", console_ns.models[PortalPresentationResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def get(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        return _portal_presentation_response(portal_presentation().draft())
+
+    @console_ns.expect(console_ns.models[PortalPresentationPayload.__name__])
+    @console_ns.response(200, "Portal presentation draft saved", console_ns.models[PortalPresentationResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def put(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        payload = PortalPresentationPayload.model_validate(console_ns.payload or {})
+        try:
+            saved = portal_presentation().save_draft(
+                login_html=payload.login_html,
+                tracks=[
+                    TrackPresentation(
+                        track=item.track,
+                        title=item.title,
+                        description=item.description,
+                        position=item.position,
+                    )
+                    for item in payload.tracks
+                ],
+                actor_account_id=current_user.id,
+            )
+        except CampusValidationError as error:
+            raise BadRequest(str(error)) from error
+        return _portal_presentation_response(saved)
+
+    @console_ns.response(
+        200, "Portal presentation default restored", console_ns.models[PortalPresentationResponse.__name__]
+    )
+    @setup_required
+    @login_required
+    @with_current_user
+    def delete(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        return _portal_presentation_response(portal_presentation().restore_default(actor_account_id=current_user.id))
+
+
+@console_ns.route("/campus/admin/presentation/publish")
+class CampusAdminPortalPresentationPublishApi(Resource):
+    @console_ns.response(200, "Portal presentation published", console_ns.models[PortalPresentationResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def post(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        return _portal_presentation_response(portal_presentation().publish(actor_account_id=current_user.id))
 
 
 def _chapter_payload(chapter) -> dict[str, object]:

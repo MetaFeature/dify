@@ -32,6 +32,10 @@ if (loginFormElement instanceof HTMLFormElement)
 
 const elements = {
   loginView: requiredElement('#login-view', HTMLElement),
+  loginContent: requiredElement('#login-content', HTMLElement),
+  requiredPasswordView: requiredElement('#required-password-view', HTMLElement),
+  requiredPasswordForm: requiredElement('#required-password-form', HTMLFormElement),
+  requiredPasswordMessage: requiredElement('#required-password-message', HTMLElement),
   tracksView: requiredElement('#tracks-view', HTMLElement),
   manualView: requiredElement('#manual-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
@@ -73,6 +77,19 @@ let countdownTimer = 0
 let lastRefreshAtMs = 0
 let reservationPage = 0
 let resizeFrame = 0
+let portalPresentation = null
+
+void loadPortalPresentation()
+
+async function loadPortalPresentation() {
+  try {
+    portalPresentation = await api.presentation()
+    elements.loginContent.innerHTML = portalPresentation.login_html
+  }
+  catch {
+    // The checked-in default remains visible when presentation loading fails.
+  }
+}
 
 function campusNow() {
   return campusClock()
@@ -89,11 +106,14 @@ elements.loginForm.addEventListener('submit', async (event) => {
   setBusy(elements.loginForm, true)
   hideMessage(elements.loginError)
   try {
-    await api.login(String(form.get('studentNumber')).trim(), String(form.get('loginCode')))
+    const login = await api.login(String(form.get('studentNumber')).trim(), String(form.get('loginCode')))
     elements.loginForm.reset()
     elements.loginView.hidden = true
     hideMessage(elements.message)
-    await showTracks()
+    if (login.must_change_password)
+      elements.requiredPasswordView.hidden = false
+    else
+      await showTracks()
   }
   catch (error) {
     // On the sign-in form a 401 means the credentials were rejected, not that an
@@ -105,6 +125,25 @@ elements.loginForm.addEventListener('submit', async (event) => {
   }
   finally {
     setBusy(elements.loginForm, false)
+  }
+})
+
+elements.requiredPasswordForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const form = new FormData(elements.requiredPasswordForm)
+  setBusy(elements.requiredPasswordForm, true)
+  hideMessage(elements.requiredPasswordMessage)
+  try {
+    await api.changePassword(String(form.get('currentPassword')), String(form.get('newPassword')))
+    elements.requiredPasswordForm.reset()
+    elements.requiredPasswordView.hidden = true
+    await showTracks()
+  }
+  catch (error) {
+    showMessage(elements.requiredPasswordMessage, passwordErrorMessage(error), true)
+  }
+  finally {
+    setBusy(elements.requiredPasswordForm, false)
   }
 })
 
@@ -453,7 +492,7 @@ async function showTracks() {
   hideMessage(elements.tracksMessage)
   elements.trackList.textContent = '正在读取实验列表…'
   try {
-    renderTrackCards(experimentTrackCards(await api.listExperimentTracks()))
+    renderTrackCards(experimentTrackCards(await api.listExperimentTracks(), portalPresentation?.tracks || []))
   }
   catch (error) {
     elements.trackList.textContent = ''
@@ -471,23 +510,32 @@ function renderTrackCards(cards) {
   list.className = 'track-cards'
   for (const card of cards) {
     const item = document.createElement('article')
-    item.className = card.available ? 'track-card' : 'track-card unavailable'
+    item.className = card.manualAvailable || card.reservationsAvailable ? 'track-card' : 'track-card unavailable'
     const heading = document.createElement('h2')
     heading.textContent = card.title
     const detail = document.createElement('p')
     detail.className = 'muted'
     detail.textContent = card.detail
-    const action = document.createElement('button')
-    action.type = 'button'
-    action.className = 'primary'
-    action.textContent = card.destination === 'reservations' ? '进入预约中心' : '阅读实验手册'
-    action.disabled = !card.available
-    action.dataset.track = card.track
-    action.dataset.destination = card.destination
-    item.append(heading, detail, action)
+    const actions = document.createElement('div')
+    actions.className = 'row-actions'
+    if (card.reservationsAvailable)
+      actions.append(trackAction(card.track, 'reservations', '进入预约中心', false))
+    actions.append(trackAction(card.track, 'manual', '查看实验手册与课件', !card.manualAvailable))
+    item.append(heading, detail, actions)
     list.append(item)
   }
   elements.trackList.replaceChildren(list)
+}
+
+function trackAction(track, destination, label, disabled) {
+  const action = document.createElement('button')
+  action.type = 'button'
+  action.className = destination === 'reservations' ? 'primary' : 'secondary'
+  action.textContent = label
+  action.disabled = disabled
+  action.dataset.track = track
+  action.dataset.destination = destination
+  return action
 }
 
 elements.trackList.addEventListener('click', async (event) => {
@@ -517,9 +565,8 @@ async function showReservations() {
 /**
  * Show one track's manual.
  *
- * The chapter body arrives already sanitized -- it is cleaned once, when an
- * administrator uploads it -- so it is assigned as HTML on purpose. Titles come
- * from the same table and are assigned as text, because they never need markup.
+ * The API returns only the ordered document list. Each filename opens the raw
+ * interactive HTML through the backend's isolated-reader response.
  *
  * @param {string} track
  * @param {string} title
@@ -547,38 +594,15 @@ async function showManual(track, title) {
   nav.className = 'chapter-list'
   for (const chapter of chapters) {
     const item = document.createElement('li')
-    const link = document.createElement('button')
-    link.type = 'button'
+    const link = document.createElement('a')
     link.className = 'chapter-link'
     link.textContent = chapter.title
-    link.dataset.chapterId = chapter.id
+    link.href = `/console/api/campus/lab-manuals/documents/${encodeURIComponent(chapter.id)}/content`
+    link.target = '_blank'
+    link.rel = 'noopener'
     item.append(link)
     nav.append(item)
   }
   elements.manualChapters.replaceChildren(nav)
-  renderChapter(chapters, chapters[0].id)
-  elements.manualChapters.onclick = (event) => {
-    const link = event.target instanceof Element ? event.target.closest('button[data-chapter-id]') : null
-    if (link instanceof HTMLButtonElement)
-      renderChapter(chapters, link.dataset.chapterId || '')
-  }
-}
-
-/**
- * @param {import('./campus-api.js').ManualChapter[]} chapters
- * @param {string} chapterId
- */
-function renderChapter(chapters, chapterId) {
-  const chapter = chapters.find(candidate => candidate.id === chapterId)
-  if (!chapter)
-    return
-  for (const link of elements.manualChapters.querySelectorAll('button[data-chapter-id]'))
-    link.classList.toggle('active', link.getAttribute('data-chapter-id') === chapterId)
-  const heading = document.createElement('h2')
-  heading.textContent = chapter.title
-  const body = document.createElement('div')
-  body.className = 'chapter-body'
-  // Sanitized at upload; see services/campus/lab_manual_html.py.
-  body.innerHTML = chapter.body_html
-  elements.manualBody.replaceChildren(heading, body)
+  elements.manualBody.textContent = '点击文件名将在新页面打开完整的交互式 HTML 课件。'
 }

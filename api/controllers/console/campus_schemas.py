@@ -3,11 +3,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from controllers.common.schema import register_response_schema_models, register_schema_models
 from controllers.console import console_ns
 from fields.base import ResponseModel
+from libs.helper import EmailStr
 from models.campus import ExperimentTrack, LabManualChapterStatus, StudentStatus
 
 
@@ -151,9 +152,24 @@ class AdministratorPayload(CampusRequestModel):
         return normalized
 
 
+class AdministratorCreatePayload(CampusRequestModel):
+    email: EmailStr
+    name: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name", "password")
+    @classmethod
+    def validate_create_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be whitespace-only")
+        return normalized
+
+
 class PortalLoginResponse(CampusResponseModel):
     student_id: str
     expires_at: datetime
+    must_change_password: bool = False
 
 
 class StudentResponse(CampusResponseModel):
@@ -174,6 +190,11 @@ class RosterSyncResponse(CampusResponseModel):
     created: int
     updated: int
     password_resets: int = 0
+    default_passwords: int = 0
+
+
+class RosterParsedResponse(CampusResponseModel):
+    data: list[StudentIdentityPayload]
 
 
 class AdministratorResponse(CampusResponseModel):
@@ -288,8 +309,8 @@ class LabManualChapterDetailResponse(LabManualChapterResponse):
 
 
 class LabManualChapterSavedResponse(LabManualChapterDetailResponse):
-    #: What sanitizing removed from the upload, so the administrator is told
-    #: rather than left with a page that silently lost its formatting.
+    #: Retained for wire compatibility with the earlier sanitized-chapter API.
+    #: Interactive learning documents are preserved, so this is normally empty.
     removed: dict[str, int]
 
 
@@ -298,10 +319,10 @@ class LabManualChapterListResponse(CampusResponseModel):
 
 
 class LabManualResponse(CampusResponseModel):
-    """One track's manual as a student reads it: published chapters, in order."""
+    """One track's published learning-document metadata, in order."""
 
     track: ExperimentTrack
-    data: list[LabManualChapterDetailResponse]
+    data: list[LabManualChapterResponse]
 
 
 class ExperimentTrackResponse(CampusResponseModel):
@@ -313,6 +334,40 @@ class ExperimentTrackResponse(CampusResponseModel):
 
 class ExperimentTrackListResponse(CampusResponseModel):
     data: list[ExperimentTrackResponse]
+
+
+class TrackPresentationPayload(CampusRequestModel):
+    track: ExperimentTrack
+    title: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=300)
+    position: int = Field(ge=1, le=3)
+
+    @field_validator("title", "description")
+    @classmethod
+    def normalize_presentation_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be whitespace-only")
+        return normalized
+
+
+class PortalPresentationPayload(CampusRequestModel):
+    login_html: str = Field(min_length=1, max_length=200_000)
+    tracks: list[TrackPresentationPayload] = Field(min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_tracks(self):
+        if {item.track for item in self.tracks} != set(ExperimentTrack):
+            raise ValueError("presentation must configure every experiment track exactly once")
+        if {item.position for item in self.tracks} != {1, 2, 3}:
+            raise ValueError("presentation track positions must use positions 1, 2, and 3")
+        return self
+
+
+class PortalPresentationResponse(CampusResponseModel):
+    login_html: str
+    tracks: list[TrackPresentationPayload]
+    is_custom: bool
 
 
 register_schema_models(
@@ -329,9 +384,11 @@ register_schema_models(
     StudentListQuery,
     AllowanceAdjustmentPayload,
     AdministratorPayload,
+    AdministratorCreatePayload,
     LabManualChapterPayload,
     LabManualChapterStatusPayload,
     LabManualChapterPositionPayload,
+    PortalPresentationPayload,
 )
 register_response_schema_models(
     console_ns,
@@ -339,6 +396,7 @@ register_response_schema_models(
     StudentResponse,
     StudentListResponse,
     RosterSyncResponse,
+    RosterParsedResponse,
     AdministratorResponse,
     AdministratorListResponse,
     ReservationResponse,
@@ -359,4 +417,5 @@ register_response_schema_models(
     LabManualResponse,
     ExperimentTrackResponse,
     ExperimentTrackListResponse,
+    PortalPresentationResponse,
 )

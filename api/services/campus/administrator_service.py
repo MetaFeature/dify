@@ -1,10 +1,11 @@
 import json
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from models.account import Account
 from models.campus import CampusAdministrator, CampusAuditEvent
+from services.account_service import AccountService, TenantService
 from services.campus.errors import CampusAccountNotFoundError, CampusAdministratorRequiredError, CampusConflictError
 
 
@@ -66,6 +67,39 @@ class AdministratorService:
             administrator.display_name = account.name
             administrator.active = True
         self._audit("administrator.added", account_id, actor_account_id, {"display_name": account.name})
+        self._session.commit()
+        return administrator
+
+    def create_admin_account(
+        self,
+        *,
+        email: str,
+        name: str,
+        password: str,
+        actor_account_id: str,
+    ) -> CampusAdministrator:
+        """Create one named Dify account and authorize it for Campus administration."""
+        normalized_email = email.strip().lower()
+        existing_account = self._session.scalar(select(Account).where(func.lower(Account.email) == normalized_email))
+        if existing_account is not None:
+            raise CampusConflictError("a Dify account already uses this email")
+        account = AccountService.create_account(
+            email=normalized_email,
+            name=name.strip(),
+            interface_language="zh_Hans",
+            password=password,
+            is_setup=True,
+            timezone="Asia/Shanghai",
+            session=self._session,
+        )
+        TenantService.create_owner_tenant_if_not_exist(account=account, is_setup=True, session=self._session)
+        administrator = self.add_admin(account.id, actor_account_id=actor_account_id)
+        self._audit(
+            "administrator.account_created",
+            account.id,
+            actor_account_id,
+            {"email": normalized_email, "display_name": account.name},
+        )
         self._session.commit()
         return administrator
 

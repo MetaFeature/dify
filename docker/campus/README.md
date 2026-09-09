@@ -183,14 +183,15 @@ The Campus administration portal owns that loopback listener's root: opening
 `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}/` serves the static page from
 `campus/admin/`, while the stock Dify console stays reachable on its own
 routes (`/signin` for administrator login, `/apps` for the console itself).
-The portal covers per-slot capacity, the student roster (CSV import with a
+The portal covers per-slot capacity, the student roster (XLSX/CSV import with a
 mandatory preview, single-student entry, suspension, password reset),
-allowance adjustments, and named-administrator authorization. It calls
+allowance adjustments, named-administrator account creation, Portal presentation,
+and learning-document publication. It calls
 `/console/api/campus/admin/*` with the Dify console session cookies and the
-CSRF double-submit header. The roster CSV header is
-`student_number,display_name,cohort,password`; the password column sets or
-resets credentials only where supplied, and brand-new students must supply
-one.
+CSRF double-submit header. XLSX accepts `学号,姓名,班级,密码`; CSV accepts
+those names or `student_number,display_name,cohort,password`. A blank password
+gives a new student the final four student-number characters and requires
+replacement at first login; it never resets an existing student's credential.
 
 The portal is intentionally a Chinese-only, framework-independent static
 surface. It does not modify or import the upstream Dify `web/` application;
@@ -363,21 +364,22 @@ NewAPI is the live model-catalog authority. Every five minutes the system
 heartbeat asks enabled Campus channels for their upstream model lists and adds
 new names without removing models automatically. Every heartbeat reads
 `GET /api/campus/models/catalog`; the endpoint publishes only explicitly priced
-LLM, embedding and rerank models that Dify can call. Case-only aliases collapse
+LLM, embedding, rerank, speech-to-text, and TTS models with a Dify-supported
+endpoint. Case-only aliases collapse
 to one canonical name. The heartbeat audits all student workspaces, reconciles
 model-level credentials when the catalog differs and invalidates Dify's model
 caches. Existing and newly provisioned workspaces therefore adopt a NewAPI
 channel edit without restarting Dify. Image generation and audio models remain
 visible in NewAPI but are not misclassified as chat models in Dify.
 
-The catalog contract is also the speech extension seam. Dify always consumes
-the OpenAI-compatible `/v1/audio/transcriptions` shape. A provider-specific JSON
-or asynchronous speech API must first gain a request/response converter in
-NewAPI and an explicit `audio-transcription` endpoint in NewAPI model metadata;
-the priced catalog then emits `speech2text` and the heartbeat provisions it in
-every workspace without a Dify code change. Tianyi's current
-`qwen-audio-3.0-asr-flash` endpoint uses JSON multimodal generation rather than
-OpenAI multipart, so it remains unpublished until that adapter is implemented.
+The catalog contract is also the speech extension seam. Dify consumes the
+OpenAI-compatible `/v1/audio/transcriptions` shape through the approved plugin.
+NewAPI converts it to Tianyi's JSON multimodal-generation protocol for
+`qwen-audio-3.0-asr-flash`, converts the result back to `{text}`, and accounts
+for reported audio duration. Once that model is enabled for the Campus group
+and priced, the catalog emits `speech2text`; heartbeat reconciliation provisions
+its credential and makes it the default speech model in every student workspace.
+Later list and pricing changes remain NewAPI-owned and require no Dify source edit.
 
 Inside Dify, the gateway endpoint is always
 `http://model-gateway:3000/v1`. `127.0.0.1:13000` is only a Windows/WSL
@@ -434,29 +436,19 @@ retained. The later workspace provisioner adopts the existing token and never
 reapplies the default allowance. Re-running the reconciliation only refreshes
 the student label and verifies the binding.
 
-## Lab manuals
+## Learning documents
 
-The deep-learning and agent experiment tracks are completed on the student's own
-machine, so the only thing the platform publishes for them is a chapter-ordered
-lab manual (ADR-0018). The large-model track has no manual: it is completed in
-Dify, behind the reservation gate.
+All three experiment tracks may publish ordered HTML learning documents
+(ADR-0022). The large-model track keeps its separate reservation-gated Dify
+action; agent and deep-learning remain local-computer tracks.
 
-Administrators author chapters in the administration portal's "实验手册" tab,
-uploading or pasting HTML. Uploads are sanitized before they are stored, once,
-so serving a chapter is a plain string read. What is removed:
-
-- scripts, frames, objects, forms, and inputs, together with their content
-- stylesheets and inline `style` attributes
-- event handler attributes
-- links whose protocol is not http, https, or mailto
-- images that are not same-origin, because the portal serves `img-src 'self'`
-
-The portal owns how a manual looks, so an administrator controls structure and
-content but never presentation. That is deliberate: a chapter exported from a
-word processor arrives with hundreds of lines of layout CSS that would break the
-page, and the content security policy would drop it silently anyway. The tab
-says so, and every save reports what was removed rather than leaving the author
-with a page that quietly lost its formatting.
+Administrators upload or paste self-contained HTML in the "实验手册与课件" tab,
+set its filename, order it, preview it, and publish or withdraw it. Students see
+filenames rather than extracted text. Opening one returns the original HTML with
+a CSP sandbox that allows inline CSS, JavaScript, and popup links while
+withholding the Portal origin, cookies, API access, external connections, forms,
+and top-level embedding. Login-page HTML follows a different rule: it is
+sanitized before publication because it renders inside the trusted Portal page.
 
 Images are uploaded to the platform from the same tab, which appends an `<img>`
 to the chapter body and stores the file through Dify's storage extension. A
@@ -473,10 +465,10 @@ That route echoes stored bytes, so it sends `X-Content-Type-Options: nosniff`
 and a `default-src 'none'; sandbox` policy: an image must never be able to act
 as a page.
 
-A chapter is a draft until it is published; only published chapters reach
-students. Reordering renumbers the track, and never crosses into another track.
-Deleting a chapter does not delete images it referenced; there is no reference
-count, and an orphaned image is cheaper than a chapter with a broken figure.
+A learning document is a draft until it is published; only published documents
+reach students. Reordering renumbers the track and never crosses into another
+track. Deleting one does not delete images it referenced; there is no reference
+count, and an orphaned image is cheaper than a document with a broken figure.
 
 Authoring writes `lab_manual.chapter_*` audit events. The chapter body is
 deliberately absent from them: the trail records what happened, not a second

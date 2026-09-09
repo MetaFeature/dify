@@ -20,13 +20,13 @@ class ExperimentTrack(StrEnum):
     """One of the three practice paths a student may choose after signing in."""
 
     LARGE_MODEL = "large-model"
-    DEEP_LEARNING = "deep-learning"
     AGENT = "agent"
+    DEEP_LEARNING = "deep-learning"
 
 
-#: Tracks the platform serves a lab manual for. The large-model track is
-#: completed in Dify instead, so it has no manual.
-MANUAL_TRACKS = (ExperimentTrack.DEEP_LEARNING, ExperimentTrack.AGENT)
+#: Every experiment track may publish learning documents. The large-model
+#: track still enters Dify through the reservation gate for execution.
+MANUAL_TRACKS = tuple(ExperimentTrack)
 
 
 class LabManualChapterStatus(StrEnum):
@@ -75,6 +75,7 @@ class CampusStudentCredential(DefaultFieldsMixin, Base):
     student_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     password_hashed: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     password_salt: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
 
 
 class CampusWorkspaceBinding(DefaultFieldsMixin, Base):
@@ -112,6 +113,18 @@ class CampusAuditEvent(DefaultFieldsMixin, Base):
     target_type: Mapped[str] = mapped_column(sa.String(50), nullable=False)
     target_id: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     details_json: Mapped[str] = mapped_column(sa.Text, nullable=False, default="{}")
+
+
+class CampusPortalPresentation(DefaultFieldsMixin, Base):
+    """Draft and published administrator-managed Portal presentation."""
+
+    __tablename__ = "campus_portal_presentations"
+    __table_args__ = (sa.UniqueConstraint("content_key", name="campus_portal_presentations_content_key_key"),)
+
+    content_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    draft_json: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    published_json: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    updated_by_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
 
 
 class CampusPortalSession(DefaultFieldsMixin, Base):
@@ -197,10 +210,10 @@ class CampusAllowanceAdjustment(DefaultFieldsMixin, Base):
 
 
 class CampusLabManualChapter(DefaultFieldsMixin, Base):
-    """One ordered chapter of the lab manual for one experiment track.
+    """One ordered HTML learning document for an experiment track.
 
-    ``body_html`` is already sanitized: it is cleaned once when an administrator
-    uploads it, so serving a chapter never re-parses untrusted markup.
+    ``body_html`` preserves the administrator upload and may contain active
+    content. It must only be rendered by the isolated learning-document route.
     """
 
     __tablename__ = "campus_lab_manual_chapters"

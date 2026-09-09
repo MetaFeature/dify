@@ -1,6 +1,6 @@
 const CAMPUS_API_BASE = '/console/api/campus'
 
-/** @typedef {{ student_id: string, expires_at: string }} PortalLogin */
+/** @typedef {{ student_id: string, expires_at: string, must_change_password: boolean }} PortalLogin */
 /** @typedef {'confirmed' | 'waitlisted' | 'cancelled' | 'completed' | 'expired'} ReservationStatus */
 /** @typedef {{ id: string, status: ReservationStatus, starts_at: string, ends_at: string, waitlist_position?: number | null }} Reservation */
 /** @typedef {{ starts_at: string, ends_at: string, capacity: number, confirmed: number, waitlisted: number, reservable: boolean }} AccessSlot */
@@ -99,6 +99,10 @@ export class CampusApi {
   async listExperimentTracks() {
     const response = await this.#request('/experiment-tracks')
     return response.data
+  }
+
+  async presentation() {
+    return this.#request('/presentation')
   }
 
   /**

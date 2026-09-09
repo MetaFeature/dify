@@ -25,7 +25,16 @@ export function slotEnded(slot, serverNow) {
   return new Date(slot.ends_at).getTime() <= serverNow.getTime()
 }
 
-const ROSTER_COLUMNS = new Set(['student_number', 'display_name', 'cohort', 'password'])
+const ROSTER_COLUMN_ALIASES = new Map([
+  ['student_number', 'student_number'],
+  ['display_name', 'display_name'],
+  ['cohort', 'cohort'],
+  ['password', 'password'],
+  ['学号', 'student_number'],
+  ['姓名', 'display_name'],
+  ['班级', 'cohort'],
+  ['密码', 'password'],
+])
 
 /**
  * Parse the administrator roster CSV. The first row must name its columns
@@ -44,12 +53,15 @@ export function parseRosterCsv(text) {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length)
   if (!lines.length)
     return { rows, errors: ['文件为空'] }
-  const header = lines[0].split(',').map(cell => cell.trim().toLowerCase())
+  const sourceHeader = lines[0].replace(/^\uFEFF/, '').split(',').map(cell => cell.trim())
+  const header = sourceHeader.map(cell => ROSTER_COLUMN_ALIASES.get(cell.toLowerCase()) || null)
   if (!header.includes('student_number') || !header.includes('display_name'))
-    return { rows, errors: ['表头必须包含 student_number 和 display_name 列'] }
-  const unknown = header.filter(cell => !ROSTER_COLUMNS.has(cell))
+    return { rows, errors: ['表头必须包含“学号、姓名”（或 student_number、display_name）列'] }
+  const unknown = sourceHeader.filter((_, index) => header[index] === null)
   if (unknown.length)
     return { rows, errors: [`无法识别的列：${unknown.join('、')}`] }
+  if (new Set(header).size !== header.length)
+    return { rows, errors: ['表头包含重复列'] }
   const seen = new Set()
   for (const [index, line] of lines.slice(1).entries()) {
     const cells = line.split(',').map(cell => cell.trim())

@@ -44,20 +44,19 @@ test('signing out hides every signed-in view', () => {
     assert.match(signOut, new RegExp(`elements\\.${view}\\.hidden = true`))
 })
 
-test('only the chapter body is assigned as HTML, and it says why', () => {
-  // Chapter HTML is sanitized at upload. Any other innerHTML on this page would
-  // be a second, unreviewed path for markup to reach a student.
+test('only sanitized presentation content is inserted into the Portal origin', () => {
   const assignments = [...script.matchAll(/^\s*(\S+)\.innerHTML = (.+)$/gm)].map(match => match[2].trim())
 
-  assert.deepEqual(assignments, ['chapter.body_html'])
-  assert.match(script, /Sanitized at upload; see services\/campus\/lab_manual_html\.py\./)
+  assert.deepEqual(assignments, ['portalPresentation.login_html'])
+  assert.doesNotMatch(script, /chapter\.body_html/)
 })
 
-test('chapter titles are assigned as text, never as markup', () => {
+test('learning-document titles are links to the isolated content route', () => {
   const manual = script.slice(script.indexOf('async function showManual('))
 
   assert.match(manual, /link\.textContent = chapter\.title/)
-  assert.match(script, /heading\.textContent = chapter\.title/)
+  assert.match(manual, /lab-manuals\/documents\/\$\{encodeURIComponent\(chapter\.id\)\}\/content/)
+  assert.match(manual, /link\.rel = 'noopener'/)
 })
 
 test('reservation history provides accessible pagination controls', () => {

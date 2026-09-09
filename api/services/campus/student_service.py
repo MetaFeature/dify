@@ -37,8 +37,9 @@ class StudentAdministrationService:
         With ``passwords`` (a student_number → password mapping, possibly empty),
         the sync also manages platform credentials: a supplied password sets or
         resets that student's credential (revoking live portal sessions on a
-        reset), an omitted password leaves the existing credential untouched,
-        and a brand-new student without a password is rejected. ``passwords=None``
+        reset), an omitted password leaves an existing credential untouched,
+        and gives a new student a derived initial credential that must be changed.
+        ``passwords=None``
         keeps the legacy metadata-only behavior.
         """
         records = list(identities)
@@ -47,18 +48,11 @@ class StudentAdministrationService:
             raise CampusValidationError("student_number must be unique in one sync request")
 
         existing_by_number = self._existing_by_number(normalized_numbers)
-        if passwords is not None:
-            missing = [
-                number
-                for number in normalized_numbers
-                if number not in existing_by_number and not passwords.get(number)
-            ]
-            if missing:
-                raise CampusValidationError(f"new students require a password: {', '.join(sorted(missing))}")
 
         created = 0
         updated = 0
         password_resets = 0
+        default_passwords = 0
         for identity, student_number in zip(records, normalized_numbers, strict=True):
             student = existing_by_number.get(student_number)
             if student is None:
@@ -73,7 +67,21 @@ class StudentAdministrationService:
                 self._session.flush()
                 created += 1
                 if passwords is not None:
-                    upsert_credential(self._session, student.id, passwords[student_number])
+                    supplied_password = passwords.get(student_number)
+                    if supplied_password:
+                        upsert_credential(self._session, student.id, supplied_password)
+                    else:
+                        if len(student_number) < 4:
+                            raise CampusValidationError(
+                                f"student_number must contain at least four characters: {student_number}"
+                            )
+                        upsert_credential(
+                            self._session,
+                            student.id,
+                            student_number[-4:],
+                            must_change_password=True,
+                        )
+                        default_passwords += 1
             else:
                 student.display_name = identity.display_name.strip()
                 student.cohort = identity.cohort.strip() if identity.cohort else None
@@ -91,13 +99,23 @@ class StudentAdministrationService:
                 target_type="student_roster",
                 target_id="current",
                 details_json=json.dumps(
-                    {"created": created, "updated": updated, "password_resets": password_resets},
+                    {
+                        "created": created,
+                        "updated": updated,
+                        "password_resets": password_resets,
+                        "default_passwords": default_passwords,
+                    },
                     separators=(",", ":"),
                 ),
             )
         )
         self._session.commit()
-        return SyncResult(created=created, updated=updated, password_resets=password_resets)
+        return SyncResult(
+            created=created,
+            updated=updated,
+            password_resets=password_resets,
+            default_passwords=default_passwords,
+        )
 
     def preview_sync(
         self,
@@ -111,17 +129,25 @@ class StudentAdministrationService:
         if len(normalized_numbers) != len(set(normalized_numbers)):
             raise CampusValidationError("student_number must be unique in one sync request")
         existing_by_number = self._existing_by_number(normalized_numbers)
-        missing = [
-            number for number in normalized_numbers if number not in existing_by_number and not passwords.get(number)
-        ]
-        if missing:
-            raise CampusValidationError(f"new students require a password: {', '.join(sorted(missing))}")
         created = sum(1 for number in normalized_numbers if number not in existing_by_number)
         updated = len(normalized_numbers) - created
         password_resets = sum(
             1 for number in normalized_numbers if number in existing_by_number and passwords.get(number)
         )
-        return SyncResult(created=created, updated=updated, password_resets=password_resets)
+        default_passwords = sum(
+            1 for number in normalized_numbers if number not in existing_by_number and not passwords.get(number)
+        )
+        too_short = [number for number in normalized_numbers if number not in existing_by_number and len(number) < 4]
+        if too_short:
+            raise CampusValidationError(
+                f"student_number must contain at least four characters: {', '.join(sorted(too_short))}"
+            )
+        return SyncResult(
+            created=created,
+            updated=updated,
+            password_resets=password_resets,
+            default_passwords=default_passwords,
+        )
 
     def _existing_by_number(self, normalized_numbers: list[str]) -> dict[str, CampusStudent]:
         if not normalized_numbers:

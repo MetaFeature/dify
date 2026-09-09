@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from models.account import Account
 from models.campus import CampusAdministrator, CampusAuditEvent
+from services.campus import administrator_service
 from services.campus.administrator_service import AdministratorService
 from services.campus.errors import CampusAdministratorRequiredError, CampusConflictError
 
@@ -66,3 +67,42 @@ def test_admin_cannot_revoke_own_access(campus_session: Session):
 
     with pytest.raises(CampusConflictError, match="own access"):
         service.revoke_admin(first_account.id, actor_account_id=first_account.id)
+
+
+def test_admin_can_create_and_authorize_a_named_account(
+    campus_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    creator = campus_session.query(Account).order_by(Account.name).first()
+    assert creator is not None
+    tenant_calls: list[str] = []
+
+    def create_account(**kwargs) -> Account:
+        account = Account(name=kwargs["name"], email=kwargs["email"])
+        campus_session.add(account)
+        campus_session.commit()
+        return account
+
+    monkeypatch.setattr(administrator_service.AccountService, "create_account", create_account)
+    monkeypatch.setattr(
+        administrator_service.TenantService,
+        "create_owner_tenant_if_not_exist",
+        lambda account, **_: tenant_calls.append(account.id),
+    )
+    service = AdministratorService(session=campus_session, bootstrap_account_ids=(creator.id,))
+    service.require_admin(creator.id, display_name=creator.name)
+
+    created = service.create_admin_account(
+        email="NEW@example.invalid",
+        name="New Admin",
+        password="Temporary123",
+        actor_account_id=creator.id,
+    )
+
+    account = campus_session.get(Account, created.account_id)
+    assert account is not None
+    assert account.email == "new@example.invalid"
+    assert tenant_calls == [account.id]
+    assert [event.action for event in campus_session.query(CampusAuditEvent).all()][-2:] == [
+        "administrator.added",
+        "administrator.account_created",
+    ]

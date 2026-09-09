@@ -256,6 +256,59 @@ def test_model_only_configurator_supplies_required_fields_for_each_model_type(sq
     }
 
 
+def test_model_configurator_hot_syncs_the_gateway_speech_model_as_default(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    defaults: list[tuple[str, str, str, str]] = []
+
+    class ProviderService:
+        def create_provider_credential(self, **_: object) -> None:
+            raise AssertionError("model-only configuration cannot create provider credentials")
+
+        def update_provider_credential(self, **_: object) -> None:
+            raise AssertionError("model-only configuration cannot update provider credentials")
+
+        def create_model_credential(self, **_: object) -> None:
+            return None
+
+        def update_model_credential(self, **_: object) -> None:
+            return None
+
+        def update_default_model_of_model_type(
+            self, tenant_id: str, model_type: str, provider: str, model: str
+        ) -> None:
+            defaults.append((tenant_id, model_type, provider, model))
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai_api_compatible/openai_api_compatible",
+            provider_plugin_unique_identifier="langgenius/openai_api_compatible:0.0.64@checksum",
+            credential_name="Campus managed",
+            credential_scope="model",
+            api_key_field="api_key",
+            base_url_field="endpoint_url",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:qwen3.8-flash,speech2text:qwen-audio-3.0-asr-flash"),
+            api_protocol="chat",
+            plugin_installer=SimpleNamespace(ensure_installed=lambda *_: None),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    assert defaults == [
+        (
+            "tenant-1",
+            "speech2text",
+            "langgenius/openai_api_compatible/openai_api_compatible",
+            "qwen-audio-3.0-asr-flash",
+        )
+    ]
+
+
 def test_model_configurator_updates_existing_provider_and_model_credentials(sqlite_engine) -> None:
     ProviderCredential.metadata.create_all(
         sqlite_engine,
