@@ -1,5 +1,10 @@
 """store original learning-document bytes
 
+Legacy chapter bodies were sanitized before storage, so their original scripts
+and event handlers cannot be reconstructed. Keep the migrated copy as an admin
+draft for reference, but require replacement with the original file before it
+can be published through the unrestricted document origin.
+
 Revision ID: b72e8c1f4a30
 Revises: a41d78e6f2b0
 Create Date: 2026-09-10 09:00:00.000000
@@ -24,7 +29,8 @@ def upgrade():
             UPDATE campus_lab_manual_chapters
             SET document_data = convert_to(body_html, 'UTF8'),
                 original_filename = title || '.html',
-                document_size_bytes = octet_length(convert_to(body_html, 'UTF8'))
+                document_size_bytes = octet_length(convert_to(body_html, 'UTF8')),
+                status = 'draft'
             WHERE document_data IS NULL
             """
         )
