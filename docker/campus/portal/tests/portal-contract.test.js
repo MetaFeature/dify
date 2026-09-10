@@ -17,6 +17,10 @@ test('the login form cannot submit natively, so credentials never reach the URL'
   assert.match(script, /#login-form[\s\S]{0,400}?addEventListener\('submit', event => event\.preventDefault\(\)\)/)
 })
 
+test('the portal header does not show a campus-network hint', () => {
+  assert.doesNotMatch(page, /校园内网|network-badge/)
+})
+
 test('signing in lands on the experiment selection page, not straight in the reservation centre', () => {
   // The reservation centre is one of three destinations now; going there
   // directly would hide the other two tracks from every student.

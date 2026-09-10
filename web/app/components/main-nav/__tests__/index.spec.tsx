@@ -370,6 +370,7 @@ describe('MainNav', () => {
   it('renders primary navigation with the planned routes', () => {
     renderMainNav()
 
+    expect(screen.getByRole('link', { name: '返回预约平台' })).toHaveAttribute('href', '/portal/')
     expect(screen.getAllByText(Plan.team)).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'common.account.account' })).not.toHaveTextContent(
       Plan.team,

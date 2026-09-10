@@ -106,6 +106,15 @@ export function MainNav({ className }: MainNavProps) {
         <div className="p-2">
           <WorkspaceCard />
         </div>
+        <div className="px-2 pb-1">
+          <a
+            href="/portal/"
+            className="flex h-8 w-full items-center gap-2 rounded-[10px] px-2 py-1.5 text-sm text-text-secondary hover:bg-state-base-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-state-accent-solid focus-visible:outline-hidden"
+          >
+            <span className="i-ri-arrow-left-line size-4 shrink-0" aria-hidden="true" />
+            <span className="truncate">返回预约平台</span>
+          </a>
+        </div>
         <nav className="isolate flex flex-col gap-px p-2">
           {navItems.map((item) => (
             <MainNavLink key={item.href} item={item} pathname={pathname}>
