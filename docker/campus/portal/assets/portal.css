@@ -137,8 +137,8 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 .track-card.unavailable h2 { color: #7b859c; }
 
 /* Lab manual reader: chapter list beside one chapter's body. */
-.manual-layout { display: grid; grid-template-columns: minmax(200px, 264px) minmax(0, 1fr); gap: 18px; align-items: start; }
-.manual-chapters { position: sticky; top: 18px; }
+.manual-layout { display: block; }
+.manual-chapters { max-width: 560px; }
 .chapter-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .manual-open {
   display: grid;
@@ -184,8 +184,3 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 .chapter-body th { background: #f6f8fc; font-weight: 700; }
 .chapter-body blockquote { padding: 2px 0 2px 15px; border-left: 3px solid #d7deea; color: #707b92; }
 .chapter-body figcaption { color: #707b92; font-size: 13px; }
-
-@media (max-width: 900px) {
-  .manual-layout { grid-template-columns: minmax(0, 1fr); }
-  .manual-chapters { position: static; }
-}

@@ -577,6 +577,7 @@ async function showManual(track, title) {
   elements.manualView.hidden = false
   elements.manualTitle.textContent = title
   elements.manualChapters.textContent = ''
+  elements.manualBody.hidden = false
   elements.manualBody.textContent = '正在读取实验手册…'
   let chapters
   try {
@@ -611,5 +612,5 @@ async function showManual(track, title) {
     nav.append(item)
   }
   elements.manualChapters.replaceChildren(nav)
-  elements.manualBody.textContent = '选择左侧手册后，将在带平台导航的新页面中打开。手册内容仍按原始 HTML 运行。'
+  elements.manualBody.hidden = true
 }

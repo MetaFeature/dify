@@ -63,6 +63,8 @@ test('learning-document titles use the backend-issued isolated-origin URL', () =
   assert.match(manual, /link\.rel = 'noopener'/)
   assert.match(manual, /link\.className = 'manual-open'/)
   assert.match(manual, /openLabel\.textContent = '打开 HTML 手册'/)
+  assert.match(manual, /elements\.manualBody\.hidden = true/)
+  assert.doesNotMatch(manual, /选择左侧手册|原始 HTML 运行/)
 })
 
 test('the manual picker has no redundant hint beside its navigation', () => {
