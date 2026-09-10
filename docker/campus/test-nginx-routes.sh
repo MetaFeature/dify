@@ -133,6 +133,10 @@ fi
   echo "Original HTML must be blocked on Portal/Admin origins and exposed only on the manual origin" >&2
   exit 1
 }
+if grep -Eq '^[[:space:]]*location \^~ /console/api/campus/ \{' "${template}"; then
+  echo "The public Campus API prefix would override the original-document 404 regex" >&2
+  exit 1
+fi
 
 root_location="$(sed -n '/^[[:space:]]*location = \/ {$/,/^[[:space:]]*}/p' "${template}")"
 for directive in \

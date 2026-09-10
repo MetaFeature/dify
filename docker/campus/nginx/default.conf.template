@@ -56,7 +56,9 @@ server {
       return 404;
     }
 
-    location ^~ /console/api/campus/ {
+    # Keep this as a normal prefix so the exact learning-document regex above
+    # can win. A ^~ prefix would bypass that 404 boundary on this origin.
+    location /console/api/campus/ {
       proxy_pass http://campus_api;
       include proxy.conf;
     }
