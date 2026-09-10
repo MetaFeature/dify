@@ -555,17 +555,17 @@ def _chapter_payload(chapter) -> dict[str, object]:
         "title": chapter.title,
         "original_filename": filename,
         "size_bytes": size_bytes,
-        "content_url": _manual_content_url(chapter.id),
+        "content_url": _manual_view_url(chapter.id),
         "position": chapter.position,
         "status": chapter.status,
     }
 
 
-def _manual_content_url(chapter_id: str) -> str:
+def _manual_view_url(chapter_id: str) -> str:
     hostname = request.host.split(":", 1)[0]
     return (
         f"{request.scheme}://{hostname}:{dify_config.CAMPUS_MANUAL_PUBLIC_PORT}"
-        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/content"
+        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/view"
     )
 
 

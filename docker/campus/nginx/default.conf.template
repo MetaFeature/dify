@@ -52,7 +52,7 @@ server {
 
     # Uploaded HTML is executable content. It is available only from the
     # dedicated manual origin below, never from the Portal/Dify origin.
-    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/content$ {
+    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/(view|content)$ {
       return 404;
     }
 
@@ -221,7 +221,7 @@ server {
       try_files $uri =404;
     }
 
-    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/content$ {
+    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/(view|content)$ {
       return 404;
     }
 
@@ -299,7 +299,7 @@ server {
     listen 8082;
     server_name _;
 
-    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/content$ {
+    location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/(view|content)$ {
       proxy_pass http://campus_api;
       include proxy.conf;
     }

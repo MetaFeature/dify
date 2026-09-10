@@ -27,6 +27,7 @@ def _routes() -> set[str]:
     [
         "/campus/experiment-tracks",
         "/campus/lab-manuals/<string:track>",
+        "/campus/lab-manuals/documents/<string:chapter_id>/view",
         "/campus/lab-manuals/documents/<string:chapter_id>/content",
         "/campus/admin/lab-manuals/<string:track>/chapters",
         "/campus/admin/lab-manuals/chapters/<string:chapter_id>",
@@ -174,14 +175,33 @@ def test_original_document_bytes_are_returned_without_functional_response_restri
     assert "LabManualChapterStatus.PUBLISHED" in source
 
 
-def test_document_links_use_the_dedicated_manual_origin() -> None:
+def test_document_links_open_the_wrapped_view_on_the_dedicated_manual_origin() -> None:
     from controllers.console import campus
 
     app = Flask(__name__)
     with app.test_request_context("http://10.20.10.193/console/api/campus/lab-manuals/agent"):
-        content_url = campus._manual_content_url("chapter-1")
+        view_url = campus._manual_view_url("chapter-1")
 
-    assert content_url == ("http://10.20.10.193:18083/console/api/campus/lab-manuals/documents/chapter-1/content")
+    assert view_url == ("http://10.20.10.193:18083/console/api/campus/lab-manuals/documents/chapter-1/view")
+
+
+def test_manual_view_wraps_the_untouched_document_in_a_reloadable_frame() -> None:
+    from controllers.console import campus
+
+    page = campus._manual_view_html(
+        title="交互式 <手册>",
+        filename='原始 "文件".html',
+        content_url="/console/api/campus/lab-manuals/documents/chapter-1/content",
+        portal_url="http://10.20.10.193/portal/",
+    )
+
+    assert '<iframe name="manual-content"' in page
+    assert 'src="/console/api/campus/lab-manuals/documents/chapter-1/content"' in page
+    assert 'target="manual-content"' in page
+    assert "sandbox=" not in page
+    assert "交互式 &lt;手册&gt;" in page
+    assert "原始 &quot;文件&quot;.html" in page
+    assert "提示" not in page
 
 
 def test_image_upload_is_administrator_only_and_attributed() -> None:

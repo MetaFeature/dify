@@ -140,20 +140,26 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 .manual-layout { display: grid; grid-template-columns: minmax(200px, 264px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .manual-chapters { position: sticky; top: 18px; }
 .chapter-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.chapter-link {
+.manual-open {
+  display: grid;
+  gap: 5px;
   width: 100%;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #d7e1f0;
+  border-radius: 15px;
   color: #4a556f;
-  background: transparent;
+  background: #fff;
   font: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
-  transition: background .15s, color .15s;
+  box-shadow: 0 8px 22px rgb(45 61 96 / 6%);
+  transition: transform .15s, border-color .15s, box-shadow .15s;
 }
-.chapter-link:hover { background: rgb(55 102 184 / 8%); }
-.chapter-link.active { color: #1d4b99; background: rgb(55 102 184 / 14%); font-weight: 700; }
+.manual-open:hover { transform: translateY(-1px); border-color: #9fb8dd; box-shadow: 0 12px 28px rgb(36 83 166 / 12%); }
+.manual-open-title { color: #172036; font-weight: 800; line-height: 1.4; }
+.manual-open small { overflow: hidden; color: #7b859c; text-overflow: ellipsis; white-space: nowrap; }
+.manual-open strong { margin-top: 7px; color: #2458ae; font-size: 13px; }
 .manual-body { padding: 30px; min-width: 0; }
 .manual-body h2 { margin-top: 0; }
 

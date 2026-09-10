@@ -129,8 +129,8 @@ if printf '%s\n' "${manual_server}" | grep -Fq 'Content-Security-Policy'; then
   echo "Campus manual origin still changes uploaded HTML behaviour with CSP" >&2
   exit 1
 fi
-[[ "$(grep -Fc 'location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/content$ {' "${template}")" == "3" ]] || {
-  echo "Original HTML must be blocked on Portal/Admin origins and exposed only on the manual origin" >&2
+[[ "$(grep -Fc 'location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/(view|content)$ {' "${template}")" == "3" ]] || {
+  echo "Manual views and original HTML must be blocked on Portal/Admin origins and exposed only on the manual origin" >&2
   exit 1
 }
 if grep -Eq '^[[:space:]]*location \^~ /console/api/campus/ \{' "${template}"; then

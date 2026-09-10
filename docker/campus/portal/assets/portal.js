@@ -595,14 +595,21 @@ async function showManual(track, title) {
   for (const chapter of chapters) {
     const item = document.createElement('li')
     const link = document.createElement('a')
-    link.className = 'chapter-link'
-    link.textContent = chapter.title
+    link.className = 'manual-open'
     link.href = chapter.content_url
     link.target = '_blank'
     link.rel = 'noopener'
+    const documentTitle = document.createElement('span')
+    documentTitle.className = 'manual-open-title'
+    documentTitle.textContent = chapter.title
+    const filename = document.createElement('small')
+    filename.textContent = chapter.original_filename
+    const openLabel = document.createElement('strong')
+    openLabel.textContent = '打开 HTML 手册'
+    link.append(documentTitle, filename, openLabel)
     item.append(link)
     nav.append(item)
   }
   elements.manualChapters.replaceChildren(nav)
-  elements.manualBody.textContent = '点击文件名将在独立页面按原文件打开 HTML 课件。'
+  elements.manualBody.textContent = '选择左侧手册后，将在带平台导航的新页面中打开。手册内容仍按原始 HTML 运行。'
 }

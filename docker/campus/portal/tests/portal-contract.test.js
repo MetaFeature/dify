@@ -58,9 +58,17 @@ test('only sanitized presentation content is inserted into the Portal origin', (
 test('learning-document titles use the backend-issued isolated-origin URL', () => {
   const manual = script.slice(script.indexOf('async function showManual('))
 
-  assert.match(manual, /link\.textContent = chapter\.title/)
+  assert.match(manual, /documentTitle\.textContent = chapter\.title/)
   assert.match(manual, /link\.href = chapter\.content_url/)
   assert.match(manual, /link\.rel = 'noopener'/)
+  assert.match(manual, /link\.className = 'manual-open'/)
+  assert.match(manual, /openLabel\.textContent = '打开 HTML 手册'/)
+})
+
+test('the manual picker has no redundant hint beside its navigation', () => {
+  const manualView = page.slice(page.indexOf('<section id="manual-view"'), page.indexOf('<section id="dashboard-view"'))
+
+  assert.doesNotMatch(manualView, /点击文件名|独立页面|hint/)
 })
 
 test('reservation history provides accessible pagination controls', () => {

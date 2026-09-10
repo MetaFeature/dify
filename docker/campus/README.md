@@ -452,11 +452,13 @@ without a functional CSP, character-set conversion, parsing, or rewriting.
 
 The document URL uses the dedicated manual origin on
 `CAMPUS_MANUAL_PUBLIC_PORT` (default `18083`). That listener exposes only the
-authenticated document route and returns 404 for everything else. The Portal,
-Dify, administration, and reservation origins explicitly refuse the raw
-document path, so unrestricted document code never receives their same-origin
-authority. Login-page HTML follows a different rule: it remains sanitized
-because it renders inside the trusted Portal page.
+authenticated viewer and document routes and returns 404 for everything else.
+The viewer places the untouched document in an unsandboxed same-origin frame,
+adds return and reload controls outside the file, and keeps browser refreshes on
+a stable URL. The Portal, Dify, administration, and reservation origins
+explicitly refuse both manual paths, so unrestricted document code never
+receives their same-origin authority. Login-page HTML follows a different rule:
+it remains sanitized because it renders inside the trusted Portal page.
 
 A learning document is a draft until it is published; only published documents
 reach students. Reordering renumbers the track and never crosses into another

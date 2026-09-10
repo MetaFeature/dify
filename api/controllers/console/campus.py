@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from html import escape
 from urllib.parse import quote
 
 import flask_login
@@ -120,12 +121,128 @@ def _presentation_response(presentation: PortalPresentation) -> dict[str, object
     )
 
 
-def _manual_content_url(chapter_id: str) -> str:
+def _manual_origin_url(chapter_id: str, endpoint: str) -> str:
     hostname = request.host.split(":", 1)[0]
     return (
         f"{request.scheme}://{hostname}:{dify_config.CAMPUS_MANUAL_PUBLIC_PORT}"
-        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/content"
+        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/{endpoint}"
     )
+
+
+def _manual_view_url(chapter_id: str) -> str:
+    return _manual_origin_url(chapter_id, "view")
+
+
+def _manual_content_url(chapter_id: str) -> str:
+    return f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/content"
+
+
+def _manual_view_html(*, title: str, filename: str, content_url: str, portal_url: str) -> str:
+    safe_title = escape(title)
+    safe_filename = escape(filename)
+    safe_content_url = escape(content_url, quote=True)
+    safe_portal_url = escape(portal_url, quote=True)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{safe_title} · AI 实践平台</title>
+  <style>
+    :root {{
+      color: #172036;
+      background: #eef3fb;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 320px;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+    }}
+    header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 76px;
+      padding: 12px 24px;
+      border-bottom: 1px solid #dce4f0;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 8px 28px rgba(45, 61, 96, .08);
+    }}
+    .identity {{ display: flex; align-items: center; min-width: 0; gap: 13px; }}
+    .mark {{
+      display: grid;
+      place-items: center;
+      flex: 0 0 44px;
+      width: 44px;
+      height: 44px;
+      border-radius: 13px;
+      color: #fff;
+      background: #2453a6;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }}
+    .title {{ min-width: 0; }}
+    h1 {{
+      margin: 0 0 3px;
+      overflow: hidden;
+      font-size: 18px;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    p {{ margin: 0; overflow: hidden; color: #707b92; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }}
+    nav {{ display: flex; flex: 0 0 auto; gap: 9px; }}
+    a {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 15px;
+      border: 1px solid #d5ddea;
+      border-radius: 11px;
+      color: #36547f;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
+    a:hover {{ border-color: #9fb1ce; background: #f5f8fd; }}
+    a.primary {{
+      border-color: #2458ae;
+      color: #fff;
+      background: #2458ae;
+      box-shadow: 0 8px 18px rgba(36, 88, 174, .2);
+    }}
+    iframe {{ display: block; width: 100%; height: 100%; border: 0; background: #fff; }}
+    @media (max-width: 640px) {{
+      header {{ align-items: stretch; flex-direction: column; gap: 10px; padding: 12px; }}
+      nav {{ width: 100%; }}
+      nav a {{ flex: 1; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="identity">
+      <span class="mark" aria-hidden="true">NJIT</span>
+      <div class="title"><h1>{safe_title}</h1><p>{safe_filename}</p></div>
+    </div>
+    <nav aria-label="手册操作">
+      <a href="{safe_content_url}" target="manual-content">重新载入手册</a>
+      <a class="primary" href="{safe_portal_url}">返回实验选择</a>
+    </nav>
+  </header>
+  <iframe name="manual-content" src="{safe_content_url}" title="{safe_title}" allowfullscreen></iframe>
+</body>
+</html>"""
 
 
 @console_ns.route("/campus/auth/virtual")
@@ -419,7 +536,7 @@ class CampusLabManualApi(Resource):
                             if chapter.document_size_bytes is not None
                             else len(chapter.body_html.encode("utf-8"))
                         ),
-                        "content_url": _manual_content_url(chapter.id),
+                        "content_url": _manual_view_url(chapter.id),
                         "position": chapter.position,
                         "status": chapter.status,
                     }
@@ -427,6 +544,33 @@ class CampusLabManualApi(Resource):
                 ],
             },
         )
+
+
+@console_ns.route("/campus/lab-manuals/documents/<string:chapter_id>/view")
+class CampusLearningDocumentViewApi(Resource):
+    @setup_required
+    def get(self, chapter_id: str) -> ResponseReturnValue:
+        require_campus_enabled()
+        administrator = _is_administrator_reader()
+        if not administrator:
+            portal_student()
+        try:
+            document = lab_manuals().chapter(chapter_id)
+        except CampusValidationError as error:
+            raise NotFound(str(error)) from error
+        if not administrator and document.status is not LabManualChapterStatus.PUBLISHED:
+            raise NotFound("Learning document was not found")
+        hostname = request.host.split(":", 1)[0]
+        page = _manual_view_html(
+            title=document.title,
+            filename=document.original_filename or f"{document.title}.html",
+            content_url=_manual_content_url(chapter_id),
+            portal_url=f"{request.scheme}://{hostname}/portal/",
+        )
+        response = make_response(page)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
 
 @console_ns.route("/campus/lab-manuals/documents/<string:chapter_id>/content")
