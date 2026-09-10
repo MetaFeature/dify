@@ -79,7 +79,13 @@ let reservationPage = 0
 let resizeFrame = 0
 let portalPresentation = null
 
-void loadPortalPresentation()
+void bootstrapPortal()
+
+async function bootstrapPortal() {
+  await loadPortalPresentation()
+  if (new URLSearchParams(window.location.search).get('from') === 'manual')
+    await restoreTracksFromManual()
+}
 
 async function loadPortalPresentation() {
   try {
@@ -88,6 +94,23 @@ async function loadPortalPresentation() {
   }
   catch {
     // The checked-in default remains visible when presentation loading fails.
+  }
+}
+
+async function restoreTracksFromManual() {
+  try {
+    const summaries = await api.listExperimentTracks()
+    elements.loginView.hidden = true
+    elements.requiredPasswordView.hidden = true
+    elements.manualView.hidden = true
+    elements.dashboardView.hidden = true
+    elements.tracksView.hidden = false
+    hideMessage(elements.tracksMessage)
+    renderTrackCards(experimentTrackCards(summaries, portalPresentation?.tracks || []))
+    window.history.replaceState(null, '', '/portal/')
+  }
+  catch {
+    // A missing or expired session keeps the normal login page visible.
   }
 }
 

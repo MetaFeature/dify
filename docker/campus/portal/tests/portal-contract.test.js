@@ -73,6 +73,17 @@ test('the manual picker has no redundant hint beside its navigation', () => {
   assert.doesNotMatch(manualView, /点击文件名|独立页面|hint/)
 })
 
+test('returning from a manual restores the experiment chooser when the portal session is valid', () => {
+  assert.match(script, /new URLSearchParams\(window\.location\.search\)\.get\('from'\) === 'manual'/)
+  const restore = script.slice(script.indexOf('async function restoreTracksFromManual('))
+  const body = restore.slice(0, restore.indexOf('\n}'))
+
+  assert.match(body, /await api\.listExperimentTracks\(\)/)
+  assert.match(body, /elements\.loginView\.hidden = true/)
+  assert.match(body, /elements\.tracksView\.hidden = false/)
+  assert.match(body, /window\.history\.replaceState\(null, '', '\/portal\/'\)/)
+})
+
 test('reservation history provides accessible pagination controls', () => {
   assert.match(page, /<nav id="reservation-pagination"[^>]*aria-label="预约记录分页"/)
   assert.match(page, /<button id="reservation-previous"[^>]*>上一页<\/button>/)

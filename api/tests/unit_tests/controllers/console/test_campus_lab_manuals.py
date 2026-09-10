@@ -204,6 +204,16 @@ def test_manual_view_wraps_the_untouched_document_in_a_reloadable_frame() -> Non
     assert "提示" not in page
 
 
+def test_manual_view_returns_to_the_portal_experiment_chooser() -> None:
+    import inspect
+
+    from controllers.console import campus
+
+    source = inspect.getsource(campus.CampusLearningDocumentViewApi)
+
+    assert "/portal/?from=manual" in source
+
+
 def test_image_upload_is_administrator_only_and_attributed() -> None:
     import inspect
 

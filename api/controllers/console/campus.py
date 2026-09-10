@@ -565,7 +565,7 @@ class CampusLearningDocumentViewApi(Resource):
             title=document.title,
             filename=document.original_filename or f"{document.title}.html",
             content_url=_manual_content_url(chapter_id),
-            portal_url=f"{request.scheme}://{hostname}/portal/",
+            portal_url=f"{request.scheme}://{hostname}/portal/?from=manual",
         )
         response = make_response(page)
         response.headers["Content-Type"] = "text/html; charset=utf-8"
