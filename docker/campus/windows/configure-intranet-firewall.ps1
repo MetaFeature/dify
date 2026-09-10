@@ -9,6 +9,7 @@ param(
     [int]$AdminPort = 18081,
     [ValidateRange(1, 65535)]
     [int]$GatewayPort = 13000,
+    [switch]$ManualOrigin,
     [string]$RemoteAddress = "10.0.0.0/255.0.0.0",
     [string]$ListenAddress = "10.20.10.193",
     [string]$WslDistributionName = "Ubuntu-2404"
@@ -156,17 +157,28 @@ function Test-CampusHostAddressLoopback {
     if (-not (Test-Path -LiteralPath $curlPath)) {
         throw "Windows curl.exe is required for Campus public-entry verification."
     }
-    $checks = @(
-        [PSCustomObject]@{
-            Name = "Campus public root"
+    $publicChecks = if ($ManualOrigin) {
+        @([PSCustomObject]@{
+            Name = "Campus isolated manual origin"
             Url = "http://${ListenAddress}:${Port}/"
-            Status = "302"
-        },
-        [PSCustomObject]@{
-            Name = "Campus public portal"
-            Url = "http://${ListenAddress}:${Port}/portal/"
-            Status = "200"
-        },
+            Status = "404"
+        })
+    }
+    else {
+        @(
+            [PSCustomObject]@{
+                Name = "Campus public root"
+                Url = "http://${ListenAddress}:${Port}/"
+                Status = "302"
+            },
+            [PSCustomObject]@{
+                Name = "Campus public portal"
+                Url = "http://${ListenAddress}:${Port}/portal/"
+                Status = "200"
+            }
+        )
+    }
+    $checks = @($publicChecks) + @(
         [PSCustomObject]@{
             Name = "Campus administration portal"
             Url = "http://127.0.0.1:${AdminPort}/"

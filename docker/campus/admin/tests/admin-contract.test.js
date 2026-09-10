@@ -43,29 +43,31 @@ test('the learning-document tab offers all tracks in the required order', () => 
   assert.deepEqual(options, ['large-model', 'agent', 'deep-learning'])
 })
 
-test('the learning-document tab explains preserved interaction and isolation', () => {
+test('the learning-document tab explains byte preservation and origin isolation', () => {
   const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
 
-  assert.match(panel, /JavaScript/)
-  assert.match(panel, /隔离的沙箱页面/)
-  assert.match(panel, /外部网络请求和表单提交会被阻止/)
+  assert.match(panel, /原始字节/)
+  assert.match(panel, /不解析、不改写/)
+  assert.match(panel, /不限制页面自身/)
+  assert.match(panel, /独立手册来源/)
 })
 
-test('a saved document reports that its HTML is preserved for the sandbox', () => {
+test('a saved document reports the original filename and byte size', () => {
   const submit = script.slice(script.indexOf("elements.manualForm.addEventListener('submit'"))
   const handler = submit.slice(0, submit.indexOf('\n})'))
 
-  assert.match(handler, /renderSanitizeReport\(saved\.removed\)/)
-  assert.match(script, /HTML 已完整保存/)
+  assert.match(handler, /saved\.original_filename/)
+  assert.match(handler, /saved\.size_bytes/)
 })
 
-test('editing a chapter reads its body rather than opening an empty form', () => {
-  // The list omits body_html; a save from an empty form would wipe the chapter.
-  const editor = script.slice(script.indexOf('async function startEditingChapter('))
+test('replacing a document never reads or edits its HTML body', () => {
+  const editor = script.slice(script.indexOf('function startEditingChapter('))
   const body = editor.slice(0, editor.indexOf('\n}'))
+  const submit = script.slice(script.indexOf("elements.manualForm.addEventListener('submit'"), script.indexOf("elements.manualTable.addEventListener('click'"))
 
-  assert.match(body, /api\.manualChapter\(chapterId\)/)
-  assert.match(body, /elements\.manualHtml\.value = chapter\.body_html/)
+  assert.match(body, /manualChapterId\.value = chapterId/)
+  assert.doesNotMatch(submit, /file\.text\(\)/)
+  assert.doesNotMatch(script, /body_html|manualHtml/)
 })
 
 test('chapter titles reach the table escaped', () => {
@@ -77,18 +79,9 @@ test('chapter titles reach the table escaped', () => {
   assert.doesNotMatch(body, /\$\{chapter\.title\}/)
 })
 
-test('images are uploaded to the platform, because remote ones are blocked', () => {
+test('the raw-file form does not offer content rewriting helpers', () => {
   const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
 
-  assert.match(panel, /id="manual-image"/)
-  assert.match(panel, /accept="image\/png,image\/jpeg,image\/gif,image\/webp"/)
-  assert.doesNotMatch(panel, /image\/svg/)
-})
-
-test('an uploaded image is referenced by the url the platform returned', () => {
-  const handler = script.slice(script.indexOf("elements.manualImage.addEventListener('change'"))
-  const body = handler.slice(0, handler.indexOf('\n})'))
-
-  assert.match(body, /uploaded\.url/)
-  assert.match(body, /escapeHtml\(alt\)/)
+  assert.match(panel, /id="manual-file"/)
+  assert.doesNotMatch(panel, /manual-html|manual-image/)
 })

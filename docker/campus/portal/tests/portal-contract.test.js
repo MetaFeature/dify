@@ -51,11 +51,11 @@ test('only sanitized presentation content is inserted into the Portal origin', (
   assert.doesNotMatch(script, /chapter\.body_html/)
 })
 
-test('learning-document titles are links to the isolated content route', () => {
+test('learning-document titles use the backend-issued isolated-origin URL', () => {
   const manual = script.slice(script.indexOf('async function showManual('))
 
   assert.match(manual, /link\.textContent = chapter\.title/)
-  assert.match(manual, /lab-manuals\/documents\/\$\{encodeURIComponent\(chapter\.id\)\}\/content/)
+  assert.match(manual, /link\.href = chapter\.content_url/)
   assert.match(manual, /link\.rel = 'noopener'/)
 })
 

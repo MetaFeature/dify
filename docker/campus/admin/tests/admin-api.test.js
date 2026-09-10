@@ -69,3 +69,25 @@ test('a multipart upload keeps the browser boundary instead of a json content ty
   assert.equal(seen.headers.get('content-type'), null)
   assert.equal(seen.headers.get('X-CSRF-Token'), 'tok')
 })
+
+test('learning documents are sent as original files without text decoding', async () => {
+  let seen
+  const api = new AdminApi(async (url, options) => {
+    seen = { url, options }
+    return response({
+      id: 'd1',
+      original_filename: '实验.html',
+      size_bytes: 4,
+      content_url: 'http://127.0.0.1:18083/document',
+    })
+  }, () => 'csrf_token=tok')
+  const original = new Uint8Array([0xff, 0xfe, 0x00, 0x61])
+  const file = new File([original], '实验.html', { type: 'text/html' })
+
+  await api.createManualChapter('agent', file)
+
+  assert.equal(seen.url, '/console/api/campus/admin/lab-manuals/agent/chapters')
+  assert.ok(seen.options.body instanceof FormData)
+  assert.deepEqual(new Uint8Array(await seen.options.body.get('file').arrayBuffer()), original)
+  assert.equal(seen.options.headers.get('content-type'), null)
+})

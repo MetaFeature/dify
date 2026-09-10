@@ -112,6 +112,28 @@ grep -Fq './campus/admin/assets:/campus-admin-html/assets:ro' "${compose_overlay
   exit 1
 }
 
+grep -Fq '127.0.0.1:${CAMPUS_MANUAL_PUBLIC_PORT:-18083}:8082' "${compose_overlay}" || {
+  echo "Campus Compose does not publish the isolated manual origin on loopback" >&2
+  exit 1
+}
+manual_server="$(sed -n '/^# Original learning documents run on a separate browser origin/,$p' "${template}")"
+printf '%s\n' "${manual_server}" | grep -Fq 'listen 8082;' || {
+  echo "Campus nginx does not define the isolated manual origin" >&2
+  exit 1
+}
+printf '%s\n' "${manual_server}" | grep -Fq 'proxy_pass http://campus_api;' || {
+  echo "Campus manual origin does not stream documents from the Campus API" >&2
+  exit 1
+}
+if printf '%s\n' "${manual_server}" | grep -Fq 'Content-Security-Policy'; then
+  echo "Campus manual origin still changes uploaded HTML behaviour with CSP" >&2
+  exit 1
+fi
+[[ "$(grep -Fc 'location ~ ^/console/api/campus/lab-manuals/documents/[0-9a-fA-F-]+/content$ {' "${template}")" == "3" ]] || {
+  echo "Original HTML must be blocked on Portal/Admin origins and exposed only on the manual origin" >&2
+  exit 1
+}
+
 root_location="$(sed -n '/^[[:space:]]*location = \/ {$/,/^[[:space:]]*}/p' "${template}")"
 for directive in \
   'auth_request /_campus_access_check;' \

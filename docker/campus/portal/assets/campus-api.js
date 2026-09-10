@@ -9,7 +9,7 @@ const CAMPUS_API_BASE = '/console/api/campus'
 /** @typedef {{ remaining_usd: string, used_usd: string, total_usd: string, model_calls_enabled: boolean, by_model: ModelUsage[] }} Allowance */
 /** @typedef {{ access: AccessDecision, reservations: Reservation[], allowance: Allowance }} Dashboard */
 /** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
-/** @typedef {{ id: string, track: string, title: string, position: number, status: string, body_html: string }} ManualChapter */
+/** @typedef {{ id: string, track: string, title: string, original_filename: string, size_bytes: number, content_url: string, position: number, status: string }} ManualChapter */
 
 /** Backend-issued safe codes the portal understands beyond plain HTTP statuses. */
 const BODY_ERROR_CODES = new Set([

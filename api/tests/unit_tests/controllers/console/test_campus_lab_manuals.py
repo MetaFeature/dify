@@ -8,6 +8,7 @@ draft.
 """
 
 import pytest
+from flask import Flask
 
 from controllers.console import console_ns
 
@@ -128,18 +129,16 @@ def test_authoring_routes_attribute_the_acting_administrator() -> None:
     assert checked >= 5, f"expected every authoring call to be checked, saw {checked}"
 
 
-def test_administrators_can_read_one_chapter_with_its_body() -> None:
-    # The chapter list deliberately omits body_html, so editing needs a route
-    # that returns it; without one the edit form would open empty and a save
-    # would wipe the chapter.
+def test_administrators_replace_documents_with_multipart_files() -> None:
     import inspect
 
     from controllers.console import campus_admin
 
     assert "/campus/admin/lab-manuals/chapters/<string:chapter_id>" in _routes()
     source = inspect.getsource(campus_admin.CampusAdminLabManualChapterApi)
-    assert "def get(" in source
-    assert "body_html" in source
+    assert 'request.files.get("file")' in source
+    assert "upload.read(MAX_DOCUMENT_BYTES + 1)" in source
+    assert "body_html" not in source
 
 
 def test_manual_images_are_uploaded_by_administrators_and_served_to_students() -> None:
@@ -162,19 +161,27 @@ def test_served_images_cannot_act_as_documents() -> None:
     assert "sandbox" in source
 
 
-def test_interactive_documents_run_in_an_opaque_sandbox_without_portal_authority() -> None:
+def test_original_document_bytes_are_returned_without_functional_response_restrictions() -> None:
     import inspect
 
     from controllers.console import campus
 
     source = inspect.getsource(campus.CampusLearningDocumentContentApi)
 
-    assert "allow-scripts" in source
-    assert "allow-same-origin" not in source
-    assert "connect-src 'none'" in source
-    assert "form-action 'none'" in source
-    assert "frame-ancestors 'none'" in source
+    assert "original.data" in source
+    assert "Content-Security-Policy" not in source
+    assert "X-Content-Type-Options" not in source
     assert "LabManualChapterStatus.PUBLISHED" in source
+
+
+def test_document_links_use_the_dedicated_manual_origin() -> None:
+    from controllers.console import campus
+
+    app = Flask(__name__)
+    with app.test_request_context("http://10.20.10.193/console/api/campus/lab-manuals/agent"):
+        content_url = campus._manual_content_url("chapter-1")
+
+    assert content_url == ("http://10.20.10.193:18083/console/api/campus/lab-manuals/documents/chapter-1/content")
 
 
 def test_image_upload_is_administrator_only_and_attributed() -> None:

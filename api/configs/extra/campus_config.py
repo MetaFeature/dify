@@ -31,6 +31,7 @@ class CampusConfig(BaseSettings):
     CAMPUS_PORTAL_SESSION_TTL_HOURS: int = Field(default=12, ge=1, le=168)
     CAMPUS_PORTAL_COOKIE_NAME: str = Field(default="campus_portal_session", min_length=1, max_length=64)
     CAMPUS_PORTAL_COOKIE_SECURE: bool = Field(default=True)
+    CAMPUS_MANUAL_PUBLIC_PORT: int = Field(default=18083, ge=1, le=65535)
 
     CAMPUS_NEWAPI_BASE_URL: str | None = Field(default=None)
     CAMPUS_NEWAPI_ADMIN_ACCESS_TOKEN: SecretStr | None = Field(default=None)

@@ -835,12 +835,14 @@ sync_model_catalog_runtime() {
 }
 
 verify_control_plane() {
-  local campus_port admin_port gateway_port status
+  local campus_port admin_port manual_port gateway_port status
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  manual_port="$(env_value CAMPUS_MANUAL_PUBLIC_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   campus_port="${campus_port:-18080}"
   admin_port="${admin_port:-18081}"
+  manual_port="${manual_port:-18083}"
   gateway_port="${gateway_port:-13000}"
   for service in api api_websocket portal model-gateway worker worker_beat nginx; do
     require_running_service "${service}"
@@ -851,6 +853,9 @@ verify_control_plane() {
   status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${admin_port}/")"
   [[ "${status}" == "200" ]] || fail "Campus administration portal is unavailable (HTTP ${status})"
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${manual_port}/")"
+  [[ "${status}" == "404" ]] || fail "Campus manual origin exposes a non-document root (HTTP ${status})"
   local_curl --fail --silent --show-error --max-time 10 \
     "http://127.0.0.1:${gateway_port}/api/status" | grep -q '"success":true' || \
     fail "Campus model gateway is unavailable"
@@ -859,7 +864,7 @@ verify_control_plane() {
 }
 
 heartbeat_probe() {
-  local campus_port admin_port gateway_port service container_id health status
+  local campus_port admin_port manual_port gateway_port service container_id health status
   systemctl is-active --quiet docker.service || return 1
   for service in api api_websocket portal model-gateway worker worker_beat nginx; do
     service_running "${service}" || return 1
@@ -875,6 +880,7 @@ heartbeat_probe() {
   sudo -n "${WSL_LOOPBACK_ROUTING_INSTALLED}" verify >/dev/null 2>&1 || return 1
   campus_port="$(env_value EXPOSE_NGINX_PORT)"; campus_port="${campus_port:-18080}"
   admin_port="$(env_value CAMPUS_ADMIN_PORT)"; admin_port="${admin_port:-18081}"
+  manual_port="$(env_value CAMPUS_MANUAL_PUBLIC_PORT)"; manual_port="${manual_port:-18083}"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"; gateway_port="${gateway_port:-13000}"
   for target in \
     "http://127.0.0.1:${campus_port}/health" \
@@ -884,6 +890,9 @@ heartbeat_probe() {
       "${target}" 2>/dev/null || true)"
     [[ "${status}" == "200" ]] || return 1
   done
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 4 \
+    "http://127.0.0.1:${manual_port}/" 2>/dev/null || true)"
+  [[ "${status}" == "404" ]] || return 1
   vector_store_probe || return 1
 }
 
@@ -952,12 +961,14 @@ restart_runtime() {
 }
 
 status_runtime() {
-  local campus_port admin_port gateway_port failed=0 status name url
+  local campus_port admin_port manual_port gateway_port failed=0 status name url
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  manual_port="$(env_value CAMPUS_MANUAL_PUBLIC_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   campus_port="${campus_port:-18080}"
   admin_port="${admin_port:-18081}"
+  manual_port="${manual_port:-18083}"
   gateway_port="${gateway_port:-13000}"
   printf 'docker=%s loopback_service=%s heartbeat_timer=%s\n' \
     "$(systemctl is-active docker.service 2>/dev/null || true)" \
@@ -973,6 +984,10 @@ status_runtime() {
     printf '%s=%s\n' "${name}" "${status:-000}"
     [[ "${status}" == "200" ]] || failed=1
   done
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 \
+    "http://127.0.0.1:${manual_port}/" || true)"
+  printf 'manual=%s\n' "${status:-000}"
+  [[ "${status}" == "404" ]] || failed=1
   ((failed == 0)) || fail "one or more Campus control-plane endpoints are unavailable"
 }
 
@@ -1114,12 +1129,13 @@ assert_api_concurrency_capacity() {
 
 verify() {
   validate
-  local campus_bind campus_port admin_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
+  local campus_bind campus_port admin_port manual_port gateway_port baseline_url status published container_id nginx_config nginx_location portal_networks
   local actual_bindings blocked_route expected_bindings
   local public_enabled public_bind public_port upstream_port
   campus_bind="$(env_value CAMPUS_NGINX_BIND_ADDRESS)"
   campus_port="$(env_value EXPOSE_NGINX_PORT)"
   admin_port="$(env_value CAMPUS_ADMIN_PORT)"
+  manual_port="$(env_value CAMPUS_MANUAL_PUBLIC_PORT)"
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   baseline_url="$(env_value CAMPUS_BASELINE_URL)"
   public_enabled="$(env_value CAMPUS_PUBLIC_ENTRY_ENABLED)"
@@ -1129,6 +1145,7 @@ verify() {
   campus_bind="${campus_bind:-127.0.0.1}"
   campus_port="${campus_port:-18080}"
   admin_port="${admin_port:-18081}"
+  manual_port="${manual_port:-18083}"
   gateway_port="${gateway_port:-13000}"
   baseline_url="${baseline_url:-http://127.0.0.1/}"
   public_bind="${public_bind:-10.20.10.193}"
@@ -1176,6 +1193,19 @@ verify() {
   fi
   published="$(docker port "${container_id}" 8081/tcp)"
   [[ "${published}" == "127.0.0.1:${admin_port}" ]] || fail "Campus administration listener is not loopback-only"
+  published="$(docker port "${container_id}" 8082/tcp)"
+  if [[ "${public_enabled}" == "true" ]]; then
+    actual_bindings="$(printf '%s\n' "${published}" | sed '/^$/d' | sort)"
+    expected_bindings="$(printf '%s\n' "${public_bind}:${manual_port}" "127.0.0.1:${manual_port}" | sort)"
+    [[ "${actual_bindings}" == "${expected_bindings}" ]] || \
+      fail "Campus manual origin bindings differ from the exact public and loopback set"
+  else
+    [[ "${published}" == "127.0.0.1:${manual_port}" ]] || \
+      fail "Campus manual origin is not loopback-only before promotion"
+  fi
+  status="$(local_curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${manual_port}/")"
+  [[ "${status}" == "404" ]] || fail "Campus manual origin exposes a non-document root (HTTP ${status})"
   nginx_location="$(sed -n '/^[[:space:]]*location ~ /{s/^[[:space:]]*//;p;q;}' \
     "${SCRIPT_DIR}/nginx/default.conf.template")"
   nginx_config="$("${COMPOSE[@]}" exec -T nginx nginx -T 2>&1)"
@@ -1191,6 +1221,7 @@ verify() {
 
   if [[ "${public_enabled}" == "true" ]]; then
     verify_public_firewall "${public_port}"
+    verify_public_firewall "${manual_port}" true
     published="$("${UPSTREAM_LOOPBACK_COMPOSE[@]}" port nginx 80)"
     [[ "${published}" == "127.0.0.1:${upstream_port}" ]] || \
       fail "upstream Dify rollback route is not loopback-only"
@@ -1479,7 +1510,7 @@ assert_public_bind_is_local() {
 }
 
 verify_public_firewall() {
-  local public_port="$1" remote_address public_bind powershell_bin windows_script
+  local public_port="$1" manual_origin="${2:-false}" remote_address public_bind powershell_bin windows_script
   local canary_port admin_port gateway_port
   powershell_bin="$(command -v powershell.exe || true)"
   if [[ -z "${powershell_bin}" && -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]]; then
@@ -1498,10 +1529,14 @@ verify_public_firewall() {
   gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"
   gateway_port="${gateway_port:-13000}"
   windows_script="$(wslpath -w "${SCRIPT_DIR}/windows/configure-intranet-firewall.ps1")"
-  "${powershell_bin}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}" \
-    -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}" \
-    -ListenAddress "${public_bind}" -CanaryPort "${canary_port}" \
+  local arguments=(
+    -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${windows_script}"
+    -Action Verify -Port "${public_port}" -RemoteAddress "${remote_address}"
+    -ListenAddress "${public_bind}" -CanaryPort "${canary_port}"
     -AdminPort "${admin_port}" -GatewayPort "${gateway_port}"
+  )
+  [[ "${manual_origin}" == "true" ]] && arguments+=(-ManualOrigin)
+  "${powershell_bin}" "${arguments[@]}"
 }
 
 assert_port_owner() {

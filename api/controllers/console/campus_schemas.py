@@ -275,19 +275,6 @@ class ResultResponse(CampusResponseModel):
     result: str
 
 
-class LabManualChapterPayload(CampusRequestModel):
-    title: str = Field(min_length=1, max_length=255)
-    body_html: str = Field(min_length=1, max_length=2_000_000)
-
-    @field_validator("title")
-    @classmethod
-    def validate_title_not_whitespace(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("title cannot be whitespace-only")
-        return normalized
-
-
 class LabManualChapterStatusPayload(CampusRequestModel):
     status: LabManualChapterStatus
 
@@ -300,18 +287,19 @@ class LabManualChapterResponse(CampusResponseModel):
     id: str
     track: ExperimentTrack
     title: str
+    original_filename: str
+    size_bytes: int
+    content_url: str
     position: int
     status: LabManualChapterStatus
 
 
 class LabManualChapterDetailResponse(LabManualChapterResponse):
-    body_html: str
+    pass
 
 
 class LabManualChapterSavedResponse(LabManualChapterDetailResponse):
-    #: Retained for wire compatibility with the earlier sanitized-chapter API.
-    #: Interactive learning documents are preserved, so this is normally empty.
-    removed: dict[str, int]
+    pass
 
 
 class LabManualChapterListResponse(CampusResponseModel):
@@ -385,7 +373,6 @@ register_schema_models(
     AllowanceAdjustmentPayload,
     AdministratorPayload,
     AdministratorCreatePayload,
-    LabManualChapterPayload,
     LabManualChapterStatusPayload,
     LabManualChapterPositionPayload,
     PortalPresentationPayload,

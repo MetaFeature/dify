@@ -1,6 +1,7 @@
 """Named-administrator resources for roster, lifecycle, slot, and allowance operations."""
 
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from flask import Response, request
 from flask.typing import ResponseReturnValue
@@ -32,7 +33,6 @@ from controllers.console.campus_schemas import (
     AllowanceResponse,
     LabManualChapterDetailResponse,
     LabManualChapterListResponse,
-    LabManualChapterPayload,
     LabManualChapterPositionPayload,
     LabManualChapterResponse,
     LabManualChapterSavedResponse,
@@ -75,6 +75,7 @@ from services.campus.errors import (
     ReservationWindowError,
     StudentNotFoundError,
 )
+from services.campus.lab_manual_service import MAX_DOCUMENT_BYTES
 from services.campus.portal_presentation_service import PortalPresentation, TrackPresentation
 from services.campus.roster_import import MAX_ROSTER_BYTES, parse_roster_xlsx
 
@@ -542,13 +543,30 @@ class CampusAdminPortalPresentationPublishApi(Resource):
 
 
 def _chapter_payload(chapter) -> dict[str, object]:
+    filename = getattr(chapter, "original_filename", None) or f"{chapter.title}.html"
+    size_bytes = getattr(chapter, "document_size_bytes", None)
+    if size_bytes is None:
+        size_bytes = getattr(chapter, "size_bytes", None)
+    if size_bytes is None:
+        size_bytes = len(chapter.body_html.encode("utf-8"))
     return {
         "id": chapter.id,
         "track": chapter.track,
         "title": chapter.title,
+        "original_filename": filename,
+        "size_bytes": size_bytes,
+        "content_url": _manual_content_url(chapter.id),
         "position": chapter.position,
         "status": chapter.status,
     }
+
+
+def _manual_content_url(chapter_id: str) -> str:
+    hostname = request.host.split(":", 1)[0]
+    return (
+        f"{request.scheme}://{hostname}:{dify_config.CAMPUS_MANUAL_PUBLIC_PORT}"
+        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/content"
+    )
 
 
 @console_ns.route("/campus/admin/lab-manuals/<string:track>/chapters")
@@ -566,7 +584,6 @@ class CampusAdminLabManualChapterListApi(Resource):
             {"data": [_chapter_payload(chapter) for chapter in chapters]},
         )
 
-    @console_ns.expect(console_ns.models[LabManualChapterPayload.__name__])
     @console_ns.response(201, "Chapter created", console_ns.models[LabManualChapterSavedResponse.__name__])
     @setup_required
     @login_required
@@ -574,12 +591,14 @@ class CampusAdminLabManualChapterListApi(Resource):
     def post(self, current_user: Account, track: str) -> ResponseReturnValue:
         require_campus_enabled()
         require_admin(current_user)
-        payload = LabManualChapterPayload.model_validate(console_ns.payload or {})
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            raise BadRequest("An HTML file is required")
         try:
             outcome = lab_manuals().create_chapter(
                 _track_or_404(track),
-                title=payload.title,
-                raw_html=payload.body_html,
+                filename=upload.filename,
+                data=upload.read(MAX_DOCUMENT_BYTES + 1),
                 actor_account_id=current_user.id,
             )
         except CampusValidationError as error:
@@ -602,10 +621,9 @@ class CampusAdminLabManualChapterApi(Resource):
             raise _chapter_error(error)
         return dump_response(
             LabManualChapterDetailResponse,
-            {**_chapter_payload(chapter), "body_html": chapter.body_html},
+            _chapter_payload(chapter),
         )
 
-    @console_ns.expect(console_ns.models[LabManualChapterPayload.__name__])
     @console_ns.response(200, "Chapter updated", console_ns.models[LabManualChapterSavedResponse.__name__])
     @setup_required
     @login_required
@@ -613,12 +631,14 @@ class CampusAdminLabManualChapterApi(Resource):
     def put(self, current_user: Account, chapter_id: str) -> ResponseReturnValue:
         require_campus_enabled()
         require_admin(current_user)
-        payload = LabManualChapterPayload.model_validate(console_ns.payload or {})
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            raise BadRequest("An HTML file is required")
         try:
             outcome = lab_manuals().update_chapter(
                 chapter_id,
-                title=payload.title,
-                raw_html=payload.body_html,
+                filename=upload.filename,
+                data=upload.read(MAX_DOCUMENT_BYTES + 1),
                 actor_account_id=current_user.id,
             )
         except CampusValidationError as error:
@@ -680,7 +700,7 @@ class CampusAdminLabManualChapterPositionApi(Resource):
 
 
 def _saved_chapter(outcome) -> dict[str, object]:
-    return {**_chapter_payload(outcome), "body_html": outcome.body_html, "removed": dict(outcome.removed)}
+    return _chapter_payload(outcome)
 
 
 def _chapter_error(error: CampusValidationError) -> Exception:

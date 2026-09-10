@@ -565,8 +565,8 @@ async function showReservations() {
 /**
  * Show one track's manual.
  *
- * The API returns only the ordered document list. Each filename opens the raw
- * interactive HTML through the backend's isolated-reader response.
+ * The API returns only the ordered document list. Each filename opens the
+ * byte-preserved HTML on the dedicated manual origin.
  *
  * @param {string} track
  * @param {string} title
@@ -597,12 +597,12 @@ async function showManual(track, title) {
     const link = document.createElement('a')
     link.className = 'chapter-link'
     link.textContent = chapter.title
-    link.href = `/console/api/campus/lab-manuals/documents/${encodeURIComponent(chapter.id)}/content`
+    link.href = chapter.content_url
     link.target = '_blank'
     link.rel = 'noopener'
     item.append(link)
     nav.append(item)
   }
   elements.manualChapters.replaceChildren(nav)
-  elements.manualBody.textContent = '点击文件名将在新页面打开完整的交互式 HTML 课件。'
+  elements.manualBody.textContent = '点击文件名将在独立页面按原文件打开 HTML 课件。'
 }

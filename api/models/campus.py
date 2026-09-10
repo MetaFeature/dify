@@ -212,8 +212,9 @@ class CampusAllowanceAdjustment(DefaultFieldsMixin, Base):
 class CampusLabManualChapter(DefaultFieldsMixin, Base):
     """One ordered HTML learning document for an experiment track.
 
-    ``body_html`` preserves the administrator upload and may contain active
-    content. It must only be rendered by the isolated learning-document route.
+    ``document_data`` preserves the administrator upload byte-for-byte.
+    Executable content is exposed only through the dedicated manual origin;
+    ``body_html`` is the migration fallback for older text-authored records.
     """
 
     __tablename__ = "campus_lab_manual_chapters"
@@ -221,7 +222,12 @@ class CampusLabManualChapter(DefaultFieldsMixin, Base):
 
     track: Mapped[ExperimentTrack] = mapped_column(EnumText(ExperimentTrack, length=32), nullable=False)
     title: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    # ``body_html`` is retained only for records created by the retired
+    # text-based editor. New uploads are held byte-for-byte in document_data.
     body_html: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    document_data: Mapped[bytes | None] = mapped_column(sa.LargeBinary, nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
+    document_size_bytes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     position: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     status: Mapped[LabManualChapterStatus] = mapped_column(
         EnumText(LabManualChapterStatus, length=16),

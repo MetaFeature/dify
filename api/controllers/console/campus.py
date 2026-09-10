@@ -120,6 +120,14 @@ def _presentation_response(presentation: PortalPresentation) -> dict[str, object
     )
 
 
+def _manual_content_url(chapter_id: str) -> str:
+    hostname = request.host.split(":", 1)[0]
+    return (
+        f"{request.scheme}://{hostname}:{dify_config.CAMPUS_MANUAL_PUBLIC_PORT}"
+        f"/console/api/campus/lab-manuals/documents/{quote(chapter_id)}/content"
+    )
+
+
 @console_ns.route("/campus/auth/virtual")
 class CampusVirtualLoginApi(Resource):
     @console_ns.expect(console_ns.models[VirtualLoginPayload.__name__])
@@ -405,6 +413,13 @@ class CampusLabManualApi(Resource):
                         "id": chapter.id,
                         "track": chapter.track,
                         "title": chapter.title,
+                        "original_filename": chapter.original_filename or f"{chapter.title}.html",
+                        "size_bytes": (
+                            chapter.document_size_bytes
+                            if chapter.document_size_bytes is not None
+                            else len(chapter.body_html.encode("utf-8"))
+                        ),
+                        "content_url": _manual_content_url(chapter.id),
                         "position": chapter.position,
                         "status": chapter.status,
                     }
@@ -428,17 +443,10 @@ class CampusLearningDocumentContentApi(Resource):
             raise NotFound(str(error)) from error
         if not administrator and document.status is not LabManualChapterStatus.PUBLISHED:
             raise NotFound("Learning document was not found")
-        response = make_response(document.body_html)
-        response.headers["Content-Type"] = "text/html; charset=utf-8"
-        response.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(document.title)}.html"
-        response.headers["Content-Security-Policy"] = (
-            "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
-            "default-src 'none'; script-src 'unsafe-inline' 'self' data: blob:; "
-            "style-src 'unsafe-inline' data: blob:; img-src data: blob:; "
-            "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
-        )
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
+        original = lab_manuals().document(chapter_id)
+        response = make_response(original.data)
+        response.headers["Content-Type"] = "text/html"
+        response.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(original.filename)}"
         response.headers["Cache-Control"] = "private, no-store"
         return response
 

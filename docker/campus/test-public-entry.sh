@@ -142,7 +142,7 @@ for command in start stop restart status; do
   }
 done
 bash -n "${loopback_script}"
-grep -Fq '13000,18080,18081,18082,18444' "${loopback_script}" || {
+grep -Fq '13000,18080,18081,18082,18083,18444' "${loopback_script}" || {
   echo "Campus WSL loopback routing does not cover every private listener" >&2
   exit 1
 }
@@ -328,6 +328,15 @@ grep -Fq '127.0.0.1:${EXPOSE_NGINX_PORT:-18080}:${NGINX_PORT:-80}' "${public_ove
 }
 grep -Fq '127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}:8081' "${public_overlay}" || {
   echo "Campus administrator route is not loopback-only after promotion" >&2
+  exit 1
+}
+grep -Fq '${CAMPUS_PUBLIC_BIND_ADDRESS:-10.20.10.193}:${CAMPUS_MANUAL_PUBLIC_PORT:-18083}:8082' \
+  "${public_overlay}" || {
+  echo "Campus original-document origin is not bound to the protected campus address" >&2
+  exit 1
+}
+grep -Fq '127.0.0.1:${CAMPUS_MANUAL_PUBLIC_PORT:-18083}:8082' "${public_overlay}" || {
+  echo "Campus original-document origin does not retain its loopback verification route" >&2
   exit 1
 }
 grep -Fq '127.0.0.1:${CAMPUS_UPSTREAM_HTTP_PORT:-18082}:${NGINX_PORT:-80}' "${upstream_overlay}" || {

@@ -34,10 +34,7 @@ const elements = {
   manualTrack: requiredElement('#manual-track', HTMLSelectElement),
   manualForm: requiredElement('#manual-form', HTMLFormElement),
   manualChapterId: requiredElement('#manual-chapter-id', HTMLInputElement),
-  manualTitle: requiredElement('#manual-title', HTMLInputElement),
   manualFile: requiredElement('#manual-file', HTMLInputElement),
-  manualImage: requiredElement('#manual-image', HTMLInputElement),
-  manualHtml: requiredElement('#manual-html', HTMLTextAreaElement),
   manualCancel: requiredElement('#manual-cancel', HTMLButtonElement),
   manualReport: requiredElement('#manual-report', HTMLElement),
   manualTable: requiredElement('#manual-table', HTMLElement),
@@ -587,27 +584,22 @@ elements.manualTrack.addEventListener('change', () => {
   void loadManualChapters()
 })
 
-elements.manualFile.addEventListener('change', async () => {
-  const file = elements.manualFile.files && elements.manualFile.files[0]
-  if (!file)
-    return
-  elements.manualHtml.value = await file.text()
-  if (!elements.manualTitle.value)
-    elements.manualTitle.value = file.name.replace(/\.html?$/i, '')
-})
-
 elements.manualCancel.addEventListener('click', resetManualForm)
 
 elements.manualForm.addEventListener('submit', async (event) => {
   event.preventDefault()
-  const payload = { title: elements.manualTitle.value.trim(), body_html: elements.manualHtml.value }
+  const file = elements.manualFile.files && elements.manualFile.files[0]
+  if (!file) {
+    showMessage('请选择 HTML 文件。', true)
+    return
+  }
   const chapterId = elements.manualChapterId.value
   elements.manualForm.querySelectorAll('button').forEach((button) => { button.disabled = true })
   try {
     const saved = chapterId
-      ? await api.updateManualChapter(chapterId, payload)
-      : await api.createManualChapter(elements.manualTrack.value, payload)
-    renderSanitizeReport(saved.removed)
+      ? await api.updateManualChapter(chapterId, file)
+      : await api.createManualChapter(elements.manualTrack.value, file)
+    elements.manualReport.textContent = `已按原始字节保存 ${saved.original_filename}（${saved.size_bytes} 字节）。`
     resetManualForm()
     showMessage(chapterId ? '章节已更新。' : '章节已添加，当前是草稿。', false)
     await loadManualChapters()
@@ -642,15 +634,12 @@ elements.manualTable.addEventListener('click', async (event) => {
       showMessage('章节已删除。', false)
     }
     else if (action === 'edit') {
-      await startEditingChapter(chapterId)
+      startEditingChapter(chapterId)
       return
     }
     else if (action === 'preview') {
-      window.open(
-        `/console/api/campus/lab-manuals/documents/${encodeURIComponent(chapterId)}/content`,
-        '_blank',
-        'noopener',
-      )
+      const contentUrl = button.getAttribute('data-content-url') || ''
+      window.open(contentUrl, '_blank', 'noopener')
       return
     }
     await loadManualChapters()
@@ -664,37 +653,21 @@ elements.manualTable.addEventListener('click', async (event) => {
 })
 
 /**
- * Load one chapter into the form so it can be replaced.
- *
- * The list omits body_html, so this reads the chapter on its own; opening the
- * form empty would let a save wipe the chapter.
+ * Mark one document for replacement. The administrator must choose a new
+ * original file; no editable copy of its contents is created.
  *
  * @param {string} chapterId
  */
-async function startEditingChapter(chapterId) {
-  const chapter = await api.manualChapter(chapterId)
-  elements.manualChapterId.value = chapter.id
-  elements.manualTitle.value = chapter.title
-  elements.manualHtml.value = chapter.body_html
+function startEditingChapter(chapterId) {
+  elements.manualChapterId.value = chapterId
   elements.manualCancel.hidden = false
-  elements.manualTitle.focus()
+  elements.manualFile.focus()
 }
 
 function resetManualForm() {
   elements.manualForm.reset()
   elements.manualChapterId.value = ''
   elements.manualCancel.hidden = true
-}
-
-/**
- * Say what sanitizing removed. Silence here is what makes an upload look
- * broken: the administrator's formatting is gone and nothing said so.
- *
- * @param {Record<string, number> | undefined} removed
- */
-function renderSanitizeReport(removed) {
-  void removed
-  elements.manualReport.textContent = 'HTML 已完整保存；学生端将在隔离沙箱中打开。'
 }
 
 async function loadManualChapters() {
@@ -716,8 +689,8 @@ async function loadManualChapters() {
         <td>${escapeHtml(chapter.title)}</td>
         <td><span class="badge ${published ? 'active' : 'suspended'}">${published ? '已发布' : '草稿'}</span></td>
         <td>
-          <button class="secondary compact" type="button" data-manual-action="preview" data-chapter="${escapeHtml(chapter.id)}">预览</button>
-          <button class="secondary compact" type="button" data-manual-action="edit" data-chapter="${escapeHtml(chapter.id)}">编辑</button>
+          <button class="secondary compact" type="button" data-manual-action="preview" data-chapter="${escapeHtml(chapter.id)}" data-content-url="${escapeHtml(chapter.content_url)}">预览</button>
+          <button class="secondary compact" type="button" data-manual-action="edit" data-chapter="${escapeHtml(chapter.id)}">替换文件</button>
           <button class="secondary compact" type="button" data-manual-action="${published ? 'unpublish' : 'publish'}" data-chapter="${escapeHtml(chapter.id)}">${published ? '撤回' : '发布'}</button>
           <button class="secondary compact" type="button" data-manual-action="up" data-chapter="${escapeHtml(chapter.id)}" data-position="${chapter.position - 1}" ${index === 0 ? 'disabled' : ''}>上移</button>
           <button class="secondary compact" type="button" data-manual-action="down" data-chapter="${escapeHtml(chapter.id)}" data-position="${chapter.position + 1}" ${index === data.length - 1 ? 'disabled' : ''}>下移</button>
@@ -732,25 +705,3 @@ async function loadManualChapters() {
     elements.manualTable.textContent = messageFor(error)
   }
 }
-
-elements.manualImage.addEventListener('change', async () => {
-  const file = elements.manualImage.files && elements.manualImage.files[0]
-  if (!file)
-    return
-  elements.manualImage.disabled = true
-  try {
-    const uploaded = await api.uploadManualImage(elements.manualTrack.value, file)
-    // Appended rather than inserted at the caret: the body is plain HTML text,
-    // and guessing a position inside markup would break the document.
-    const alt = file.name.replace(/\.[^.]+$/, '')
-    elements.manualHtml.value += `\n<p><img src="${uploaded.url}" alt="${escapeHtml(alt)}"></p>\n`
-    showMessage('图片已上传，<img> 已追加到正文末尾。', false)
-  }
-  catch (error) {
-    showMessage(messageFor(error), true)
-  }
-  finally {
-    elements.manualImage.disabled = false
-    elements.manualImage.value = ''
-  }
-})

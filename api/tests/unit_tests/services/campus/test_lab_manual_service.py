@@ -29,57 +29,57 @@ def manuals(manual_session: Session) -> LabManualService:
     return LabManualService(session=manual_session)
 
 
+def upload(manuals: LabManualService, name: str, body: bytes = b"<p>x</p>", **kwargs):
+    return manuals.create_chapter(TRACK, filename=f"{name}.html", data=body, **kwargs)
+
+
 def test_a_new_chapter_lands_at_the_end_as_a_draft(manuals: LabManualService) -> None:
-    first = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>先装 conda</p>")
-    second = manuals.create_chapter(TRACK, title="跑第一个实验", raw_html="<p>再跑训练</p>")
+    first = upload(manuals, "装环境", "<p>先装 conda</p>".encode())
+    second = upload(manuals, "跑第一个实验", "<p>再跑训练</p>".encode())
 
     assert (first.position, second.position) == (1, 2)
     assert first.status is LabManualChapterStatus.DRAFT
-    assert first.body_html == "<p>先装 conda</p>"
+    assert first.original_filename == "装环境.html"
 
 
-def test_creating_a_document_preserves_interactive_html(manuals: LabManualService) -> None:
-    outcome = manuals.create_chapter(
-        TRACK,
-        title="装环境",
-        raw_html='<style>p{color:red}</style><p style="margin:0">先装 conda</p><script>x()</script>',
-    )
+def test_creating_a_document_preserves_every_original_byte(manuals: LabManualService) -> None:
+    original = b"\xff\xfe<html><script>window.x = 1</script>\x00</html>\r\n"
+    outcome = upload(manuals, "原文件", original)
 
-    assert outcome.body_html == (
-        '<style>p{color:red}</style><p style="margin:0">先装 conda</p><script>x()</script>'
-    )
-    assert outcome.removed == {}
+    assert manuals.document(outcome.id).data == original
+    assert manuals.document(outcome.id).filename == "原文件.html"
+    assert outcome.size_bytes == len(original)
 
 
 def test_an_empty_document_is_rejected(manuals: LabManualService) -> None:
-    with pytest.raises(CampusValidationError, match="HTML is required"):
-        manuals.create_chapter(TRACK, title="空的", raw_html="  ")
+    with pytest.raises(CampusValidationError, match="file is empty"):
+        upload(manuals, "空的", b"")
 
 
-def test_a_chapter_needs_a_title(manuals: LabManualService) -> None:
-    with pytest.raises(CampusValidationError, match="title is required"):
-        manuals.create_chapter(TRACK, title="   ", raw_html="<p>x</p>")
+def test_a_document_needs_an_html_filename(manuals: LabManualService) -> None:
+    with pytest.raises(CampusValidationError, match="must be an HTML file"):
+        manuals.create_chapter(TRACK, filename="notes.txt", data=b"anything")
 
 
 def test_the_large_model_track_accepts_learning_documents(manuals: LabManualService) -> None:
-    created = manuals.create_chapter(ExperimentTrack.LARGE_MODEL, title="x", raw_html="<p>x</p>")
+    created = manuals.create_chapter(ExperimentTrack.LARGE_MODEL, filename="x.html", data=b"<p>x</p>")
 
     assert created.track is ExperimentTrack.LARGE_MODEL
 
 
-def test_editing_a_chapter_replaces_its_body_and_keeps_its_place(manuals: LabManualService) -> None:
-    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>旧</p>")
-    manuals.create_chapter(TRACK, title="第二章", raw_html="<p>x</p>")
+def test_replacing_a_document_preserves_new_bytes_and_keeps_its_place(manuals: LabManualService) -> None:
+    created = upload(manuals, "装环境", "<p>旧</p>".encode())
+    upload(manuals, "第二章")
 
-    updated = manuals.update_chapter(created.id, title="装环境（修订）", raw_html="<p>新</p>")
+    updated = manuals.update_chapter(created.id, filename="装环境（修订）.html", data=b"\x80" + "<p>新</p>\n".encode())
 
     assert updated.position == 1
-    assert updated.title == "装环境（修订）"
-    assert updated.body_html == "<p>新</p>"
+    assert updated.title == "装环境（修订）.html"
+    assert manuals.document(created.id).data == b"\x80" + "<p>新</p>\n".encode()
 
 
 def test_publishing_and_unpublishing_a_chapter(manuals: LabManualService) -> None:
-    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>x</p>")
+    created = upload(manuals, "装环境")
 
     assert manuals.set_chapter_status(created.id, LabManualChapterStatus.PUBLISHED).status is (
         LabManualChapterStatus.PUBLISHED
@@ -88,55 +88,55 @@ def test_publishing_and_unpublishing_a_chapter(manuals: LabManualService) -> Non
 
 
 def test_students_see_only_published_chapters_in_order(manuals: LabManualService) -> None:
-    one = manuals.create_chapter(TRACK, title="一", raw_html="<p>1</p>")
-    manuals.create_chapter(TRACK, title="二（草稿）", raw_html="<p>2</p>")
-    three = manuals.create_chapter(TRACK, title="三", raw_html="<p>3</p>")
+    one = upload(manuals, "一", b"<p>1</p>")
+    upload(manuals, "二（草稿）", b"<p>2</p>")
+    three = upload(manuals, "三", b"<p>3</p>")
     manuals.set_chapter_status(three.id, LabManualChapterStatus.PUBLISHED)
     manuals.set_chapter_status(one.id, LabManualChapterStatus.PUBLISHED)
 
     published = manuals.published_chapters(TRACK)
 
-    assert [chapter.title for chapter in published] == ["一", "三"]
+    assert [chapter.title for chapter in published] == ["一.html", "三.html"]
 
 
 def test_administrators_see_drafts_too(manuals: LabManualService) -> None:
-    manuals.create_chapter(TRACK, title="一", raw_html="<p>1</p>")
-    manuals.create_chapter(TRACK, title="二（草稿）", raw_html="<p>2</p>")
+    upload(manuals, "一")
+    upload(manuals, "二（草稿）")
 
-    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["一", "二（草稿）"]
+    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["一.html", "二（草稿）.html"]
 
 
 def test_a_track_with_no_published_chapter_reads_as_empty(manuals: LabManualService) -> None:
-    manuals.create_chapter(TRACK, title="草稿", raw_html="<p>1</p>")
+    upload(manuals, "草稿")
 
     assert manuals.published_chapters(TRACK) == []
     assert manuals.published_chapters(ExperimentTrack.AGENT) == []
 
 
 def test_reordering_moves_one_chapter_and_renumbers_the_rest(manuals: LabManualService) -> None:
-    one = manuals.create_chapter(TRACK, title="一", raw_html="<p>1</p>")
-    two = manuals.create_chapter(TRACK, title="二", raw_html="<p>2</p>")
-    three = manuals.create_chapter(TRACK, title="三", raw_html="<p>3</p>")
+    one = upload(manuals, "一")
+    two = upload(manuals, "二")
+    three = upload(manuals, "三")
 
     manuals.move_chapter(three.id, position=1)
 
-    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["三", "一", "二"]
+    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["三.html", "一.html", "二.html"]
     assert [chapter.position for chapter in manuals.all_chapters(TRACK)] == [1, 2, 3]
     assert {one.id, two.id, three.id} == {chapter.id for chapter in manuals.all_chapters(TRACK)}
 
 
 def test_reordering_clamps_a_position_outside_the_manual(manuals: LabManualService) -> None:
-    one = manuals.create_chapter(TRACK, title="一", raw_html="<p>1</p>")
-    manuals.create_chapter(TRACK, title="二", raw_html="<p>2</p>")
+    one = upload(manuals, "一")
+    upload(manuals, "二")
 
     manuals.move_chapter(one.id, position=99)
 
-    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["二", "一"]
+    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["二.html", "一.html"]
 
 
 def test_reordering_never_crosses_tracks(manuals: LabManualService) -> None:
-    deep = manuals.create_chapter(ExperimentTrack.DEEP_LEARNING, title="深度", raw_html="<p>1</p>")
-    agent = manuals.create_chapter(ExperimentTrack.AGENT, title="智能体", raw_html="<p>2</p>")
+    deep = manuals.create_chapter(ExperimentTrack.DEEP_LEARNING, filename="深度.html", data=b"1")
+    agent = manuals.create_chapter(ExperimentTrack.AGENT, filename="智能体.html", data=b"2")
 
     manuals.move_chapter(deep.id, position=1)
 
@@ -145,19 +145,19 @@ def test_reordering_never_crosses_tracks(manuals: LabManualService) -> None:
 
 
 def test_deleting_a_chapter_closes_the_gap_it_leaves(manuals: LabManualService) -> None:
-    manuals.create_chapter(TRACK, title="一", raw_html="<p>1</p>")
-    two = manuals.create_chapter(TRACK, title="二", raw_html="<p>2</p>")
-    manuals.create_chapter(TRACK, title="三", raw_html="<p>3</p>")
+    upload(manuals, "一")
+    two = upload(manuals, "二")
+    upload(manuals, "三")
 
     manuals.delete_chapter(two.id)
 
-    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["一", "三"]
+    assert [chapter.title for chapter in manuals.all_chapters(TRACK)] == ["一.html", "三.html"]
     assert [chapter.position for chapter in manuals.all_chapters(TRACK)] == [1, 2]
 
 
 def test_acting_on_a_chapter_that_is_gone_fails_clearly(manuals: LabManualService) -> None:
     for act in (
-        lambda: manuals.update_chapter("00000000-0000-0000-0000-000000000000", title="x", raw_html="<p>x</p>"),
+        lambda: manuals.update_chapter("00000000-0000-0000-0000-000000000000", filename="x.html", data=b"x"),
         lambda: manuals.move_chapter("00000000-0000-0000-0000-000000000000", position=1),
         lambda: manuals.delete_chapter("00000000-0000-0000-0000-000000000000"),
         lambda: manuals.set_chapter_status("00000000-0000-0000-0000-000000000000", LabManualChapterStatus.PUBLISHED),
@@ -166,21 +166,22 @@ def test_acting_on_a_chapter_that_is_gone_fails_clearly(manuals: LabManualServic
             act()
 
 
-def test_an_interactive_body_is_stored_unchanged_for_isolated_serving(
+def test_an_interactive_file_is_stored_unchanged_for_isolated_serving(
     manuals: LabManualService, manual_session: Session
 ) -> None:
-    manuals.create_chapter(TRACK, title="x", raw_html='<p onclick="x()">hi</p><script>bad()</script>')
+    original = b'\xff<p onclick="x()">hi</p><script>bad()</script>\r\n'
+    upload(manuals, "x", original)
 
-    stored = manual_session.scalar(select(CampusLabManualChapter.body_html))
+    stored = manual_session.scalar(select(CampusLabManualChapter.document_data))
 
-    assert stored == '<p onclick="x()">hi</p><script>bad()</script>'
+    assert stored == original
 
 
 def test_authoring_actions_are_attributable(manual_session: Session, manuals: LabManualService) -> None:
     # ADR-0009: a platform administrator's management actions are attributable.
     # Publishing decides what every student sees, so it belongs in the trail.
-    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>x</p>", actor_account_id="admin-1")
-    manuals.update_chapter(created.id, title="装环境（修订）", raw_html="<p>y</p>", actor_account_id="admin-1")
+    created = upload(manuals, "装环境", actor_account_id="admin-1")
+    manuals.update_chapter(created.id, filename="装环境（修订）.html", data=b"y", actor_account_id="admin-1")
     manuals.set_chapter_status(created.id, LabManualChapterStatus.PUBLISHED, actor_account_id="admin-2")
     manuals.move_chapter(created.id, position=1, actor_account_id="admin-1")
     manuals.delete_chapter(created.id, actor_account_id="admin-2")
@@ -200,7 +201,7 @@ def test_authoring_actions_are_attributable(manual_session: Session, manuals: La
 
 def test_the_audit_trail_never_stores_chapter_html(manual_session: Session, manuals: LabManualService) -> None:
     # The trail records what happened, not a second copy of the document.
-    manuals.create_chapter(TRACK, title="装环境", raw_html="<p>秘密正文</p>", actor_account_id="admin-1")
+    upload(manuals, "装环境", "<p>秘密正文</p>".encode(), actor_account_id="admin-1")
 
     event = manual_session.scalar(select(CampusAuditEvent))
 
@@ -209,9 +210,9 @@ def test_the_audit_trail_never_stores_chapter_html(manual_session: Session, manu
 
 
 def test_one_chapter_can_be_read_back_by_id(manuals: LabManualService) -> None:
-    created = manuals.create_chapter(TRACK, title="装环境", raw_html="<p>x</p>")
+    created = upload(manuals, "装环境")
 
-    assert manuals.chapter(created.id).title == "装环境"
+    assert manuals.chapter(created.id).title == "装环境.html"
     with pytest.raises(CampusValidationError, match="chapter was not found"):
         manuals.chapter("00000000-0000-0000-0000-000000000000")
 

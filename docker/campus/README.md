@@ -232,6 +232,7 @@ host-address loopback, and validates the existing `wsl-docker-boot` task:
 
 ```powershell
 .\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 80 -RemoteAddress 10.0.0.0/255.0.0.0
+.\campus\windows\configure-intranet-firewall.ps1 -Action Apply -Port 18083 -ManualOrigin -RemoteAddress 10.0.0.0/255.0.0.0
 ```
 
 Apply the WSL setting without racing the runtime anchor, then verify the real
@@ -242,6 +243,7 @@ Stop-ScheduledTask -TaskName wsl-docker-boot
 wsl.exe --shutdown
 Start-ScheduledTask -TaskName wsl-docker-boot
 .\campus\windows\configure-intranet-firewall.ps1 -Action Verify -Port 80 -RemoteAddress 10.0.0.0/255.0.0.0
+.\campus\windows\configure-intranet-firewall.ps1 -Action Verify -Port 18083 -ManualOrigin -RemoteAddress 10.0.0.0/255.0.0.0
 curl.exe --noproxy "*" -I http://10.20.10.193/
 ```
 
@@ -439,38 +441,28 @@ the student label and verifies the binding.
 ## Learning documents
 
 All three experiment tracks may publish ordered HTML learning documents
-(ADR-0022). The large-model track keeps its separate reservation-gated Dify
+(ADR-0026). The large-model track keeps its separate reservation-gated Dify
 action; agent and deep-learning remain local-computer tracks.
 
-Administrators upload or paste self-contained HTML in the "实验手册与课件" tab,
-set its filename, order it, preview it, and publish or withdraw it. Students see
-filenames rather than extracted text. Opening one returns the original HTML with
-a CSP sandbox that allows inline CSS, JavaScript, and popup links while
-withholding the Portal origin, cookies, API access, external connections, forms,
-and top-level embedding. Login-page HTML follows a different rule: it is
-sanitized before publication because it renders inside the trusted Portal page.
+Administrators upload an `.html` or `.htm` file in the "实验手册与课件" tab,
+order it, preview it, and publish or withdraw it. The browser sends the `File`
+as multipart data without calling `File.text()`. PostgreSQL stores the original
+bytes and filename, and the content response returns those bytes as `text/html`
+without a functional CSP, character-set conversion, parsing, or rewriting.
 
-Images are uploaded to the platform from the same tab, which appends an `<img>`
-to the chapter body and stores the file through Dify's storage extension. A
-remote image cannot work: the portal serves `img-src 'self'`, so the browser
-would block it silently. Uploads accept PNG, JPEG, GIF, and WebP up to 4 MB, and
-the declared content type must match the file's leading bytes -- the type is
-caller-supplied, the bytes are not. SVG is refused: browsers render it as an
-image, but it is a document that can carry script, and it would arrive through
-the one path that does not sanitize.
-
-Images are served from `/console/api/campus/lab-manuals/images/<id>` to any
-signed-in student, and to an administrator's console session for previewing.
-That route echoes stored bytes, so it sends `X-Content-Type-Options: nosniff`
-and a `default-src 'none'; sandbox` policy: an image must never be able to act
-as a page.
+The document URL uses the dedicated manual origin on
+`CAMPUS_MANUAL_PUBLIC_PORT` (default `18083`). That listener exposes only the
+authenticated document route and returns 404 for everything else. The Portal,
+Dify, administration, and reservation origins explicitly refuse the raw
+document path, so unrestricted document code never receives their same-origin
+authority. Login-page HTML follows a different rule: it remains sanitized
+because it renders inside the trusted Portal page.
 
 A learning document is a draft until it is published; only published documents
 reach students. Reordering renumbers the track and never crosses into another
-track. Deleting one does not delete images it referenced; there is no reference
-count, and an orphaned image is cheaper than a document with a broken figure.
+track.
 
-Authoring writes `lab_manual.chapter_*` audit events. The chapter body is
+Authoring writes `lab_manual.chapter_*` audit events. The document bytes are
 deliberately absent from them: the trail records what happened, not a second
 copy of the document.
 

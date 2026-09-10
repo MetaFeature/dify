@@ -1,8 +1,8 @@
-"""Author and read interactive HTML learning documents for experiment tracks.
+"""Store and read original HTML learning documents for experiment tracks.
 
 A manual belongs to one experiment track and is a list of ordered chapters.
-Administrators author them; students read only the published ones. Uploaded HTML
-is stored intact and must only be served with the isolated-reader CSP.
+Administrators upload files; students read only the published ones. New uploads
+are stored as bytes and served from the dedicated manual origin unchanged.
 """
 
 import json
@@ -24,7 +24,7 @@ from models.campus import (
 from services.campus.errors import CampusValidationError
 
 MAX_TITLE_LENGTH = 255
-MAX_DOCUMENT_CHARACTERS = 2_000_000
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 IMAGE_URL_PREFIX = "/console/api/campus/lab-manuals/images"
 
@@ -67,15 +67,23 @@ class ManualImage:
 
 @dataclass(frozen=True)
 class ChapterOutcome:
-    """A stored chapter, plus what sanitizing took out of the upload."""
+    """Metadata for one stored original HTML document."""
 
     id: str
     track: ExperimentTrack
     title: str
-    body_html: str
+    original_filename: str
+    size_bytes: int
     position: int
     status: LabManualChapterStatus
-    removed: Mapping[str, int]
+
+
+@dataclass(frozen=True)
+class LearningDocument:
+    """The exact uploaded bytes and filename returned to a reader."""
+
+    data: bytes
+    filename: str
 
 
 class LabManualService:
@@ -163,16 +171,24 @@ class LabManualService:
         )
 
     def create_chapter(
-        self, track: ExperimentTrack, *, title: str, raw_html: str, actor_account_id: str | None = None
+        self,
+        track: ExperimentTrack,
+        *,
+        filename: str,
+        data: bytes,
+        actor_account_id: str | None = None,
     ) -> ChapterOutcome:
-        """Append a draft chapter to one track's manual."""
+        """Append an original HTML file as a draft document."""
         self._require_manual_track(track)
-        clean_title = self._require_title(title)
-        document_html = self._require_document_html(raw_html)
+        clean_filename = self._require_filename(filename)
+        document_data = self._require_document_data(data)
         chapter = CampusLabManualChapter(
             track=track,
-            title=clean_title,
-            body_html=document_html,
+            title=clean_filename,
+            body_html="",
+            document_data=document_data,
+            original_filename=clean_filename,
+            document_size_bytes=len(document_data),
             position=self._next_position(track),
             status=LabManualChapterStatus.DRAFT,
         )
@@ -182,28 +198,41 @@ class LabManualService:
             actor_account_id,
             "lab_manual.chapter_created",
             chapter,
-            {"track": track.value, "position": chapter.position},
+            {
+                "track": track.value,
+                "position": chapter.position,
+                "filename": clean_filename,
+                "size_bytes": len(document_data),
+            },
         )
         self._session.commit()
-        return self._outcome(chapter, {})
+        return self._outcome(chapter)
 
     def update_chapter(
-        self, chapter_id: str, *, title: str, raw_html: str, actor_account_id: str | None = None
+        self,
+        chapter_id: str,
+        *,
+        filename: str,
+        data: bytes,
+        actor_account_id: str | None = None,
     ) -> ChapterOutcome:
-        """Replace a chapter's title and body, leaving its place and status alone."""
+        """Replace a document's original file, leaving its place and status alone."""
         chapter = self._require_chapter(chapter_id)
-        clean_title = self._require_title(title)
-        document_html = self._require_document_html(raw_html)
-        chapter.title = clean_title
-        chapter.body_html = document_html
+        clean_filename = self._require_filename(filename)
+        document_data = self._require_document_data(data)
+        chapter.title = clean_filename
+        chapter.body_html = ""
+        chapter.document_data = document_data
+        chapter.original_filename = clean_filename
+        chapter.document_size_bytes = len(document_data)
         self._record(
             actor_account_id,
             "lab_manual.chapter_updated",
             chapter,
-            {},
+            {"filename": clean_filename, "size_bytes": len(document_data)},
         )
         self._session.commit()
-        return self._outcome(chapter, {})
+        return self._outcome(chapter)
 
     def set_chapter_status(
         self, chapter_id: str, status: LabManualChapterStatus, *, actor_account_id: str | None = None
@@ -213,7 +242,7 @@ class LabManualService:
         chapter.status = status
         self._record(actor_account_id, "lab_manual.chapter_status_changed", chapter, {"status": status.value})
         self._session.commit()
-        return self._outcome(chapter, {})
+        return self._outcome(chapter)
 
     def move_chapter(self, chapter_id: str, *, position: int, actor_account_id: str | None = None) -> None:
         """Move one chapter within its own track and renumber that track."""
@@ -238,6 +267,15 @@ class LabManualService:
     def chapter(self, chapter_id: str) -> CampusLabManualChapter:
         """Read one chapter, whatever its status."""
         return self._require_chapter(chapter_id)
+
+    def document(self, chapter_id: str) -> LearningDocument:
+        """Return the uploaded file without decoding or rewriting it."""
+        chapter = self._require_chapter(chapter_id)
+        if chapter.document_data is not None:
+            data = chapter.document_data
+        else:
+            data = chapter.body_html.encode("utf-8")
+        return LearningDocument(data=data, filename=chapter.original_filename or f"{chapter.title}.html")
 
     def all_chapters(self, track: ExperimentTrack) -> Sequence[CampusLabManualChapter]:
         """Every chapter of one track, drafts included, in reading order."""
@@ -269,8 +307,8 @@ class LabManualService:
         """Record one authoring action without committing.
 
         Publishing decides what every student sees, so it belongs in the same
-        attributable trail as roster and allowance changes (ADR-0009). Chapter
-        HTML is deliberately absent: the trail records what happened, not a
+        attributable trail as roster and allowance changes (ADR-0009). File
+        bytes are deliberately absent: the trail records what happened, not a
         second copy of the document.
         """
         if actor_account_id is None:
@@ -302,31 +340,34 @@ class LabManualService:
             raise CampusValidationError(f"Experiment track {track.value} has no lab manual")
 
     @staticmethod
-    def _require_title(title: str) -> str:
-        clean = title.strip()
+    def _require_filename(filename: str) -> str:
+        clean = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
         if not clean:
-            raise CampusValidationError("Lab manual chapter title is required")
+            raise CampusValidationError("Learning document filename is required")
         if len(clean) > MAX_TITLE_LENGTH:
-            raise CampusValidationError(f"Lab manual chapter title is longer than {MAX_TITLE_LENGTH} characters")
+            raise CampusValidationError(f"Learning document filename is longer than {MAX_TITLE_LENGTH} characters")
+        if not clean.lower().endswith((".html", ".htm")):
+            raise CampusValidationError("Learning document must be an HTML file")
         return clean
 
     @staticmethod
-    def _require_document_html(raw_html: str) -> str:
-        document_html = raw_html.strip()
-        if not document_html:
-            raise CampusValidationError("Learning document HTML is required")
-        if len(document_html) > MAX_DOCUMENT_CHARACTERS:
-            raise CampusValidationError("Learning document HTML is larger than 2,000,000 characters")
-        return document_html
+    def _require_document_data(data: bytes) -> bytes:
+        if not data:
+            raise CampusValidationError("Learning document file is empty")
+        if len(data) > MAX_DOCUMENT_BYTES:
+            raise CampusValidationError(
+                f"Learning document file is larger than {MAX_DOCUMENT_BYTES // (1024 * 1024)} MB"
+            )
+        return data
 
     @staticmethod
-    def _outcome(chapter: CampusLabManualChapter, removed: Mapping[str, int]) -> ChapterOutcome:
+    def _outcome(chapter: CampusLabManualChapter) -> ChapterOutcome:
         return ChapterOutcome(
             id=chapter.id,
             track=chapter.track,
             title=chapter.title,
-            body_html=chapter.body_html,
+            original_filename=chapter.original_filename or f"{chapter.title}.html",
+            size_bytes=chapter.document_size_bytes or len(chapter.body_html.encode("utf-8")),
             position=chapter.position,
             status=chapter.status,
-            removed=removed,
         )
