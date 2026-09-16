@@ -58,6 +58,10 @@ const elements = {
   studentsPrev: requiredElement('#students-prev', HTMLButtonElement),
   studentsNext: requiredElement('#students-next', HTMLButtonElement),
   studentsPage: requiredElement('#students-page', HTMLElement),
+  studentsBatch: requiredElement('#students-batch', HTMLElement),
+  studentsBatchCount: requiredElement('#students-batch-count', HTMLElement),
+  studentsBatchDelete: requiredElement('#students-batch-delete', HTMLButtonElement),
+  studentsBatchClear: requiredElement('#students-batch-clear', HTMLButtonElement),
   rosterFile: requiredElement('#roster-file', HTMLInputElement),
   rosterText: requiredElement('#roster-text', HTMLTextAreaElement),
   rosterPreview: requiredElement('#roster-preview', HTMLButtonElement),
@@ -90,6 +94,12 @@ let studentOffset = 0
 let studentKeyword = ''
 let studentCohort = ''
 let studentDeletedOnly = false
+// Rows selected for a batch delete. Selection is confined to the page on
+// screen: the list is server-paged and reloaded after every action, so
+// carrying a selection across pages would let an operator delete rows
+// they can no longer see.
+/** @type {Set<string>} */
+let studentSelection = new Set()
 // The roster hides soft-deleted students unless the operator opts in.
 //: The one expanded row panel: either a student's detail or a form.
 /** @type {HTMLTableRowElement | null} */
@@ -425,6 +435,112 @@ elements.studentsPurge.addEventListener('click', async () => {
   }
 })
 
+/**
+ * Keep the batch bar and the row checkboxes in step with the selection.
+ * The checkboxes are rebuilt by every list load, so their state is derived
+ * here rather than stored on the elements.
+ */
+function updateStudentSelection() {
+  elements.studentsBatchCount.textContent = `已选 ${studentSelection.size} 项`
+  elements.studentsBatch.hidden = studentSelection.size === 0
+  const boxes = elements.studentTable.querySelectorAll('[data-select-student]')
+  let selectedOnPage = 0
+  for (const box of boxes) {
+    if (!(box instanceof HTMLInputElement))
+      continue
+    // The checkbox carries no `value` attribute, so `box.value` would read
+    // "on": the student number lives in the data attribute, which is also what
+    // the change handler reads.
+    const checked = studentSelection.has(box.getAttribute('data-select-student') || '')
+    box.checked = checked
+    if (checked)
+      selectedOnPage += 1
+  }
+  const selectAll = elements.studentTable.querySelector('#students-select-all')
+  if (selectAll instanceof HTMLInputElement) {
+    selectAll.checked = boxes.length > 0 && selectedOnPage === boxes.length
+    selectAll.indeterminate = selectedOnPage > 0 && selectedOnPage < boxes.length
+  }
+}
+
+/**
+ * @param {string} studentNumber
+ * @param {boolean} selected
+ */
+function setStudentSelection(studentNumber, selected) {
+  if (selected)
+    studentSelection.add(studentNumber)
+  else
+    studentSelection.delete(studentNumber)
+}
+
+elements.studentTable.addEventListener('change', (event) => {
+  const target = event.target instanceof HTMLInputElement ? event.target : null
+  if (!target)
+    return
+  if (target.id === 'students-select-all') {
+    // Read the state once: refreshing the bar rewrites this very checkbox as
+    // the selection grows, so reading `target.checked` inside the loop stops
+    // after the first row.
+    const selected = target.checked
+    for (const box of elements.studentTable.querySelectorAll('[data-select-student]')) {
+      if (box instanceof HTMLInputElement)
+        setStudentSelection(box.getAttribute('data-select-student') || '', selected)
+    }
+    updateStudentSelection()
+    return
+  }
+  const studentNumber = target.getAttribute('data-select-student')
+  if (studentNumber) {
+    setStudentSelection(studentNumber, target.checked)
+    updateStudentSelection()
+  }
+})
+
+elements.studentsBatchClear.addEventListener('click', () => {
+  studentSelection.clear()
+  updateStudentSelection()
+})
+
+elements.studentsBatchDelete.addEventListener('click', async () => {
+  const studentNumbers = [...studentSelection]
+  if (!studentNumbers.length)
+    return
+  const preview = studentNumbers.slice(0, 5).join('、')
+  const rest = studentNumbers.length > 5 ? ` 等 ${studentNumbers.length} 个学号` : ''
+  if (!window.confirm(
+    `批量删除 ${studentNumbers.length} 个用户？\n\n${preview}${rest}\n\n`
+    + `删除后他们将退出登录并从名单中隐藏，但数据会保留，可用「显示已删除」恢复。`,
+  ))
+    return
+  if (!window.confirm(`再次确认：删除这 ${studentNumbers.length} 个用户？`))
+    return
+  elements.studentsBatchDelete.disabled = true
+  try {
+    // One request per student, so a failure names the rows it left alone
+    // instead of hiding behind a single status code. Each one is the
+    // audited path, so the trail keeps one `student.deleted` per target.
+    const failed = []
+    for (const studentNumber of studentNumbers) {
+      try {
+        await api.deleteStudent(studentNumber)
+      }
+      catch {
+        failed.push(studentNumber)
+      }
+    }
+    const deleted = studentNumbers.length - failed.length
+    if (failed.length)
+      showMessage(`已删除 ${deleted} 个用户；${failed.length} 个失败：${failed.join('、')}。`, true)
+    else
+      showMessage(`已删除 ${deleted} 个用户，可在「显示已删除」中恢复。`, false)
+    await loadStudents()
+  }
+  finally {
+    elements.studentsBatchDelete.disabled = false
+  }
+})
+
 elements.studentTable.addEventListener('click', async (event) => {
   const target = event.target instanceof Element ? event.target : null
   if (target?.closest('[data-panel-cancel]')) {
@@ -481,13 +597,15 @@ elements.studentTable.addEventListener('click', async (event) => {
       await loadStudents()
     }
     else if (action === 'delete') {
-      // Two steps: a confirm, then typing the student number back. A mis-click
-      // cannot get past the second one.
-      const typed = window.prompt(
+      // Two steps, neither of them a transcription: the first states what a
+      // soft delete does, the second is the final confirmation. Typing the
+      // student number back added friction without adding a decision.
+      if (!window.confirm(
         `删除用户 ${studentNumber} ？\n\n删除后该用户将从名单中隐藏并退出登录，`
-        + `但其数据会保留，可用「显示已删除」恢复。\n\n再次确认：请输入该学号以继续。`,
-      )
-      if (typed === null || typed.trim() !== studentNumber)
+        + `但其数据会保留，可用「显示已删除」恢复。`,
+      ))
+        return
+      if (!window.confirm(`再次确认：删除用户 ${studentNumber}？`))
         return
       await api.deleteStudent(studentNumber)
       showMessage('用户已删除，可在「显示已删除」中恢复。', false)
@@ -895,6 +1013,8 @@ function renderPortalLoginMessage(message) {
 
 async function loadStudents() {
   closeRowPanel()
+  studentSelection.clear()
+  updateStudentSelection()
   elements.studentTable.textContent = '正在读取用户列表…'
   try {
     const { data } = await api.listStudents(PAGE_SIZE, studentOffset, {
@@ -911,8 +1031,13 @@ async function loadStudents() {
         : '本页没有用户。'
       return
     }
+    // A deleted row is only restorable, so the deleted view has nothing to
+    // select and does not offer the column.
+    const selectAllHeader = studentDeletedOnly
+      ? '<th></th>'
+      : '<th><input id="students-select-all" type="checkbox" aria-label="选择本页全部用户"></th>'
     const table = document.createElement('table')
-    table.innerHTML = '<thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>状态</th><th>额度</th><th>凭据</th><th>操作</th></tr></thead>'
+    table.innerHTML = `<thead><tr>${selectAllHeader}<th>学号</th><th>姓名</th><th>班级</th><th>状态</th><th>额度</th><th>凭据</th><th>操作</th></tr></thead>`
     const body = document.createElement('tbody')
     for (const student of data) {
       const row = document.createElement('tr')
@@ -927,7 +1052,11 @@ async function loadStudents() {
       // unknown rather than as a balance of zero.
       const remaining = allowance ? `${Number(allowance.remaining_usd).toFixed(2)} 元` : '—'
       const exhausted = allowance && !allowance.model_calls_enabled
+      const selectCell = deleted
+        ? '<td></td>'
+        : `<td><input type="checkbox" data-select-student="${escapeHtml(student.student_number)}" aria-label="选择用户 ${escapeHtml(student.student_number)}"></td>`
       row.innerHTML = `
+        ${selectCell}
         <td>${escapeHtml(student.student_number)}</td>
         <td>${escapeHtml(student.display_name)}</td>
         <td>${escapeHtml(student.cohort || '—')}</td>
@@ -948,6 +1077,7 @@ async function loadStudents() {
     }
     table.append(body)
     elements.studentTable.replaceChildren(table)
+    updateStudentSelection()
   }
   catch (error) {
     elements.studentTable.textContent = messageFor(error)

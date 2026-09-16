@@ -219,10 +219,14 @@ td .secondary { margin-right: 6px; }
 .danger { color: var(--ds-color-danger); }
 
 .inline-form { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
-/* The roster toolbar: the restore view toggle and the retention sweep. */
+/* The roster toolbar: the restore view toggle, the retention sweep and the
+   batch bar that appears once rows are selected. */
 .student-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 .checkbox-inline { display: inline-flex; align-items: center; gap: 9px; color: var(--ds-color-text-secondary); font-size: 13px; font-weight: 600; }
 .checkbox-inline input { width: 18px; height: 18px; }
+.batch-actions { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+/* The `hidden` attribute has to keep winning over the display above. */
+.batch-actions[hidden] { display: none; }
 .badge.deleted { color: var(--ds-color-text-muted); background: var(--ds-color-surface-hover); }
 .student-detail-row td .detail-stamp { color: var(--ds-color-text-muted); }
 .inline-form input { flex: 1 1 140px; height: 38px; padding: 0 12px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-input); background: var(--ds-color-surface-strong); }

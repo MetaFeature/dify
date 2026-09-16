@@ -178,3 +178,74 @@ test('every element the script touches is declared in its table', () => {
   assert.ok(declared.size > 0, 'the script must declare its element table')
   assert.deepEqual(undeclared, [], `undeclared element references: ${undeclared.join(', ')}`)
 })
+
+test('a roster delete confirms twice without making the operator retype the number', () => {
+  const source = script.slice(script.indexOf("else if (action === 'delete')"), script.indexOf("else if (action === 'restore')"))
+
+  // The transcribed student number was friction rather than a decision: two
+  // confirms are what stop a mis-click, and neither of them asks for typing.
+  assert.doesNotMatch(source, /window\.prompt/)
+  assert.equal([...source.matchAll(/window\.confirm\(/g)].length, 2)
+  assert.match(source, /api\.deleteStudent\(studentNumber\)/)
+  assert.match(source, /await loadStudents\(\)/)
+})
+
+test('the batch delete drives the audited per-student endpoint and names its failures', () => {
+  const start = script.indexOf("elements.studentsBatchDelete.addEventListener('click'")
+  const handler = script.slice(start, script.indexOf('\n})\n', start))
+
+  // A bulk route would have to reimplement the audit event and the session
+  // revocation, so the batch loops the endpoint a single delete already uses.
+  assert.match(handler, /for \(const studentNumber of studentNumbers\)/)
+  assert.match(handler, /api\.deleteStudent\(studentNumber\)/)
+  assert.match(handler, /failed\.push\(studentNumber\)/)
+  assert.match(handler, /failed\.join/)
+  assert.equal([...handler.matchAll(/window\.confirm\(/g)].length, 2)
+  assert.match(handler, /await loadStudents\(\)/)
+})
+
+test('a row selection cannot outlive the page it was made on', () => {
+  const loader = script.slice(script.indexOf('async function loadStudents()'))
+  const body = loader.slice(0, loader.indexOf('\n}\n'))
+
+  // The list is server-paged, so a selection carried across pages could name
+  // rows the operator can no longer see; every load starts from none.
+  assert.match(body, /studentSelection\.clear\(\)/)
+  assert.match(body, /updateStudentSelection\(\)/)
+  assert.match(body, /data-select-student/)
+  assert.match(body, /students-select-all/)
+  assert.match(body, /\$\{selectCell\}/)
+  // Only active rows are selectable: the deleted view is for restoring.
+  assert.match(body, /const selectCell = deleted/)
+})
+
+test('the batch bar is the only place the selection count is written', () => {
+  const updater = script.slice(script.indexOf('function updateStudentSelection()'), script.indexOf('function setStudentSelection('))
+
+  assert.match(updater, /elements\.studentsBatchCount\.textContent/)
+  assert.match(updater, /elements\.studentsBatch\.hidden = studentSelection\.size === 0/)
+})
+
+test('the row checkbox state is read from its data attribute, not from input.value', () => {
+  const updater = script.slice(script.indexOf('function updateStudentSelection()'), script.indexOf('/**\n * @param {string} studentNumber'))
+
+  // A checkbox with no `value` attribute reports "on", so reading `box.value`
+  // unchecked every box the selection had just recorded: the batch deleted the
+  // right rows while the operator could not see which ones they were.
+  assert.match(updater, /studentSelection\.has\(box\.getAttribute\('data-select-student'\)/)
+  assert.doesNotMatch(updater, /studentSelection\.has\(box\.value/)
+})
+
+test('selecting every row captures the state before refreshing the bar', () => {
+  const handler = script.slice(script.indexOf("elements.studentTable.addEventListener('change'"))
+  const body = handler.slice(0, handler.indexOf('\n})\n'))
+
+  // The refresh rewrites the select-all checkbox itself, so reading
+  // `target.checked` inside the loop stopped the selection after one row.
+  assert.match(body, /const selected = target\.checked/)
+  assert.match(body, /, selected\)/)
+
+  // The mutator stays a mutator: the bar is refreshed once, after the loop.
+  const setter = script.slice(script.indexOf('function setStudentSelection('), script.indexOf("elements.studentTable.addEventListener('change'"))
+  assert.doesNotMatch(setter, /updateStudentSelection\(\)/)
+})

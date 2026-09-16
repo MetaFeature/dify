@@ -58,7 +58,7 @@
 
         <section id="tab-students" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>用户管理</h2><p class="muted">「虚拟」标记表示该学号仍存在于虚拟演示名单中。</p></div>
+            <div><h2>用户管理</h2><p class="muted">「虚拟」标记表示该学号仍存在于虚拟演示名单中。勾选左侧方框可批量删除；删除是软删除，可用「显示已删除」恢复。</p></div>
             <div class="pager">
               <button id="students-prev" class="secondary compact" type="button">上一页</button>
               <span id="students-page">第 1 页</span>
@@ -69,6 +69,11 @@
             <label class="checkbox-inline"><input id="students-show-deleted" type="checkbox">只看已删除</label>
             <label class="checkbox-inline">班级<select id="students-cohort"><option value="">全部班级</option></select></label>
             <button id="students-purge" class="secondary compact" type="button">清除陈旧数据</button>
+            <span id="students-batch" class="batch-actions" hidden>
+              <span id="students-batch-count" class="muted">已选 0 项</span>
+              <button id="students-batch-delete" class="secondary compact danger" type="button">批量删除</button>
+              <button id="students-batch-clear" class="secondary compact" type="button">取消选择</button>
+            </span>
           </div>
           <form id="default-allowance-form" class="manual-form">
             <label>新用户默认额度（元）<input id="default-allowance-input" type="number" min="0" step="0.01" required></label>
