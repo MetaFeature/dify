@@ -10,6 +10,7 @@ import { trackEvent } from '@/app/components/base/amplitude'
 import Input from '@/app/components/base/input'
 import { useRouter } from '@/next/navigation'
 import { createEmptyDataset } from '@/service/datasets'
+import { useCampusKnowledgeLimits } from '@/service/use-campus'
 import { useInvalidDatasetList } from '@/service/knowledge/use-dataset'
 import s from './index.module.css'
 
@@ -19,6 +20,7 @@ type IProps = {
 }
 const EmptyDatasetCreationModal = ({ show = false, onHide }: IProps) => {
   const [inputValue, setInputValue] = useState('')
+  const { data: knowledgeLimits } = useCampusKnowledgeLimits()
   const { t } = useTranslation()
   const router = useRouter()
   const invalidDatasetList = useInvalidDatasetList()
@@ -67,6 +69,15 @@ const EmptyDatasetCreationModal = ({ show = false, onHide }: IProps) => {
           />
         </div>
         <div className={s.tip}>{t(($) => $['stepOne.modal.tip'], { ns: 'datasetCreation' })}</div>
+        {knowledgeLimits && (
+          <div className={s.tip}>
+            {t(($) => $['stepOne.modal.limit'], {
+              ns: 'datasetCreation',
+              datasets: knowledgeLimits.max_datasets_per_workspace,
+              files: knowledgeLimits.max_documents_per_dataset,
+            })}
+          </div>
+        )}
         <div className={s.form}>
           <div className={s.label}>
             {t(($) => $['stepOne.modal.input'], { ns: 'datasetCreation' })}

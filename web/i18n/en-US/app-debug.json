@@ -96,6 +96,7 @@
   "feature.conversationOpener.title": "Conversation Opener",
   "feature.dataSet.noData": "You can import Knowledge as context",
   "feature.dataSet.noDataSet": "No Knowledge found",
+  "feature.dataSet.loadFailed": "Failed to load knowledge bases. Check your reservation and try again.",
   "feature.dataSet.notSupportSelectMulti": "Currently only support one Knowledge",
   "feature.dataSet.queryVariable.choosePlaceholder": "Choose query variable",
   "feature.dataSet.queryVariable.contextVarNotEmpty": "context query variable can not be empty",

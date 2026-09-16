@@ -19,6 +19,7 @@ from services.campus.domain import (
     CurrentSlotLoadAdmission,
     ReservationResult,
     SlotAvailability,
+    SlotCapacityApplication,
     SlotCapacityChange,
 )
 from services.campus.errors import (
@@ -317,6 +318,41 @@ class ReservationService:
             confirmed=confirmed_count,
             waitlisted=self._slot_status_count(slot, ReservationStatus.WAITLISTED),
         )
+
+    def apply_default_capacity(self, capacity: int, *, now: datetime) -> SlotCapacityApplication:
+        """Rewrite every unstarted slot's capacity, promoting waiters when room grows.
+
+        Only rows that already exist are touched: materializing absent future
+        slots here would pre-create the whole booking horizon. Slots that have
+        already started keep their capacity, and lowering never revokes a
+        confirmed reservation. The caller owns the transaction, so this method
+        deliberately does not commit — the setting row, its audit event, and
+        these slot updates land together or not at all.
+        """
+        if capacity < 1:
+            raise CampusValidationError("default capacity must be positive")
+        now_utc = to_naive_utc(now)
+        slots = self._session.scalars(
+            select(CampusAccessSlot)
+            .where(CampusAccessSlot.starts_at > now_utc)
+            .order_by(CampusAccessSlot.starts_at)
+            .with_for_update()
+        ).all()
+        changed = 0
+        promoted = 0
+        for slot in slots:
+            if slot.capacity == capacity:
+                continue
+            slot.capacity = capacity
+            changed += 1
+            confirmed_count = self._slot_status_count(slot, ReservationStatus.CONFIRMED)
+            if capacity > confirmed_count:
+                promoted += self._promote_waiters(
+                    slot,
+                    available=capacity - confirmed_count,
+                    confirmed_at=now_utc,
+                )
+        return SlotCapacityApplication(scanned=len(slots), changed=changed, promoted=promoted)
 
     def _day_availability(self, day: date, *, now: datetime) -> tuple[SlotAvailability, ...]:
         local_midnight = datetime.combine(day, time.min, tzinfo=CAMPUS_TIMEZONE)

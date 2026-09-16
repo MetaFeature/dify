@@ -190,7 +190,7 @@ def test_manual_view_wraps_the_untouched_document_in_a_reloadable_frame() -> Non
 
     page = campus._manual_view_html(
         title="交互式 <手册>",
-        filename='原始 "文件".html',
+        summary="本手册教你用 <WebGPU> 跑通第一个模型。",
         content_url="/console/api/campus/lab-manuals/documents/chapter-1/content",
         portal_url="http://10.20.10.193/portal/",
     )
@@ -200,8 +200,81 @@ def test_manual_view_wraps_the_untouched_document_in_a_reloadable_frame() -> Non
     assert 'target="manual-content"' in page
     assert "sandbox=" not in page
     assert "交互式 &lt;手册&gt;" in page
-    assert "原始 &quot;文件&quot;.html" in page
+    assert "本手册教你用 &lt;WebGPU&gt; 跑通第一个模型。" in page
     assert "提示" not in page
+
+
+def test_the_subtitle_is_a_teaser_rather_than_the_title_again() -> None:
+    import inspect
+
+    from controllers.console import campus
+
+    # The header used to repeat the chapter title as the original file name
+    # ("…指导书" over "…指导书.html"), which told a student nothing. It now
+    # carries the document's own opening paragraph.
+    source = inspect.getsource(campus._manual_view_html)
+    assert "summary" in inspect.signature(campus._manual_view_html).parameters
+    assert "filename" not in inspect.signature(campus._manual_view_html).parameters
+    assert "safe_filename" not in source
+
+    page = campus._manual_view_html(
+        title="深度学习实验指导书",
+        summary="",
+        content_url="/content",
+        portal_url="/portal/",
+    )
+    # A chapter saved before summaries existed shows no subtitle at all rather
+    # than an empty line under the title.
+    assert '<div class="title"><h1>深度学习实验指导书</h1></div>' in page
+    assert "<p></p>" not in page
+
+
+def test_manual_view_shell_cannot_grow_wider_than_the_window() -> None:
+    from controllers.console import campus
+
+    page = campus._manual_view_html(
+        title="WorkBuddy智能体进阶实验指导书-3-任务三、四、五-出文档、汇报、PPT",
+        summary="这一篇把调研结果做成文档、汇报与 PPT。",
+        content_url="/content",
+        portal_url="/portal/",
+    )
+
+    # The grid declared rows only, so the implicit column was sized by the
+    # nowrap header; on a narrow window that pushed the page -- and the frame
+    # with it -- wider than the window itself.
+    assert "grid-template-columns: minmax(0, 1fr)" in page
+    assert "iframe { display: block; width: 100%; height: 100%; max-width: 100%;" in page
+    # A phone's address bar sits outside vh, so the frame must not be sized by vh alone.
+    assert "height: 100dvh" in page
+    # On a narrow screen the title wraps and the buttons may wrap with it.
+    assert "white-space: normal" in page
+    assert "flex-wrap: wrap" in page
+
+
+def test_the_framed_document_is_fitted_at_read_time_only_when_it_overflows() -> None:
+    from controllers.console import campus
+
+    page = campus._manual_view_html(
+        title="深度学习实验指导书",
+        summary="",
+        content_url="/content",
+        portal_url="/portal/",
+    )
+
+    # Uploaded bytes are never rewritten (ADR-0026), so the baseline has to come
+    # from the viewer at read time.
+    assert 'iframe[name="manual-content"]' in page
+    assert "contentDocument" in page
+    assert "catch (error)" in page
+    # ...and it must stay conditional: a document that already fits keeps the
+    # layout its author wrote.
+    overflow_check = page.index("scrollWidth <= root.clientWidth")
+    add_style = page.index("doc.head.appendChild(style)")
+    assert overflow_check < add_style
+    assert page.index("No overflow") < add_style
+    # The baseline itself: images and code blocks may shrink, nothing is hidden.
+    assert "max-width: 100% !important" in page
+    assert "overflow-x: auto" in page
 
 
 def test_manual_view_returns_to_the_portal_experiment_chooser() -> None:
@@ -211,7 +284,10 @@ def test_manual_view_returns_to_the_portal_experiment_chooser() -> None:
 
     source = inspect.getsource(campus.CampusLearningDocumentViewApi)
 
-    assert "/portal/?from=manual" in source
+    # The plain chooser URL: the portal restores a live session on any load,
+    # so no return marker is needed.
+    assert '/portal/"' in source
+    assert "from=manual" not in source
 
 
 def test_image_upload_is_administrator_only_and_attributed() -> None:

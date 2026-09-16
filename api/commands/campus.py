@@ -29,6 +29,15 @@ def _reconciler(model_spec: str | None = None) -> tuple[CampusModelProviderRecon
             credential_name=dify_config.CAMPUS_MODEL_PROVIDER_CREDENTIAL_NAME,
             base_url=dify_config.CAMPUS_MODEL_PROVIDER_BASE_URL,
             models=parse_campus_models(model_spec or dify_config.CAMPUS_MODEL_PROVIDER_MODELS),
+            vision_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_VISION_MODELS.split(",") if item.strip()
+            ),
+            audio_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_AUDIO_MODELS.split(",") if item.strip()
+            ),
+            document_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_DOCUMENT_MODELS.split(",") if item.strip()
+            ),
         ),
         tenant_ids,
     )

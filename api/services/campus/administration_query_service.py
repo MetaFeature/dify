@@ -51,6 +51,8 @@ class CampusAdministrationQueryService:
             display_name=student.display_name,
             cohort=student.cohort,
             status=student.status,
+            created_at=student.created_at,
+            deleted_at=student.deleted_at,
             workspace_id=workspace_id,
             allowance=allowance,
         )

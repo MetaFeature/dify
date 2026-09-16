@@ -22,6 +22,7 @@ from models.campus import (
     LabManualChapterStatus,
 )
 from services.campus.errors import CampusValidationError
+from services.campus.lab_manual_text import summarize_document
 
 MAX_TITLE_LENGTH = 255
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -186,6 +187,7 @@ class LabManualService:
             track=track,
             title=clean_filename,
             body_html="",
+            summary=summarize_document(document_data),
             document_data=document_data,
             original_filename=clean_filename,
             document_size_bytes=len(document_data),
@@ -222,6 +224,7 @@ class LabManualService:
         document_data = self._require_document_data(data)
         chapter.title = clean_filename
         chapter.body_html = ""
+        chapter.summary = summarize_document(document_data)
         chapter.document_data = document_data
         chapter.original_filename = clean_filename
         chapter.document_size_bytes = len(document_data)

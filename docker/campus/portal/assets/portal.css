@@ -1,102 +1,354 @@
+/* Campus access portal.
+ *
+ * Visual language follows the DeepSeek home page (see docs/deepseek风格.png): a
+ * blue-tinted near-white page (#f7f9ff) with a soft mesh and faint grid, white
+ * rounded surfaces blurred at 12px, generous radii (card 24 / panel 16 / media 12
+ * / input 10 / pill 100), and the site's brand blue (#4d6bfe) as the single
+ * accent for primary actions and emphasis.
+ *
+ * The font stack is DeepSeek's, minus the webfonts: this portal runs on a
+ * campus intranet, so it resolves to locally installed Noto Sans SC / PingFang
+ * SC / Microsoft YaHei instead of fetching from a CDN.
+ */
 :root {
-  color: #172036;
-  background: #f3f6fb;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  font-synthesis: none;
+  --ds-font-body: "DM Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ds-font-mono: "Fragment Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ds-radius-card: 24px;
+  --ds-radius-panel: 16px;
+  --ds-radius-media: 12px;
+  --ds-radius-input: 12px;
+  --ds-radius-sm: 8px;
+  --ds-radius-pill: 100px;
+  --ds-blur-glass: 12px;
+
+  /* Palette follows https://www.deepseek.com/ (see docs/deepseek风格.png): an airy
+     blue-tinted page, white rounded cards, and the site's brand blue
+     (--ds-color-brand: #4d6bfe) as the single accent. */
+  --ds-color-bg-page: #f7f9ff;
+  --ds-color-mesh-1: rgba(120, 152, 255, 0.42);
+  --ds-color-mesh-2: rgba(168, 192, 255, 0.34);
+  --ds-color-mesh-3: rgba(198, 213, 255, 0.38);
+  --ds-color-grid: rgba(77, 107, 254, 0.05);
+  --ds-color-brand: #4d6bfe;
+  --ds-color-brand-deep: #3a65c2;
+  --ds-color-brand-soft: #eef2ff;
+  --ds-color-brand-soft-strong: #e5edff;
+  /* Every white rounded block is 50% translucent by request, so `surface`
+     and `surface-strong` intentionally hold the same value now. */
+  --ds-color-surface: rgba(255, 255, 255, 0.5);
+  --ds-color-surface-strong: rgba(255, 255, 255, 0.5);
+  --ds-color-surface-soft: rgba(77, 107, 254, 0.04);
+  --ds-color-surface-hover: rgba(77, 107, 254, 0.08);
+  --ds-color-border: rgba(15, 23, 42, 0.08);
+  --ds-color-border-strong: rgba(77, 107, 254, 0.36);
+  --ds-color-divider: rgba(15, 23, 42, 0.06);
+  --ds-color-text: #1b2430;
+  --ds-color-text-secondary: #3d4757;
+  --ds-color-text-muted: #7b8598;
+  --ds-color-success: #12a150;
+  --ds-color-success-soft: #e8f8ef;
+  --ds-color-danger: #e5484d;
+  --ds-color-danger-soft: #fef0f0;
+  --ds-color-warning: #b7791f;
+  --ds-color-warning-soft: #fff7e6;
+  --ds-shadow-card: 0 10px 30px rgba(28, 50, 120, 0.06);
+  --ds-shadow-raised: 0 24px 60px rgba(28, 50, 120, 0.10);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 88% 12%, #dfe9ff 0, transparent 25%), #f3f6fb; }
-button, input { font: inherit; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--ds-color-text);
+  /* Soft blue mesh over a near-white page, with the faint grid the reference
+     screenshot shows. Fixed so the panel keeps its backdrop while scrolling. */
+  background:
+    radial-gradient(1100px 620px at 80% -12%, var(--ds-color-mesh-1) 0, transparent 62%),
+    radial-gradient(880px 520px at 6% 18%, var(--ds-color-mesh-2) 0, transparent 64%),
+    radial-gradient(760px 520px at 94% 82%, var(--ds-color-mesh-3) 0, transparent 62%),
+    var(--ds-color-bg-page);
+  background-attachment: fixed;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--ds-color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ds-color-grid) 1px, transparent 1px);
+  background-size: 88px 88px;
+}
+
+/* The portal answers "is this visitor signed in?" with an API call, and that
+   answer always takes at least one round trip. Painting the sign-in form first
+   made a reload flash the login page at students who were already signed in, so
+   the form stays out of the first paint and `portal.js` takes `booting` off once
+   the answer is known. A browser without modules keeps the class forever, hence
+   the <noscript> override in index.html that puts the form back. */
+body.booting #login-view { display: none; }
+
+button, input, select, textarea { font: inherit; }
+
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .48; }
-button:focus-visible, input:focus-visible { outline: 3px solid rgb(34 86 186 / 25%); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--ds-color-accent);
+  outline-offset: 2px;
+}
 [hidden] { display: none !important; }
 
 .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 48px; }
 .masthead { height: 88px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
-.brand-mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: white; background: #2453a6; font-size: 13px; font-weight: 800; letter-spacing: .08em; box-shadow: 0 10px 25px rgb(36 83 166 / 25%); }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ds-radius-panel);
+  color: #fff;
+  background: var(--ds-color-brand);
+  box-shadow: 0 10px 24px rgba(77, 107, 254, .28);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
 .brand strong, .brand small { display: block; }
-.brand strong { font-size: 17px; }
-.brand small { margin-top: 2px; color: #6d7690; font-size: 12px; letter-spacing: .12em; }
+.brand strong { font-size: 17px; letter-spacing: -.01em; }
+.brand small { margin-top: 2px; color: var(--ds-color-text-muted); font-size: 12px; letter-spacing: .12em; }
 
-.login-layout { min-height: calc(100vh - 136px); display: grid; grid-template-columns: 1.25fr .75fr; align-items: stretch; overflow: hidden; border: 1px solid #e2e7f0; border-radius: 30px; background: white; box-shadow: 0 30px 80px rgb(45 61 96 / 10%); }
-.hero-card { position: relative; display: flex; flex-direction: column; justify-content: center; padding: 72px; overflow: hidden; color: white; background: linear-gradient(140deg, #163e86 0%, #245bb2 58%, #6a8fd2 100%); }
-.hero-card::after { content: ""; position: absolute; width: 360px; height: 360px; right: -80px; bottom: -170px; border: 70px solid rgb(255 255 255 / 8%); border-radius: 50%; }
-.hero-card h1 { max-width: 560px; margin: 14px 0 22px; font-size: clamp(44px, 5vw, 72px); line-height: 1.08; letter-spacing: -.045em; }
-.hero-card > p:not(.eyebrow) { max-width: 520px; margin: 0; color: rgb(255 255 255 / 78%); font-size: 17px; line-height: 1.9; }
+.login-layout {
+  min-height: calc(100vh - 136px);
+  display: grid;
+  grid-template-columns: 1.25fr .75fr;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-color-surface);
+  backdrop-filter: blur(var(--ds-blur-glass));
+  box-shadow: var(--ds-shadow-raised);
+}
+.hero-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* The hero copy is centred: align-items shrinks the copy block to its own
+     width (so a max-width'd h1 does not sit left inside a wider box), and
+     text-align centres the lines and the numbered steps inside it. */
+  align-items: center;
+  text-align: center;
+  padding: 72px;
+  overflow: hidden;
+  color: var(--ds-color-text);
+  background:
+    radial-gradient(620px 420px at 86% 12%, var(--ds-color-mesh-1) 0, transparent 62%),
+    linear-gradient(158deg, #eef3ff 0%, #e2eaff 100%);
+}
+.hero-card::after {
+  content: "";
+  position: absolute;
+  width: 360px;
+  height: 360px;
+  right: -90px;
+  bottom: -170px;
+  border: 70px solid rgba(77, 107, 254, 0.10);
+  border-radius: 50%;
+}
+.hero-card h1 {
+  max-width: 560px;
+  margin: 14px 0 22px;
+  font-size: clamp(44px, 5vw, 72px);
+  line-height: 1.08;
+  letter-spacing: -.045em;
+  font-weight: 600;
+}
+.hero-card > p:not(.eyebrow) {
+  max-width: 520px;
+  margin: 0;
+  color: var(--ds-color-text-secondary);
+  font-size: 17px;
+  line-height: 1.9;
+}
 .hero-steps { position: relative; z-index: 1; display: flex; gap: 24px; margin-top: 70px; }
-.hero-steps span { display: grid; gap: 6px; min-width: 100px; color: rgb(255 255 255 / 80%); font-size: 13px; }
-.hero-steps b { color: #bcd1ff; font-size: 11px; letter-spacing: .18em; }
+.hero-steps span { display: grid; justify-items: center; gap: 6px; min-width: 100px; color: var(--ds-color-text-secondary); font-size: 13px; }
+/* The step markers are the only icon-like element on this page, so they carry
+   the same pill + brand-blue treatment as the buttons. */
+.hero-steps b {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--ds-radius-pill);
+  color: #fff;
+  background: var(--ds-color-brand);
+  box-shadow: 0 8px 20px rgba(77, 107, 254, .24);
+  font-size: 11px;
+  letter-spacing: .02em;
+}
 
-.panel { border: 1px solid #e1e7f0; border-radius: 24px; background: rgb(255 255 255 / 92%); box-shadow: 0 18px 50px rgb(45 61 96 / 7%); }
-.login-panel { display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 56px; border: 0; border-radius: 0; box-shadow: none; }
-.eyebrow { margin: 0; color: #3766b8; font-size: 11px; font-weight: 800; letter-spacing: .2em; }
-.hero-card .eyebrow { color: #bad0ff; }
+.panel {
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-color-surface-strong);
+  backdrop-filter: blur(var(--ds-blur-glass));
+  box-shadow: var(--ds-shadow-card);
+}
+.login-panel { display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 56px; border: 0; border-radius: 0; box-shadow: none; backdrop-filter: none; }
+/* Mirror the hero: the sign-in column reads as one centred block, so the
+   eyebrow, heading, hint, field labels and the error line all sit on the same
+   axis as the controls they describe. */
+.login-panel { text-align: center; }
+.login-panel input { text-align: center; }
+.login-panel input::placeholder { text-align: center; }
+.eyebrow { margin: 0; color: var(--ds-color-accent); font-size: 11px; font-weight: 800; letter-spacing: .2em; }
+.hero-card .eyebrow { color: var(--ds-color-brand); }
 h1, h2, p { text-wrap: pretty; }
-h2 { margin: 8px 0; font-size: 28px; letter-spacing: -.03em; }
-.muted { margin: 0; color: #707b92; line-height: 1.65; }
-label { display: grid; gap: 9px; color: #4a556f; font-size: 13px; font-weight: 700; }
-input { width: 100%; height: 48px; padding: 0 14px; border: 1px solid #d7deea; border-radius: 12px; color: #172036; background: #fbfcfe; transition: border-color .15s, box-shadow .15s; }
-input:hover { border-color: #aebbd0; }
-input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%); }
-.primary, .secondary, .text-button { border: 0; font-weight: 700; transition: transform .15s, box-shadow .15s, background .15s; }
-.primary { min-height: 48px; padding: 0 18px; border-radius: 12px; color: white; background: #2458ae; box-shadow: 0 10px 22px rgb(36 88 174 / 20%); }
-.primary:hover:not(:disabled) { transform: translateY(-1px); background: #1e4d9c; box-shadow: 0 13px 28px rgb(36 88 174 / 28%); }
-.secondary { min-height: 40px; padding: 0 15px; border: 1px solid #d5ddea; border-radius: 11px; color: #36547f; background: white; }
-.secondary:hover:not(:disabled) { border-color: #9fb1ce; background: #f5f8fd; }
+h2 { margin: 8px 0; font-size: 28px; letter-spacing: -.03em; font-weight: 600; }
+.muted { margin: 0; color: var(--ds-color-text-muted); line-height: 1.65; }
+label { display: grid; gap: 9px; color: var(--ds-color-text-secondary); font-size: 13px; font-weight: 600; }
+input {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-input);
+  color: var(--ds-color-text);
+  background: var(--ds-color-surface-strong);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+input:hover { border-color: var(--ds-color-border-strong); }
+input:focus { border-color: var(--ds-color-accent); background: var(--ds-color-surface-strong); box-shadow: 0 0 0 4px var(--ds-color-accent-soft); }
+.primary, .secondary, .text-button { border: 0; font-weight: 600; transition: transform .15s, box-shadow .15s, background .15s, border-color .15s; }
+.primary, .secondary { white-space: nowrap; }
+/* One pill action per view: brand-blue fill, soft brand shadow, a 1px lift on
+   hover. Secondary buttons are the same pill with a hairline border. */
+.primary {
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: var(--ds-radius-pill);
+  color: #fff;
+  background: var(--ds-color-brand);
+  box-shadow: 0 10px 24px rgba(77, 107, 254, 0.28);
+}
+.primary:hover:not(:disabled) { transform: translateY(-1px); background: var(--ds-color-brand-deep); }
+.secondary:hover:not(:disabled), .compact:hover:not(:disabled) { transform: translateY(-1px); }
+.primary:active:not(:disabled), .secondary:active:not(:disabled) { transform: translateY(0); }
+.secondary {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-color-text);
+  background: transparent;
+}
+.secondary:hover:not(:disabled) { background: var(--ds-color-surface-hover); border-color: var(--ds-color-border-strong); }
 .compact { min-height: 36px; font-size: 13px; }
-.text-button { justify-self: start; padding: 8px 0 0; color: #a13f49; background: transparent; font-size: 12px; }
-.message { margin: 0; padding: 11px 13px; border-radius: 10px; color: #285d43; background: #eaf7f0; font-size: 13px; line-height: 1.5; }
-.message:not(.error)::before { content: "✓ "; font-weight: 800; }
-.message.error { color: #923642; background: #fff0f2; }
-.message.error::before { content: "✕ "; font-weight: 800; }
+.text-button { justify-self: start; padding: 8px 0 0; color: var(--ds-color-danger); background: transparent; font-size: 12px; }
+.message { margin: 0; padding: 11px 13px; border-radius: var(--ds-radius-input); color: var(--ds-color-success); background: var(--ds-color-success-soft); font-size: 13px; line-height: 1.5; }
+.message:not(.error)::before {
+  content: "✓";
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ds-color-success);
+  font-weight: 800;
+}
+.message.error { color: var(--ds-color-danger); background: var(--ds-color-danger-soft); }
+.message.error::before {
+  content: "✕";
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 12px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ds-color-danger);
+  font-weight: 800;
+}
 
-.countdown { color: #2f5fae; font-weight: 700; font-variant-numeric: tabular-nums; }
-.countdown.urgent { color: #b3372f; }
+.countdown { color: var(--ds-color-accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+.countdown.urgent { color: var(--ds-color-danger); }
 
-.slot.current { border-color: #9fc2f2; background: #f2f7ff; }
-.reservation.current { border-color: #93cfae; background: #f2fbf6; }
-.reservation.waitlisted { border-color: #e8d29a; background: #fffaf0; }
+.slot.current { border-color: rgba(46, 96, 159, .45); background: var(--ds-color-accent-soft); }
+.reservation.current { border-color: rgba(31, 111, 74, .35); background: var(--ds-color-success-soft); }
+.reservation.waitlisted { border-color: rgba(190, 138, 40, .4); background: var(--ds-color-warning-soft); }
 
-.password-details { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e6ebf3; }
-.password-details summary { color: #56617b; font-size: 13px; font-weight: 700; cursor: pointer; }
+.password-details { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ds-color-divider); }
+.password-details summary { color: var(--ds-color-text-secondary); font-size: 13px; font-weight: 600; cursor: pointer; }
 .password-details form { display: grid; gap: 12px; margin-top: 14px; }
-.password-details .compact { justify-self: start; padding: 0 14px; }
+.password-details .compact { justify-self: start; padding: 0 16px; }
 
 .dashboard { padding-top: 28px; }
 .welcome-row { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
-.welcome-row h1 { margin: 10px 0 4px; font-size: 40px; letter-spacing: -.045em; }
+.welcome-row h1 { margin: 10px 0 4px; font-size: 40px; letter-spacing: -.045em; font-weight: 600; }
 .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 18px; }
-.stat-card { display: grid; gap: 10px; min-height: 156px; padding: 25px; border: 1px solid #e1e7f0; border-radius: 20px; background: white; box-shadow: 0 12px 35px rgb(45 61 96 / 6%); }
-.stat-card > span { color: #7b859c; font-size: 13px; }
-.stat-card strong { align-self: end; font-size: 30px; letter-spacing: -.04em; }
-.stat-card strong i { margin-right: 3px; font-size: 16px; font-style: normal; }
-.stat-card small { color: #717b90; }
-.stat-card.accent { color: white; border: 0; background: linear-gradient(135deg, #1d4b99, #3671c8); }
-.stat-card.accent > span, .stat-card.accent small { color: rgb(255 255 255 / 72%); }
+.stat-card {
+  display: grid;
+  gap: 10px;
+  min-height: 156px;
+  padding: 25px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-color-surface-strong);
+  backdrop-filter: blur(var(--ds-blur-glass));
+  box-shadow: var(--ds-shadow-card);
+}
+.stat-card > span { color: var(--ds-color-text-muted); font-size: 13px; }
+.stat-card strong { align-self: end; font-size: 30px; letter-spacing: -.04em; font-weight: 600; }
+.stat-card strong i { margin-left: 3px; font-size: 16px; font-style: normal; }
+.stat-card small { color: var(--ds-color-text-muted); }
+.stat-card.accent { color: #fff; border-color: transparent; background: linear-gradient(150deg, var(--ds-color-brand) 0%, var(--ds-color-brand-deep) 100%); box-shadow: 0 16px 38px rgba(77, 107, 254, 0.28); }
+.stat-card.accent > span, .stat-card.accent small { color: rgba(255, 255, 255, .84); }
 .content-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .65fr); gap: 18px; }
 .slots-panel, .action-panel { padding: 26px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.section-heading > button, .section-heading > input { flex: none; }
 .section-heading input { width: 170px; height: 40px; }
-.slot-list { display: grid; gap: 9px; min-height: 160px; color: #748097; }
-.slot { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 16px; border: 1px solid #e4e9f1; border-radius: 14px; color: #172036; background: #fbfcfe; }
+.slot-list { display: grid; gap: 9px; min-height: 160px; color: var(--ds-color-text-muted); }
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 15px 16px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-panel);
+  color: var(--ds-color-text);
+  background: var(--ds-color-surface-soft);
+}
 .slot div { display: grid; gap: 5px; }
-.slot small { color: #7b8599; }
+.slot small { color: var(--ds-color-text-muted); }
 .action-panel { align-self: start; }
 .reservation-list { display: grid; gap: 10px; min-height: 190px; margin: 18px 0; }
 .reservation-pagination { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin: -4px 0 18px; }
-.reservation-pagination span { color: #6f7990; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
-.reservation { display: grid; gap: 7px; padding: 16px; border: 1px solid #e3e8f0; border-radius: 14px; background: #fbfcfe; }
-.reservation small, .empty { color: #788298; }
-.status { justify-self: start; padding: 4px 8px; border-radius: 999px; color: #345687; background: #e9f0fb; font-size: 11px; font-weight: 800; }
-.status.waitlisted { color: #825e22; background: #fff5d9; }
-.status.cancelled, .status.expired { color: #777f90; background: #edf0f4; }
+.reservation-pagination span { color: var(--ds-color-text-muted); font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
+.reservation {
+  display: grid;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid var(--ds-color-divider);
+  border-radius: var(--ds-radius-panel);
+  background: var(--ds-color-surface-soft);
+}
+.reservation small, .empty { color: var(--ds-color-text-muted); }
+.status { justify-self: start; padding: 4px 10px; border-radius: var(--ds-radius-pill); color: var(--ds-color-accent); background: var(--ds-color-accent-soft); font-size: 11px; font-weight: 700; }
+.status.waitlisted { color: var(--ds-color-warning); background: var(--ds-color-warning-soft); }
+.status.cancelled, .status.expired { color: var(--ds-color-text-muted); background: var(--ds-color-surface-hover); }
 .action-panel > .primary { width: 100%; }
 
 @media (max-width: 900px) {
-  .shell { width: min(100% - 24px, 720px); }
+  .shell { width: min(100% - 24px, 860px); }
   .login-layout { grid-template-columns: 1fr; }
   .hero-card { min-height: 420px; padding: 48px; }
   .hero-card h1 { font-size: 48px; }
@@ -112,6 +364,7 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
   .hero-card > p:not(.eyebrow) { font-size: 15px; }
   .hero-steps { gap: 14px; }
   .hero-steps span { min-width: 0; }
+  .chapter-links { grid-template-columns: 1fr; }
   .login-panel { padding: 34px 26px; }
   .welcome-row, .section-heading { align-items: stretch; flex-direction: column; }
   .section-heading input { width: 100%; }
@@ -119,22 +372,68 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
 }
 
 /* Experiment selection: the page a student lands on after signing in. */
-.row-actions { display: flex; gap: 8px; }
-.track-cards { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(262px, 1fr)); }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* One experiment per row: the chooser reads top-down, and each row has room
+   for its chapter titles in two columns. */
+.track-cards { display: grid; gap: 18px; grid-template-columns: 1fr; }
+/* Slack under the last card, otherwise the browser cannot scroll far enough
+   to centre a card near the bottom and the jump lands off-centre. */
+#tracks-view { padding-bottom: 42vh; }
+/* Experiment names in the chooser's grey line jump to their card. The link
+   itself keeps this colour — only the card it points at reacts. */
+.track-jump {
+  color: var(--ds-color-brand-deep);
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.track-jump:hover, .track-jump:focus-visible { border-bottom-color: currentColor; }
+/* The jumped-to card's title brightens, then eases back. Only the heading:
+   the description line and the chapter titles are left alone. */
+.track-card h2 { transition: color .35s ease; }
+.track-card.is-flashing h2 { color: var(--ds-color-brand); }
 .track-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 26px;
-  border: 1px solid #e1e7f0;
-  border-radius: 20px;
-  background: white;
-  box-shadow: 0 12px 35px rgb(45 61 96 / 6%);
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-color-surface-strong);
+  backdrop-filter: blur(var(--ds-blur-glass));
+  box-shadow: var(--ds-shadow-card);
 }
-.track-card h2 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
+.track-card h2 { margin: 0; font-size: 21px; letter-spacing: -.02em; font-weight: 600; }
+.chapter-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; margin: 0; padding: 0; list-style: none; }
+.chapter-link {
+  display: grid;
+  gap: 6px;
+  padding: 13px 16px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-panel);
+  color: var(--ds-color-text);
+  background: var(--ds-color-surface-soft);
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform .15s, border-color .15s, background .15s;
+}
+.chapter-link:hover { transform: translateY(-1px); border-color: var(--ds-color-border-strong); background: var(--ds-color-surface-hover); }
+/* The teaser is always exactly two lines, however long the text is. */
+.chapter-link-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--ds-color-text-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.chapter-empty { grid-column: 1 / -1; color: var(--ds-color-text-muted); }
 .track-card p { flex: 1; }
-.track-card.unavailable { box-shadow: none; background: #f8fafd; }
-.track-card.unavailable h2 { color: #7b859c; }
+.track-card.unavailable { box-shadow: none; background: var(--ds-color-surface-soft); }
+.track-card.unavailable h2 { color: var(--ds-color-text-muted); }
 
 /* Lab manual reader: chapter list beside one chapter's body. */
 .manual-layout { display: block; }
@@ -145,42 +444,42 @@ input:focus { border-color: #3668bc; box-shadow: 0 0 0 4px rgb(54 104 188 / 10%)
   gap: 5px;
   width: 100%;
   padding: 16px;
-  border: 1px solid #d7e1f0;
-  border-radius: 15px;
-  color: #4a556f;
-  background: #fff;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-panel);
+  color: var(--ds-color-text-secondary);
+  background: var(--ds-color-surface-strong);
   font: inherit;
   text-align: left;
   text-decoration: none;
   cursor: pointer;
-  box-shadow: 0 8px 22px rgb(45 61 96 / 6%);
+  box-shadow: var(--ds-shadow-card);
   transition: transform .15s, border-color .15s, box-shadow .15s;
 }
-.manual-open:hover { transform: translateY(-1px); border-color: #9fb8dd; box-shadow: 0 12px 28px rgb(36 83 166 / 12%); }
-.manual-open-title { color: #172036; font-weight: 800; line-height: 1.4; }
-.manual-open small { overflow: hidden; color: #7b859c; text-overflow: ellipsis; white-space: nowrap; }
-.manual-open strong { margin-top: 7px; color: #2458ae; font-size: 13px; }
+.manual-open:hover { transform: translateY(-1px); border-color: var(--ds-color-border-strong); }
+.manual-open-title { color: var(--ds-color-text); font-weight: 700; line-height: 1.4; }
+.manual-open small { overflow: hidden; color: var(--ds-color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.manual-open strong { margin-top: 7px; color: var(--ds-color-accent); font-size: 13px; }
 .manual-body { padding: 30px; min-width: 0; }
 .manual-body h2 { margin-top: 0; }
 
 /* Administrator-authored chapter content. The portal owns its appearance, so
    these rules are the manual's only styling: uploads keep structure, never
    presentation. */
-.chapter-body { color: #29344d; line-height: 1.78; }
-.chapter-body h1, .chapter-body h2, .chapter-body h3, .chapter-body h4 { margin: 26px 0 10px; line-height: 1.35; letter-spacing: -.02em; }
+.chapter-body { color: var(--ds-color-text-secondary); line-height: 1.78; }
+.chapter-body h1, .chapter-body h2, .chapter-body h3, .chapter-body h4 { margin: 26px 0 10px; line-height: 1.35; letter-spacing: -.02em; font-weight: 600; }
 .chapter-body h1 { font-size: 25px; }
 .chapter-body h2 { font-size: 21px; }
 .chapter-body h3 { font-size: 17px; }
 .chapter-body p, .chapter-body ul, .chapter-body ol, .chapter-body blockquote, .chapter-body pre { margin: 0 0 15px; }
 .chapter-body ul, .chapter-body ol { padding-left: 24px; }
 .chapter-body li { margin-bottom: 6px; }
-.chapter-body a { color: #1d4b99; }
-.chapter-body img { max-width: 100%; height: auto; border-radius: 12px; }
-.chapter-body pre { padding: 15px 17px; border-radius: 14px; color: #e6e8ec; background: #16181d; overflow-x: auto; }
+.chapter-body a { color: var(--ds-color-accent); }
+.chapter-body img { max-width: 100%; height: auto; border-radius: var(--ds-radius-media); }
+.chapter-body pre { padding: 16px 18px; border-radius: var(--ds-radius-panel); color: #e6e8ec; background: #16181d; overflow-x: auto; font-family: var(--ds-font-mono); }
 .chapter-body pre code { padding: 0; background: none; color: inherit; font-size: 13px; }
-.chapter-body code { padding: 2px 6px; border-radius: 6px; background: rgb(45 61 96 / 7%); font-size: .92em; }
+.chapter-body code { padding: 2px 6px; border-radius: 6px; background: rgba(15, 15, 15, .06); font-family: var(--ds-font-mono); font-size: .92em; }
 .chapter-body table { display: block; width: 100%; margin: 0 0 15px; border-collapse: collapse; overflow-x: auto; }
-.chapter-body th, .chapter-body td { padding: 9px 11px; border: 1px solid #e1e7f0; text-align: left; }
-.chapter-body th { background: #f6f8fc; font-weight: 700; }
-.chapter-body blockquote { padding: 2px 0 2px 15px; border-left: 3px solid #d7deea; color: #707b92; }
-.chapter-body figcaption { color: #707b92; font-size: 13px; }
+.chapter-body th, .chapter-body td { padding: 9px 11px; border: 1px solid var(--ds-color-border); text-align: left; }
+.chapter-body th { background: var(--ds-color-surface-hover); font-weight: 700; }
+.chapter-body blockquote { padding: 2px 0 2px 15px; border-left: 3px solid var(--ds-color-border); color: var(--ds-color-text-muted); }
+.chapter-body figcaption { color: var(--ds-color-text-muted); font-size: 13px; }

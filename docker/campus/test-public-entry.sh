@@ -371,9 +371,11 @@ done
 api_service="$(sed -n '/^[[:space:]]\{2\}api:$/,/^[[:space:]]\{2\}[a-zA-Z0-9_-]*:$/p' \
   "${DOCKER_DIR}/docker-compose.campus.yaml")"
 for setting in \
-  'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-2}' \
+  'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-4}' \
   'SERVER_WORKER_CLASS: ${CAMPUS_API_WORKER_CLASS:-gevent}' \
-  'SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}'; do
+  'SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}' \
+  'SQLALCHEMY_POOL_SIZE: ${CAMPUS_DB_POOL_SIZE:-20}' \
+  'SQLALCHEMY_MAX_OVERFLOW: ${CAMPUS_DB_MAX_OVERFLOW:-10}'; do
   printf '%s\n' "${api_service}" | grep -Fq "${setting}" || {
     echo "Campus API omits concurrency setting: ${setting}" >&2
     exit 1

@@ -1,9 +1,11 @@
 import json
+import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from pypinyin import lazy_pinyin
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from models.campus import CampusAuditEvent, CampusStudent, StudentStatus
@@ -11,6 +13,72 @@ from services.campus.credential_service import revoke_portal_sessions, upsert_cr
 from services.campus.domain import StudentIdentity, SyncResult
 from services.campus.errors import CampusValidationError, StudentNotFoundError, StudentSuspendedError
 from services.campus.time_utils import to_naive_utc
+
+_PASSWORD_NAME_SEGMENT = re.compile(r"[^a-z0-9]+")
+
+# ESCAPE for the administration list's `contains` search, so a keyword typed as
+# `%` or `_` is looked up literally instead of matching every row.
+_LIKE_ESCAPE = "\\"
+
+
+def _contains_pattern(value: str) -> str:
+    escaped = (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", f"{_LIKE_ESCAPE}%")
+        .replace("_", f"{_LIKE_ESCAPE}_")
+    )
+    return f"%{escaped}%"
+
+
+# Surnames whose pinyin letters differ from the most common reading of the same
+# character (rime-only differences like 华 hua/huà do not matter here because the
+# derived password is toneless). A single character carries no context, so the
+# pinyin table alone reads 翟 as "di" instead of the surname reading "zhai".
+_SURNAME_READINGS = {
+    "翟": "zhai",
+    "单": "shan",
+    "仇": "qiu",
+    "解": "xie",
+    "查": "zha",
+    "区": "ou",
+    "曾": "zeng",
+    "覃": "qin",
+    "朴": "piao",
+    "缪": "miao",
+    "乐": "yue",
+    "折": "she",
+    "盖": "ge",
+    "种": "chong",
+    "员": "yun",
+    "都": "du",
+    "繁": "po",
+    "隗": "wei",
+    "尉": "wei",
+}
+
+
+def derive_initial_password(display_name: str, student_number: str) -> str:
+    """Return the derived initial password: name pinyin head plus the last four digits.
+
+    The head is the pinyin of the name's first character (``张三`` → ``zhang``,
+    ``欧阳娜娜`` → ``ou``). Names whose first character has no latin reading — an
+    already-latin initial, punctuation, or a character missing from the pinyin
+    table — fall back to the student-number suffix alone rather than failing the
+    whole roster import, because the credential still has to be issued.
+    """
+    if len(student_number) < 4:
+        raise CampusValidationError(f"student_number must contain at least four characters: {student_number}")
+    suffix = student_number[-4:]
+    head = display_name.strip()[:1]
+    if not head:
+        return suffix
+    if head in _SURNAME_READINGS:
+        return f"{_SURNAME_READINGS[head]}{suffix}"
+    syllables = lazy_pinyin(head)
+    if not syllables:
+        return suffix
+    segment = _PASSWORD_NAME_SEGMENT.sub("", syllables[0].lower())
+    return f"{segment}{suffix}" if segment else suffix
 
 
 class StudentAdministrationService:
@@ -71,20 +139,20 @@ class StudentAdministrationService:
                     if supplied_password:
                         upsert_credential(self._session, student.id, supplied_password)
                     else:
-                        if len(student_number) < 4:
-                            raise CampusValidationError(
-                                f"student_number must contain at least four characters: {student_number}"
-                            )
                         upsert_credential(
                             self._session,
                             student.id,
-                            student_number[-4:],
+                            derive_initial_password(student.display_name, student_number),
                             must_change_password=True,
                         )
                         default_passwords += 1
             else:
                 student.display_name = identity.display_name.strip()
-                student.cohort = identity.cohort.strip() if identity.cohort else None
+                # A roster that omits 班级 — or leaves a cell blank — must not
+                # wipe a class the administrator set elsewhere, so only a real
+                # value updates it. New students still start with none.
+                if identity.cohort and identity.cohort.strip():
+                    student.cohort = identity.cohort.strip()
                 updated += 1
                 password = passwords.get(student_number) if passwords is not None else None
                 if password:
@@ -137,11 +205,11 @@ class StudentAdministrationService:
         default_passwords = sum(
             1 for number in normalized_numbers if number not in existing_by_number and not passwords.get(number)
         )
-        too_short = [number for number in normalized_numbers if number not in existing_by_number and len(number) < 4]
-        if too_short:
-            raise CampusValidationError(
-                f"student_number must contain at least four characters: {', '.join(sorted(too_short))}"
-            )
+        for identity, number in zip(records, normalized_numbers, strict=True):
+            if number not in existing_by_number and not passwords.get(number):
+                # Validate the derived credential here so the preview and the
+                # sync reject exactly the same rosters.
+                derive_initial_password(identity.display_name, number)
         return SyncResult(
             created=created,
             updated=updated,
@@ -177,6 +245,72 @@ class StudentAdministrationService:
         self._session.commit()
         return student
 
+    def rename(self, student_number: str, *, display_name: str, actor_account_id: str) -> CampusStudent:
+        """Change the display name only; the number and everything keyed on it stay put."""
+        trimmed = display_name.strip()
+        if not trimmed:
+            raise CampusValidationError("display_name is required")
+        if len(trimmed) > 255:
+            raise CampusValidationError("display_name is too long")
+        student = self.get_student(student_number)
+        previous = student.display_name
+        if previous == trimmed:
+            return student
+        student.display_name = trimmed
+        self._session.add(
+            CampusAuditEvent(
+                actor_account_id=actor_account_id,
+                action="student.renamed",
+                target_type="student",
+                target_id=student.id,
+                details_json=json.dumps({"from": previous, "to": trimmed}, separators=(",", ":")),
+            )
+        )
+        self._session.commit()
+        return student
+
+    def soft_delete(self, student_number: str, *, actor_account_id: str) -> CampusStudent:
+        """Hide a student and sign them out, without destroying anything.
+
+        The row, the credential and the gateway token all survive, so `restore`
+        is a one-column change. The retention job is what actually removes data.
+        """
+        student = self.get_student(student_number)
+        if student.deleted_at is not None:
+            return student
+        now_utc = to_naive_utc(datetime.now(UTC))
+        student.deleted_at = now_utc
+        revoke_portal_sessions(self._session, student.id, now_utc)
+        self._session.add(
+            CampusAuditEvent(
+                actor_account_id=actor_account_id,
+                action="student.deleted",
+                target_type="student",
+                target_id=student.id,
+                details_json=json.dumps({"student_number": student.student_number}, separators=(",", ":")),
+            )
+        )
+        self._session.commit()
+        return student
+
+    def restore(self, student_number: str, *, actor_account_id: str) -> CampusStudent:
+        """Undo a soft delete. The student can sign in again immediately."""
+        student = self.get_student(student_number)
+        if student.deleted_at is None:
+            return student
+        student.deleted_at = None
+        self._session.add(
+            CampusAuditEvent(
+                actor_account_id=actor_account_id,
+                action="student.restored",
+                target_type="student",
+                target_id=student.id,
+                details_json=json.dumps({"student_number": student.student_number}, separators=(",", ":")),
+            )
+        )
+        self._session.commit()
+        return student
+
     def get_student(self, student_number: str, *, for_update: bool = False) -> CampusStudent:
         """Return one student by stable student number or raise a domain error."""
         statement = select(CampusStudent).where(CampusStudent.student_number == student_number)
@@ -195,11 +329,31 @@ class StudentAdministrationService:
             raise StudentSuspendedError(student.student_number)
         return student
 
-    def list_students(self, *, limit: int = 100, offset: int = 0) -> list[CampusStudent]:
+    def list_students(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        keyword: str | None = None,
+        include_deleted: bool = False,
+    ) -> list[CampusStudent]:
+        """One page of students, optionally narrowed to a number-or-name match.
+
+        Soft-deleted students stay in the table but are hidden unless the
+        caller explicitly asks for them, which is what the restore view does.
+        """
         if not 1 <= limit <= 500 or offset < 0:
             raise ValueError("invalid pagination")
-        return list(
-            self._session.scalars(
-                select(CampusStudent).order_by(CampusStudent.student_number).limit(limit).offset(offset)
-            ).all()
-        )
+        statement = select(CampusStudent).order_by(CampusStudent.student_number)
+        if not include_deleted:
+            statement = statement.where(CampusStudent.deleted_at.is_(None))
+        needle = (keyword or "").strip()
+        if needle:
+            pattern = _contains_pattern(needle)
+            statement = statement.where(
+                or_(
+                    CampusStudent.student_number.ilike(pattern, escape=_LIKE_ESCAPE),
+                    CampusStudent.display_name.ilike(pattern, escape=_LIKE_ESCAPE),
+                )
+            )
+        return list(self._session.scalars(statement.limit(limit).offset(offset)).all())

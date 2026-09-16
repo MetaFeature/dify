@@ -145,6 +145,7 @@ const ModelParameterModal: FC<ModelParameterModalProps> = ({
         <div className="flex h-8 min-w-[296px] items-center gap-px overflow-hidden rounded-lg">
           <div className="min-w-0 flex-1">
             <ModelSelector
+              hideProviderSettingsFooter
               defaultModel={provider || modelId ? { provider, model: modelId } : undefined}
               modelList={activeTextGenerationModelList}
               readonly={readonly}
@@ -186,6 +187,7 @@ const ModelParameterModal: FC<ModelParameterModalProps> = ({
           {renderTrigger && (
             <div className="px-4 pt-2 pb-4">
               <ModelSelector
+              hideProviderSettingsFooter
                 defaultModel={hasSelectedModel ? { provider, model: modelId } : undefined}
                 modelList={activeTextGenerationModelList}
                 onSelect={handleChangeModel}

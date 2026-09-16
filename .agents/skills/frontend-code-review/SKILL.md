@@ -1,6 +1,6 @@
 ---
 name: frontend-code-review
-description: Review Dify frontend code for correctness, accessibility, component design, dify-ui usage, data/query boundaries, performance, and tests. Trigger for `.tsx`, `.ts`, `.js`, UI, React, Next.js, pending-change, or focused frontend review requests.
+description: "Review requested Dify frontend changes for correctness, accessibility, component contracts, data boundaries and meaningful tests."
 ---
 
 # Frontend Code Review

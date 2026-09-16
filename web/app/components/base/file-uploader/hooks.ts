@@ -9,6 +9,7 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { v4 as uuid4 } from 'uuid'
 import {
+  AUDIO_DURATION_LIMIT,
   AUDIO_SIZE_LIMIT,
   FILE_SIZE_LIMIT,
   IMG_SIZE_LIMIT,
@@ -27,6 +28,7 @@ import {
   getFileUploadErrorMessage,
   getSupportFileType,
   isAllowedFileExtension,
+  readAudioDuration,
 } from './utils'
 
 export const useFileSizeLimit = (fileUploadConfig?: FileUploadConfigResponse) => {
@@ -35,6 +37,8 @@ export const useFileSizeLimit = (fileUploadConfig?: FileUploadConfigResponse) =>
   const docSizeLimit = Number(fileUploadConfig?.file_size_limit) * 1024 * 1024 || FILE_SIZE_LIMIT
   const audioSizeLimit =
     Number(fileUploadConfig?.audio_file_size_limit) * 1024 * 1024 || AUDIO_SIZE_LIMIT
+  const audioDurationLimit =
+    Number(fileUploadConfig?.audio_duration_limit) || AUDIO_DURATION_LIMIT
   const videoSizeLimit =
     Number(fileUploadConfig?.video_file_size_limit) * 1024 * 1024 || VIDEO_SIZE_LIMIT
   const maxFileUploadLimit =
@@ -44,6 +48,7 @@ export const useFileSizeLimit = (fileUploadConfig?: FileUploadConfigResponse) =>
     imgSizeLimit,
     docSizeLimit,
     audioSizeLimit,
+    audioDurationLimit,
     videoSizeLimit,
     maxFileUploadLimit,
   }
@@ -54,9 +59,8 @@ export const useFile = (fileConfig: FileUpload, noNeedToCheckEnable = true) => {
   const fileStore = useFileStore()
   const params = useParams()
   const pathname = usePathname()
-  const { imgSizeLimit, docSizeLimit, audioSizeLimit, videoSizeLimit } = useFileSizeLimit(
-    fileConfig.fileUploadConfig,
-  )
+  const { imgSizeLimit, docSizeLimit, audioSizeLimit, audioDurationLimit, videoSizeLimit } =
+    useFileSizeLimit(fileConfig.fileUploadConfig)
   const formToken = typeof params.token === 'string' ? params.token : undefined
   const isHumanInputFormPage = !!formToken && /(?:^|\/)form\/[^/]+$/.test(pathname)
 
@@ -299,8 +303,26 @@ export const useFile = (fileConfig: FileUpload, noNeedToCheckEnable = true) => {
     setFiles([])
   }, [fileStore])
 
+  const checkAudioDurationLimit = useCallback(
+    async (fileType: string, file: File) => {
+      if (fileType !== SupportUploadFileTypes.audio || audioDurationLimit <= 0) return true
+      const duration = await readAudioDuration(file)
+      if (duration !== null && duration > audioDurationLimit) {
+        toast.error(
+          t(($) => $['fileUploader.audioDurationLimit'], {
+            ns: 'common',
+            seconds: audioDurationLimit,
+          }),
+        )
+        return false
+      }
+      return true
+    },
+    [audioDurationLimit, t],
+  )
+
   const handleLocalFileUpload = useCallback(
-    (file: File) => {
+    async (file: File) => {
       // Check file upload enabled
       if (!noNeedToCheckEnable && !fileConfig.enabled) {
         toast.error(t(($) => $['fileUploader.uploadDisabled'], { ns: 'common' }))
@@ -326,6 +348,8 @@ export const useFile = (fileConfig: FileUpload, noNeedToCheckEnable = true) => {
         allowedFileTypes?.includes(SupportUploadFileTypes.custom),
       )
       if (!checkSizeLimit(fileType, file.size)) return
+      // Campus: a voice clip is bounded by length, not only by file size.
+      if (!(await checkAudioDurationLimit(fileType, file))) return
 
       const reader = new FileReader()
       const isImage = file.type.startsWith('image')
@@ -391,6 +415,7 @@ export const useFile = (fileConfig: FileUpload, noNeedToCheckEnable = true) => {
     [
       noNeedToCheckEnable,
       checkSizeLimit,
+      checkAudioDurationLimit,
       t,
       handleAddFile,
       handleUpdateFile,

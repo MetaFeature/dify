@@ -12,7 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.helper import ssrf_proxy
 from core.tools.errors import ToolSSRFError
-from services.campus.domain import GatewayModel, GatewayUsage, ManagedGatewayToken, ModelUsage
+from services.campus.domain import (
+    GatewayModel,
+    GatewayUsage,
+    GatewayUsageDay,
+    GatewayUsageSeries,
+    ManagedGatewayToken,
+    ModelUsage,
+)
 from services.campus.errors import ModelGatewayError
 
 type Requester = Callable[..., httpx.Response]
@@ -46,6 +53,22 @@ class _UsageData(_StrictModel):
     remaining_quota: int = Field(ge=0)
     used_quota: int = Field(ge=0)
     by_model: list[_ModelUsageData] = Field(default_factory=list)
+
+
+class _UsageSeriesRowData(_StrictModel):
+    day: int
+    quota: int = Field(ge=0)
+    requests: int = Field(ge=0)
+    token_id: int | None = None
+    student_number: str = ""
+    student_name: str = ""
+    model: str | None = None
+
+
+class _UsageSeriesData(_StrictModel):
+    quota_units_per_usd: float = Field(gt=0)
+    by_token: list[_UsageSeriesRowData] = Field(default_factory=list)
+    by_model: list[_UsageSeriesRowData] = Field(default_factory=list)
 
 
 class _ModelCatalogItem(_StrictModel):
@@ -153,6 +176,30 @@ class NewApiClient:
             json={"delta_quota": delta_quota, "request_id": request_id},
         )
         return self._to_gateway_usage(_UsageData.model_validate(data))
+
+    def usage_series(self, start: int, end: int, offset_seconds: int) -> GatewayUsageSeries:
+        """Daily consumed quota over [start, end), bucketed on the campus day."""
+        data = self._request(
+            "GET", f"/api/campus/usage/daily?from={int(start)}&to={int(end)}&offset={int(offset_seconds)}"
+        )
+        payload = _UsageSeriesData.model_validate(data)
+        return GatewayUsageSeries(
+            quota_units_per_usd=int(payload.quota_units_per_usd),
+            by_token=tuple(self._to_usage_day(row) for row in payload.by_token),
+            by_model=tuple(self._to_usage_day(row) for row in payload.by_model),
+        )
+
+    @staticmethod
+    def _to_usage_day(row: _UsageSeriesRowData) -> GatewayUsageDay:
+        return GatewayUsageDay(
+            day=row.day,
+            quota=row.quota,
+            requests=row.requests,
+            token_id=row.token_id,
+            student_number=row.student_number,
+            student_name=row.student_name,
+            model=row.model or "",
+        )
 
     def get_model_catalog(self) -> tuple[GatewayModel, ...]:
         catalog = _ModelCatalogData.model_validate(self._request("GET", "/api/campus/models/catalog"))

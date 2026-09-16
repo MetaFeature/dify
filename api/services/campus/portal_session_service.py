@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from models.campus import CampusPortalSession, CampusStudent, StudentStatus
 from services.campus.domain import IdentitySource, IssuedPortalSession, PlatformProvisioner
-from services.campus.errors import PortalSessionError, StudentNotFoundError, StudentSuspendedError
+from services.campus.errors import (
+    PortalSessionError,
+    StudentDeletedError,
+    StudentNotFoundError,
+    StudentSuspendedError,
+)
 from services.campus.time_utils import to_naive_utc
 
 
@@ -45,6 +50,8 @@ class PortalSessionService:
         )
         if student is None:
             raise StudentNotFoundError(identity.student_number)
+        if student.deleted_at is not None:
+            raise StudentDeletedError(student.student_number)
         if student.status is not StudentStatus.ACTIVE:
             raise StudentSuspendedError(student.student_number)
 
@@ -78,6 +85,8 @@ class PortalSessionService:
         student = self._session.get(CampusStudent, portal_session.student_id)
         if student is None:
             raise PortalSessionError("portal session student does not exist")
+        if student.deleted_at is not None:
+            raise StudentDeletedError(student.student_number)
         if student.status is not StudentStatus.ACTIVE:
             raise StudentSuspendedError(student.student_number)
         if portal_session.last_seen_at is None or portal_session.last_seen_at <= now_utc - timedelta(minutes=5):

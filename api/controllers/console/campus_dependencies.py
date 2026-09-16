@@ -11,8 +11,11 @@ from extensions.ext_storage import storage
 from models import Account
 from models.campus import CampusStudent
 from services.campus.administrator_service import AdministratorService
+from services.campus.allowance_service import AllowanceService
 from services.campus.credential_service import ManagedFirstIdentitySource, StudentCredentialService
+from services.campus.default_allowance_service import DefaultAllowanceService
 from services.campus.dify_adapters import (
+    DifyAccountDeleter,
     DifyModelConfigurator,
     DifySessionIssuer,
     DifyWorkspaceProvisioner,
@@ -25,20 +28,26 @@ from services.campus.errors import (
     CampusProvisioningError,
     ModelGatewayError,
     PortalSessionError,
+    StudentDeletedError,
     StudentNotFoundError,
     StudentSuspendedError,
 )
 from services.campus.identity_source import UnconfiguredIdentitySource, VirtualIdentitySource
+from services.campus.knowledge_limit_service import KnowledgeLimitService, knowledge_limit_service
 from services.campus.lab_manual_service import LabManualService
 from services.campus.load_admission import SystemLoadAdmission
 from services.campus.model_account_service import StudentModelAccountService
 from services.campus.newapi_client import NewApiClient
+from services.campus.portal_login_service import PortalLoginPageService
 from services.campus.portal_presentation_service import PortalPresentationService
 from services.campus.portal_session_service import PortalSessionService
 from services.campus.provisioning_service import PlatformProvisioningService
 from services.campus.reservation_service import ReservationService
 from services.campus.session_launch_service import SessionLaunchService
+from services.campus.slot_capacity_service import SlotCapacityService
+from services.campus.student_retention_service import StudentRetentionService
 from services.campus.student_service import StudentAdministrationService
+from services.campus.usage_report import UsageReportService
 
 
 def require_campus_enabled() -> None:
@@ -73,6 +82,21 @@ def identity_source() -> IdentitySource:
     return ManagedFirstIdentitySource(credentials, fallback)
 
 
+def student_retention() -> StudentRetentionService:
+    """The irreversible second stage of deletion; see the service docstring."""
+    session = db.session()
+    return StudentRetentionService(
+        session=session,
+        gateway=newapi_client(),
+        delete_dify_account=DifyAccountDeleter(session=session),
+    )
+
+
+def usage_reports() -> UsageReportService:
+    """Read-only token usage / billing reporting straight from the gateway."""
+    return UsageReportService(gateway=newapi_client())
+
+
 def lab_manuals() -> LabManualService:
     return LabManualService(session=db.session(), storage=storage)
 
@@ -96,10 +120,18 @@ def newapi_client() -> NewApiClient:
     )
 
 
+def slot_capacity_service() -> SlotCapacityService:
+    return SlotCapacityService(
+        session=db.session(),
+        platform_default=dify_config.CAMPUS_RESERVATION_CAPACITY,
+        booking_days=dify_config.CAMPUS_BOOKING_DAYS,
+    )
+
+
 def reservation_service() -> ReservationService:
     return ReservationService(
         session=db.session(),
-        capacity=dify_config.CAMPUS_RESERVATION_CAPACITY,
+        capacity=slot_capacity_service().effective_capacity(),
         booking_days=dify_config.CAMPUS_BOOKING_DAYS,
         current_slot_load_admission=SystemLoadAdmission(
             max_load_per_cpu=dify_config.CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU,
@@ -107,10 +139,39 @@ def reservation_service() -> ReservationService:
     )
 
 
+def knowledge_limits() -> KnowledgeLimitService:
+    return knowledge_limit_service(db.session())
+
+
+def default_allowance() -> DefaultAllowanceService:
+    """The platform default allowance, as an administrator last set it.
+
+    `student_service()` reads it once per request, so a roster import or a new
+    student picks up the current default while students that already hold a
+    model account keep their own allowance.
+    """
+    return DefaultAllowanceService(
+        session=db.session(),
+        platform_default_usd=dify_config.CAMPUS_DEFAULT_ALLOWANCE_USD,
+    )
+
+
+def portal_login_pages() -> PortalLoginPageService:
+    return PortalLoginPageService(session=db.session())
+
+
 def student_service() -> StudentAdministrationService:
     return StudentAdministrationService(
         session=db.session(),
-        default_allowance_usd=dify_config.CAMPUS_DEFAULT_ALLOWANCE_USD,
+        default_allowance_usd=default_allowance().effective_default(),
+    )
+
+
+def allowance_service() -> AllowanceService:
+    return AllowanceService(
+        session=db.session(),
+        gateway=newapi_client(),
+        quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
     )
 
 
@@ -158,6 +219,15 @@ def platform_provisioner() -> PlatformProvisioningService:
             models=parse_campus_models(model_spec),
             api_protocol=dify_config.CAMPUS_MODEL_PROVIDER_API_PROTOCOL,
             plugin_package_path=dify_config.CAMPUS_MODEL_PROVIDER_PLUGIN_PACKAGE_PATH,
+            vision_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_VISION_MODELS.split(",") if item.strip()
+            ),
+            audio_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_AUDIO_MODELS.split(",") if item.strip()
+            ),
+            document_models=tuple(
+                item.strip() for item in dify_config.CAMPUS_MODEL_PROVIDER_DOCUMENT_MODELS.split(",") if item.strip()
+            ),
         )
 
     return PlatformProvisioningService(
@@ -187,6 +257,7 @@ def launch_service() -> SessionLaunchService:
         session=session,
         portal_sessions=portal_sessions(),
         reservations=reservation_service(),
+        allowance_gate=allowance_service(),
         session_issuer=DifySessionIssuer(session=session),
     )
 
@@ -201,7 +272,7 @@ def portal_token() -> str:
 def portal_student(*, allow_initial_password: bool = False) -> CampusStudent:
     try:
         student = portal_sessions().resolve(portal_token(), now=datetime.now(UTC))
-    except (PortalSessionError, StudentNotFoundError, StudentSuspendedError) as error:
+    except (PortalSessionError, StudentDeletedError, StudentNotFoundError, StudentSuspendedError) as error:
         raise Unauthorized("Campus portal session is invalid") from error
     if not allow_initial_password and credential_service().must_change_password(student.id):
         raise Forbidden("Initial password must be changed before using the platform")

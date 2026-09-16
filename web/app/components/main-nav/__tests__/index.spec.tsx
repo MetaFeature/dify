@@ -24,7 +24,7 @@ import { usePathname, useRouter } from '@/next/navigation'
 import { consoleQuery } from '@/service/client'
 import { useGetInstalledApps, useUninstallApp, useUpdateAppPinStatus } from '@/service/use-explore'
 import { AppModeEnum } from '@/types/app'
-import { MainNav } from '../index'
+import { MainNav, SHOW_HELP_MENU } from '../index'
 
 const activeGradientMaskClassName = 'aria-[current=page]:dify-blue-glass-surface'
 const activeStackingClassName = 'aria-[current=page]:z-1'
@@ -304,6 +304,10 @@ const renderMainNav = (
   )
 }
 
+// The Campus deployment does not render the "?" help menu, so its cases skip
+// themselves instead of failing; they come back with the flag.
+const itHelpMenu = SHOW_HELP_MENU ? it : it.skip
+
 describe('MainNav', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -383,10 +387,9 @@ describe('MainNav', () => {
       'href',
       '/datasets',
     )
-    expect(screen.getByRole('link', { name: /common.mainNav.integrations/ })).toHaveAttribute(
-      'href',
-      '/integrations/model-provider',
-    )
+    expect(
+      screen.queryByRole('link', { name: /common.mainNav.integrations/ }),
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /common.mainNav.marketplace/ })).toHaveAttribute(
       'href',
       '/marketplace',
@@ -446,11 +449,6 @@ describe('MainNav', () => {
 
     const webAppsButton = await screen.findByRole('button', { name: 'explore.sidebar.webApps' })
     expect(webAppsButton.parentElement).toHaveClass('py-1', 'pr-2', 'pl-2')
-
-    const helpButton = screen.getByRole('button', { name: 'common.mainNav.help.openMenu' })
-    expect(helpButton.parentElement?.parentElement).toHaveClass('w-60')
-    expect(helpButton.parentElement?.parentElement).not.toHaveClass('w-full')
-    expect(helpButton.parentElement).toHaveClass('shrink-0', 'rounded-full', 'p-1')
   })
 
   it('keeps the global navigation account section expanded on home routes', () => {
@@ -530,10 +528,9 @@ describe('MainNav', () => {
       'href',
       '/datasets',
     )
-    expect(screen.getByRole('link', { name: /common.mainNav.integrations/ })).toHaveAttribute(
-      'href',
-      '/integrations/model-provider',
-    )
+    expect(
+      screen.queryByRole('link', { name: /common.mainNav.integrations/ }),
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /common.mainNav.marketplace/ })).toHaveAttribute(
       'href',
       '/marketplace',
@@ -713,7 +710,7 @@ describe('MainNav', () => {
     expect(await screen.findByRole('dialog', { name: 'Goto Anything' })).toBeInTheDocument()
   })
 
-  it('shows Learn Dify switch in help menu and restores it from localStorage', async () => {
+  itHelpMenu('shows Learn Dify switch in help menu and restores it from localStorage', async () => {
     localStorage.setItem(LEARN_DIFY_HIDDEN_STORAGE_KEY, 'true')
 
     renderMainNav({ enable_learn_app: true })
@@ -732,7 +729,7 @@ describe('MainNav', () => {
     expect(mockPush).not.toHaveBeenCalled()
   })
 
-  it('hides Learn Dify switch in help menu when learn app is disabled', async () => {
+  itHelpMenu('hides Learn Dify switch in help menu when learn app is disabled', async () => {
     renderMainNav({ enable_learn_app: false })
 
     fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.help.openMenu' }))
@@ -743,7 +740,7 @@ describe('MainNav', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('orders help menu items to match the nav shell design', async () => {
+  itHelpMenu('orders help menu items to match the nav shell design', async () => {
     renderMainNav({ enable_learn_app: true })
 
     fireEvent.click(screen.getByRole('button', { name: 'common.mainNav.help.openMenu' }))

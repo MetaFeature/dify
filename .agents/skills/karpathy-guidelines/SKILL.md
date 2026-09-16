@@ -1,11 +1,11 @@
 ---
 name: karpathy-guidelines
-description: Lightweight coding guardrails for making focused, simple, and verifiable changes in this repo. Use for all coding work.
+description: "Check a proposed Dify change for scope creep or unnecessary complexity when requested or when such a problem is evident."
 ---
 
 # Karpathy Guidelines
 
-Use this skill whenever you touch code in this repository.
+Use when the user requests a scope/simplicity check or a proposed change shows concrete scope creep. Ordinary coding work can follow the project instructions directly.
 
 ## Principles
 

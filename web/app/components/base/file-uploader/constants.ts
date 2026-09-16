@@ -2,6 +2,8 @@
 export const IMG_SIZE_LIMIT = 10 * 1024 * 1024
 export const FILE_SIZE_LIMIT = 15 * 1024 * 1024
 export const AUDIO_SIZE_LIMIT = 50 * 1024 * 1024
+// Longest voice clip that may be attached, in seconds (Campus default).
+export const AUDIO_DURATION_LIMIT = 60
 export const VIDEO_SIZE_LIMIT = 100 * 1024 * 1024
 export const MAX_FILE_UPLOAD_LIMIT = 10
 

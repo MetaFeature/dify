@@ -12,7 +12,7 @@
       <header class="masthead">
         <a class="brand" href="/" aria-label="校园平台管理后台首页">
           <span class="brand-mark" aria-hidden="true">NJIT</span>
-          <span><strong>校园平台管理后台</strong><small>南京工程学院 · AI 实践平台</small></span>
+          <span><strong>校园平台管理后台</strong><small>南京工程学院 · AI 应用平台</small></span>
         </a>
         <nav class="masthead-links">
           <a href="/apps">Dify 控制台</a>
@@ -29,7 +29,9 @@
       <section id="admin-view" hidden>
         <nav class="tabs" role="tablist">
           <button class="tab active" type="button" data-tab="slots">时段容量</button>
-          <button class="tab" type="button" data-tab="students">学生管理</button>
+          <button class="tab" type="button" data-tab="students">用户管理</button>
+          <button class="tab" type="button" data-tab="knowledge">知识库限制</button>
+          <button class="tab" type="button" data-tab="login-page">登录界面</button>
           <button class="tab" type="button" data-tab="roster">名单导入</button>
           <button class="tab" type="button" data-tab="administrators">管理员</button>
           <button class="tab" type="button" data-tab="presentation">页面设置</button>
@@ -40,35 +42,91 @@
 
         <section id="tab-slots" class="panel tab-panel">
           <div class="section-heading">
-            <div><h2>时段容量</h2><p class="muted">容量设为 0 即关闭该时段；已确认的预约不会因调低容量被取消。</p></div>
+            <div><h2>时段容量</h2><p class="muted">统一容量保存后立即应用到所有尚未开始的时段，并覆盖这些时段此前单独设置过的容量；进行中与已结束的时段不受影响。已确认的预约不会因调低容量被取消。</p></div>
             <input id="slot-day" type="date" aria-label="日期">
           </div>
+          <form id="slot-capacity-form" class="manual-form">
+            <label>统一容量<input id="slot-capacity-input" type="number" min="1" step="1" required></label>
+            <p id="slot-capacity-status" class="muted">正在读取统一容量…</p>
+            <div class="manual-actions">
+              <button id="slot-capacity-save" class="primary" type="submit">保存并应用到未来时段</button>
+              <button id="slot-capacity-restore" class="secondary" type="button">恢复平台默认</button>
+            </div>
+          </form>
           <div id="slot-table" aria-live="polite"></div>
         </section>
 
         <section id="tab-students" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>学生管理</h2><p class="muted">「虚拟」标记表示该学号仍存在于虚拟演示名单中。</p></div>
+            <div><h2>用户管理</h2><p class="muted">「虚拟」标记表示该学号仍存在于虚拟演示名单中。</p></div>
             <div class="pager">
               <button id="students-prev" class="secondary compact" type="button">上一页</button>
               <span id="students-page">第 1 页</span>
               <button id="students-next" class="secondary compact" type="button">下一页</button>
             </div>
           </div>
+          <div class="student-toolbar">
+            <label class="checkbox-inline"><input id="students-show-deleted" type="checkbox">显示已删除</label>
+            <button id="students-purge" class="secondary compact" type="button">清除陈旧数据</button>
+          </div>
+          <form id="default-allowance-form" class="manual-form">
+            <label>新用户默认额度（元）<input id="default-allowance-input" type="number" min="0" step="0.01" required></label>
+            <p id="default-allowance-status" class="muted">正在读取默认额度…</p>
+            <p class="muted">只对尚未开通模型账号的用户、以及之后导入或新建的用户生效；已经开通的用户额度保持不变，需要单独调整请用下表的「额度调整」。</p>
+            <div class="manual-actions">
+              <button id="default-allowance-save" class="primary" type="submit">保存默认额度</button>
+              <button id="default-allowance-restore" class="secondary" type="button">恢复平台默认</button>
+            </div>
+          </form>
+          <form id="student-search-form" class="inline-form">
+            <input id="student-search-input" name="keyword" placeholder="按学号或姓名查找" maxlength="128">
+            <button class="secondary compact" type="submit">查找</button>
+            <button id="student-search-clear" class="secondary compact" type="button">清除</button>
+          </form>
           <form id="student-create-form" class="inline-form">
             <input name="studentNumber" placeholder="学号" required maxlength="64">
             <input name="displayName" placeholder="姓名" required maxlength="255">
             <input name="cohort" placeholder="班级（可选）" maxlength="128">
             <input name="password" type="text" placeholder="初始密码" required maxlength="128" autocomplete="off">
-            <button class="secondary compact" type="submit">添加学生</button>
+            <button class="secondary compact" type="submit">添加用户</button>
           </form>
           <div id="student-table" aria-live="polite"></div>
-          <div id="student-detail" hidden></div>
+        </section>
+
+        <section id="tab-knowledge" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>知识库限制</h2><p class="muted">限制用户工作区能创建的知识库数量，以及单个知识库能容纳的文件数。保存后立即生效：已达上限的用户会收到明确提示，已经超限的既有知识库不会被删除。</p></div>
+          </div>
+          <form id="knowledge-limit-form" class="manual-form">
+            <label>每工作区知识库上限<input id="knowledge-datasets-input" type="number" min="1" step="1" required></label>
+            <label>单库文件上限<input id="knowledge-documents-input" type="number" min="1" step="1" required></label>
+            <p id="knowledge-limit-status" class="muted">正在读取知识库限制…</p>
+            <div class="manual-actions">
+              <button id="knowledge-limit-save" class="primary" type="submit">保存限制</button>
+              <button id="knowledge-limit-restore" class="secondary" type="button">恢复平台默认</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="tab-login-page" class="panel tab-panel" hidden>
+          <div class="section-heading">
+            <div><h2>登录界面</h2><p class="muted">上传自建的用户登录页替换内置页面。上传时会做安全扫描与契约校验：不允许脚本（含内联事件）与外部引用，必须包含提交到 /console/api/campus/auth/portal-form 的表单，且表单内有 name="subject"（学号）与 name="credential"（访问码）输入框和提交按钮；可以带内联 &lt;style&gt; 自定义外观。审核不通过会被拒绝并列出缺哪一项。</p></div>
+          </div>
+          <form id="login-page-form" class="manual-form">
+            <label>登录页 HTML（UTF-8，≤ 512 KB）<input id="login-page-file" type="file" accept=".html,.htm,text/html" required></label>
+            <p id="login-page-status" class="muted">正在读取登录界面状态…</p>
+            <div class="manual-actions">
+              <button id="login-page-save" class="primary" type="submit">上传并审核</button>
+              <button id="login-page-restore" class="secondary" type="button">恢复内置登录页</button>
+            </div>
+          </form>
+          <div id="login-page-report" aria-live="polite"></div>
+          <div id="login-page-list"></div>
         </section>
 
         <section id="tab-roster" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>名单导入</h2><p class="muted">支持 XLSX（表头：学号、姓名、班级、密码）和 CSV。新学生密码留空时默认为学号后四位且首次登录必须修改；已有学生密码留空不会重置。</p></div>
+            <div><h2>名单导入</h2><p class="muted">支持 XLSX 和 CSV，表头为「学号、姓名、班级」，其中学号与姓名必填、班级可选。新用户的初始密码为「姓名第一个字的拼音 + 学号后四位」，首次登录必须修改；已有用户不会被重置密码。</p></div>
             <input id="roster-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv" aria-label="选择名单文件">
           </div>
           <textarea id="roster-text" rows="8" placeholder="也可以直接粘贴 CSV 内容"></textarea>
@@ -94,21 +152,22 @@
 
         <section id="tab-presentation" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>学生入口页面设置</h2><p class="muted">修改登录页内容和实验卡片。登录表单、权限、路由和安全策略不可修改。</p></div>
+            <div><h2>用户入口页面设置</h2><p class="muted">修改登录页内容和实验卡片。登录表单、权限、路由和安全策略不可修改。</p></div>
           </div>
           <form id="presentation-form" class="manual-form">
             <label>登录页内容 HTML<textarea id="presentation-login-html" rows="8" required></textarea></label>
             <table>
               <thead><tr><th>实验</th><th>标题</th><th>说明</th><th>顺序</th></tr></thead>
               <tbody>
-                <tr data-presentation-track="large-model"><td>大模型实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="3" required></td></tr>
-                <tr data-presentation-track="agent"><td>智能体实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="3" required></td></tr>
-                <tr data-presentation-track="deep-learning"><td>深度学习实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="3" required></td></tr>
+                <tr data-presentation-track="large-model"><td>大模型实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="4" required></td></tr>
+                <tr data-presentation-track="agent"><td>智能体实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="4" required></td></tr>
+                <tr data-presentation-track="deep-learning"><td>深度学习实验</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="4" required></td></tr>
+                <tr data-presentation-track="reference"><td>参考资料</td><td><input name="title" maxlength="80" required></td><td><input name="description" maxlength="300" required></td><td><input name="position" type="number" min="1" max="4" required></td></tr>
               </tbody>
             </table>
             <div class="row-actions">
               <button class="secondary" type="submit">保存草稿</button>
-              <button id="presentation-publish" class="primary" type="button">发布到学生端</button>
+              <button id="presentation-publish" class="primary" type="button">发布到用户端</button>
               <button id="presentation-restore" class="secondary" type="button">恢复平台默认</button>
             </div>
           </form>
@@ -116,11 +175,12 @@
 
         <section id="tab-manuals" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>实验手册与课件</h2><p class="muted">三个实验均可发布 HTML 文件；智能体实验和深度学习实验在学生自己的电脑上完成。</p></div>
+            <div><h2>实验手册与课件</h2><p class="muted">每个实验目录均可发布 HTML 文件，参考资料目录用同一套上传流程；智能体实验和深度学习实验在用户自己的电脑上完成。</p></div>
             <select id="manual-track" aria-label="实验类别">
               <option value="large-model">大模型实验</option>
               <option value="agent">智能体实验</option>
               <option value="deep-learning">深度学习实验</option>
+              <option value="reference">参考资料</option>
             </select>
           </div>
           <form id="manual-form" class="manual-form">
@@ -138,15 +198,32 @@
 
         <section id="tab-gateway" class="panel tab-panel" hidden>
           <div class="section-heading">
-            <div><h2>模型与 API 配置</h2><p class="muted">上游供应商的地址与密钥、学生可用的模型、以及计费倍率，都在模型网关里配置。</p></div>
+            <div><h2>模型与 API 配置</h2><p class="muted">上游供应商的地址与密钥、用户可用的模型、以及计费倍率，都在模型网关里配置。</p></div>
           </div>
           <p>模型网关和本后台一样只在服务器本机监听，默认地址 <code>http://127.0.0.1:13000</code>（端口由 <code>CAMPUS_GATEWAY_ADMIN_PORT</code> 决定）。从自己的电脑访问时，请先建立 SSH 隧道 —— 与访问本后台的方式相同。</p>
           <p><a class="primary" href="http://127.0.0.1:13000/" target="_blank" rel="noopener noreferrer">打开模型网关</a></p>
+          <h3>用量与计费报告</h3>
+          <p class="muted">按日、按月或按年生成所有 token 的使用与计费报告，含「按时间汇总 / 按用户 / 按模型」三张表。报告在新标签页打开，可用浏览器的「打印 / 另存为 PDF」保存；需要表格文件时下载 Excel。</p>
+          <div class="report-actions">
+            <span class="report-line">
+              <span class="muted">查看报告</span>
+              <button class="primary" type="button" data-report-page="day">按日</button>
+              <button class="secondary" type="button" data-report-page="month">按月</button>
+              <button class="secondary" type="button" data-report-page="year">按年</button>
+            </span>
+            <span class="report-line">
+              <span class="muted">导出 Excel</span>
+              <button class="secondary" type="button" data-report-xlsx="day">按日</button>
+              <button class="secondary" type="button" data-report-xlsx="month">按月</button>
+              <button class="secondary" type="button" data-report-xlsx="year">按年</button>
+            </span>
+          </div>
+          <p id="report-status" class="muted" role="status" aria-live="polite"></p>
           <h3>在网关里做什么</h3>
           <ul class="gateway-notes">
             <li><b>换上游或改密钥</b>：渠道 → 选择上游渠道 → 改「代理地址」和「密钥」。密钥只填进这里，不要写进聊天、脚本或日志。</li>
             <li><b>开放新模型</b>：先在「运营设置 → 模型倍率」为它配好 <code>ModelRatio</code>／<code>CompletionRatio</code>，<b>再</b>把模型名加进渠道的模型列表。</li>
-            <li><b>模型改名</b>：渠道的「模型重定向」把学生看到的名字翻译成上游的真名，学生侧和倍率表都不用动。</li>
+            <li><b>模型改名</b>：渠道的「模型重定向」把用户看到的名字翻译成上游的真名，用户侧和倍率表都不用动。</li>
           </ul>
           <p class="muted">未定价的模型一律不要加进渠道 —— 网关对没有倍率的模型会按兜底价计费，比真实价高约五百倍。<code>manage.sh verify</code> 会因此失败，这是刻意设计的护栏。</p>
         </section>

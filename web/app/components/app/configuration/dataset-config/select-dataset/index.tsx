@@ -41,7 +41,7 @@ const SelectDataSet: FC<ISelectDataSetProps> = ({
   const { formatIndexingTechniqueAndMethod } = useKnowledge()
   const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
   const canCreateDataset = hasPermission(workspacePermissionKeys, 'dataset.create_and_management')
-  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } = useInfiniteDatasets(
+  const { data, isLoading, isError, isFetchingNextPage, fetchNextPage, hasNextPage } = useInfiniteDatasets(
     { page: 1 },
     { enabled: isShow, staleTime: 0, refetchOnMount: 'always' },
   )
@@ -56,6 +56,10 @@ const SelectDataSet: FC<ISelectDataSetProps> = ({
     return selectedIdsInModal.map((id) => datasetMap.get(id) || ({ id } as DataSet))
   }, [datasetMap, selectedIdsInModal])
   const hasNoData = !isLoading && datasets.length === 0
+  // Confirming an empty selection used to be a silent no-op; keep the primary
+  // action disabled until there is something to add (clearing an existing
+  // selection stays possible).
+  const cannotConfirm = hasNoData || (selected.length === 0 && selectedIds.length === 0)
 
   const listRef = useRef<HTMLDivElement>(null)
   const isNoMore = hasNextPage === false
@@ -111,7 +115,13 @@ const SelectDataSet: FC<ISelectDataSetProps> = ({
           </div>
         )}
 
-        {hasNoData && (
+        {isError && (
+          <div className="mt-6 flex h-32 items-center justify-center rounded-lg border border-divider-subtle bg-components-panel-on-panel-bg px-3 text-center text-[13px] text-text-tertiary">
+            {t(($) => $['feature.dataSet.loadFailed'], { ns: 'appDebug' })}
+          </div>
+        )}
+
+        {!isError && hasNoData && (
           <div className="mt-6 flex h-32 items-center justify-center space-x-1 rounded-lg border border-divider-subtle bg-components-panel-on-panel-item-bg text-[13px]">
             <span className="text-text-tertiary">
               {t(($) => $['feature.dataSet.noDataSet'], { ns: 'appDebug' })}
@@ -204,7 +214,7 @@ const SelectDataSet: FC<ISelectDataSetProps> = ({
               <Button onClick={handleClose}>
                 {t(($) => $['operation.cancel'], { ns: 'common' })}
               </Button>
-              <Button variant="primary" onClick={handleSelect} disabled={hasNoData}>
+              <Button variant="primary" onClick={handleSelect} disabled={cannotConfirm}>
                 {t(($) => $['operation.add'], { ns: 'common' })}
               </Button>
             </div>

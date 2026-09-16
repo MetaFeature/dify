@@ -21,6 +21,10 @@ import Link from '@/next/link'
 import { usePathname } from '@/next/navigation'
 import AccountSection from './components/account-section'
 import HelpMenu from './components/help-menu'
+
+// The Campus deployment keeps the sidebar to the access portal, the workspace
+// navigation and the account section, so the "?" help menu is not rendered.
+export const SHOW_HELP_MENU = false
 import MainNavLink from './components/nav-link'
 import { MainNavSearchButton } from './components/search-button'
 import { WorkspaceCard } from './components/workspace-card'
@@ -140,9 +144,11 @@ export function MainNav({ className }: MainNavProps) {
         <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           <AccountSection />
         </div>
-        <div className="flex shrink-0 items-center justify-center rounded-full p-1">
-          <HelpMenu />
-        </div>
+        {SHOW_HELP_MENU && (
+          <div className="flex shrink-0 items-center justify-center rounded-full p-1">
+            <HelpMenu />
+          </div>
+        )}
       </div>
     </aside>
   )

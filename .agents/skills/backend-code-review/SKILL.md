@@ -1,6 +1,6 @@
 ---
 name: backend-code-review
-description: Review backend code for quality, security, maintainability, and best practices based on established checklist rules. Use when the user requests a review, analysis, or improvement of backend files (e.g., `.py`) under the `api/` directory. Do NOT use for frontend files (e.g., `.tsx`, `.ts`, `.js`). Supports pending-change review, code snippets review, and file-focused review.
+description: "Review requested Dify API changes, snippets, or named backend files against the relevant backend contracts."
 ---
 
 # Backend Code Review

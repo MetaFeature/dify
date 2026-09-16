@@ -23,7 +23,7 @@ The codebase is split into:
 
 ## Testing & Quality Practices
 
-- Follow TDD: red → green → refactor.
+- Use TDD when requested or when a meaningful regression can be captured at an established boundary. Choose checks by affected behavior and risk; follow the relevant package test policy.
 - Use `pytest` for backend tests with Arrange-Act-Assert structure.
 - Enforce strong typing; avoid `Any` and prefer explicit type annotations.
 - Write self-documenting code; only add comments that explain intent.

@@ -11,15 +11,17 @@ from services.campus.errors import CampusValidationError
 
 MAX_ROSTER_BYTES: Final = 5 * 1024 * 1024
 MAX_ROSTER_ROWS: Final = 5_000
+# 学号 and 姓名 identify a student and are required; 班级 is optional. Anything
+# else is rejected rather than silently ignored. Passwords are never part of
+# the file: the initial password is derived from the name and student number.
 HEADER_ALIASES: Final = {
     "学号": "student_number",
     "姓名": "display_name",
     "班级": "cohort",
-    "密码": "password",
     "student_number": "student_number",
     "display_name": "display_name",
     "cohort": "cohort",
-    "password": "password",
+    "class": "cohort",
 }
 
 
@@ -28,7 +30,6 @@ class ImportedRosterRow:
     student_number: str
     display_name: str
     cohort: str | None = None
-    password: str | None = None
 
 
 def parse_roster_xlsx(data: bytes) -> list[ImportedRosterRow]:
@@ -85,7 +86,6 @@ def parse_roster_xlsx(data: bytes) -> list[ImportedRosterRow]:
                     student_number=student_number,
                     display_name=display_name,
                     cohort=record.get("cohort") or None,
-                    password=record.get("password") or None,
                 )
             )
             if len(rows) > MAX_ROSTER_ROWS:

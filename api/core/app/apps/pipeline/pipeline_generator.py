@@ -146,6 +146,13 @@ class PipelineGenerator(BaseAppGenerator):
             features = FeatureService.get_features(pipeline.tenant_id)
             DocumentService.check_document_creation_limits(len(datasource_info_list), features)
 
+            # Campus: this path creates Document rows directly instead of going
+            # through DocumentService.save_document_with_dataset_id, so the
+            # per-knowledge-base file limit has to be enforced here too.
+            from services.campus.knowledge_limit_service import ensure_document_quota
+
+            ensure_document_quota(dataset, session=session, incoming=len(datasource_info_list))
+
             for datasource_info in datasource_info_list:
                 position = DocumentService.get_documents_position(dataset.id, session)
                 document = self._build_document(

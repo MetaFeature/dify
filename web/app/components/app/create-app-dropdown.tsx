@@ -10,6 +10,9 @@ import {
 } from '@langgenius/dify-ui/dropdown-menu'
 import { useTranslation } from 'react-i18next'
 
+// The Campus deployment does not offer template-based app creation.
+export const SHOW_TEMPLATE_CREATION = false
+
 type CreateAppDropdownProps = {
   onCreateBlank: () => void
   onCreateTemplate?: () => void
@@ -52,7 +55,8 @@ export function CreateAppDropdown({
               {t(($) => $['newApp.startFromBlank'], { ns: 'app' })}
             </span>
           </DropdownMenuItem>
-          {onCreateTemplate && (
+          {/* Campus: creating from a marketplace template is not offered. */}
+          {SHOW_TEMPLATE_CREATION && onCreateTemplate && (
             <DropdownMenuItem
               className="h-8 gap-1 rounded-lg px-2 py-1 system-md-regular text-text-secondary"
               onClick={onCreateTemplate}

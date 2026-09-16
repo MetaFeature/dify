@@ -36,6 +36,11 @@ import s from './style.module.css'
 
 const TryApp = dynamic(() => import('../try-app'), { ssr: false })
 
+// The Campus deployment does not publish the marketplace template gallery, so
+// the home page keeps only the banner, continue-working and learn blocks. The
+// queries stay wired: re-enabling is this one flag.
+export const SHOW_TEMPLATE_GALLERY = false
+
 type ExploreAppListData = {
   categories: string[]
   allList: App[]
@@ -287,28 +292,32 @@ const Apps = ({ onSuccess }: { onSuccess?: () => void }) => {
               onTry={handleTryApp}
             />
 
-            <ExploreAppListHeader
-              allCategoriesEn={allCategoriesEn}
-              categories={visibleCategories}
-              currCategory={activeCategory}
-              keywords={keywords}
-              onCategoryChange={setCurrCategory}
-              onKeywordsChange={handleKeywordsChange}
-            />
+            {SHOW_TEMPLATE_GALLERY && (
+              <>
+                <ExploreAppListHeader
+                  allCategoriesEn={allCategoriesEn}
+                  categories={visibleCategories}
+                  currCategory={activeCategory}
+                  keywords={keywords}
+                  onCategoryChange={setCurrCategory}
+                  onKeywordsChange={handleKeywordsChange}
+                />
 
-            <div className={cn('relative flex flex-1 shrink-0 grow flex-col pb-6')}>
-              <nav className={cn(s.appList, 'grid shrink-0 content-start gap-3 px-8')}>
-                {searchFilteredList.map((app) => (
-                  <AppCard
-                    key={app.app_id}
-                    app={app}
-                    canCreate={canCreateApp}
-                    onCreate={() => handleCreateFromAppList(app)}
-                    onTry={handleTryApp}
-                  />
-                ))}
-              </nav>
-            </div>
+                <div className={cn('relative flex flex-1 shrink-0 grow flex-col pb-6')}>
+                  <nav className={cn(s.appList, 'grid shrink-0 content-start gap-3 px-8')}>
+                    {searchFilteredList.map((app) => (
+                      <AppCard
+                        key={app.app_id}
+                        app={app}
+                        canCreate={canCreateApp}
+                        onCreate={() => handleCreateFromAppList(app)}
+                        onTry={handleTryApp}
+                      />
+                    ))}
+                  </nav>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

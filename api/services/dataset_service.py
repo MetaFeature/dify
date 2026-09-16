@@ -421,6 +421,10 @@ class DatasetService:
         # check if dataset name already exists
         if session.scalar(select(Dataset).where(Dataset.name == name, Dataset.tenant_id == tenant_id).limit(1)):
             raise DatasetNameDuplicateError(f"Dataset with name {name} already exists.")
+        # Campus: cap how many knowledge bases one student workspace may hold.
+        from services.campus.knowledge_limit_service import ensure_dataset_quota
+
+        ensure_dataset_quota(tenant_id, session=session)
         embedding_model = None
         if indexing_technique == IndexTechniqueType.HIGH_QUALITY:
             model_manager = ModelManager.for_tenant(tenant_id=tenant_id)
@@ -520,6 +524,10 @@ class DatasetService:
             )
         if not current_user or not current_user.id:
             raise ValueError("Current user or current user id not found")
+        # Campus: the pipeline knowledge base creates a Dataset row as well.
+        from services.campus.knowledge_limit_service import ensure_dataset_quota
+
+        ensure_dataset_quota(tenant_id, session=session)
         pipeline = Pipeline(
             tenant_id=tenant_id,
             name=rag_pipeline_dataset_create_entity.name,
@@ -2165,6 +2173,11 @@ class DocumentService:
                         count = len(website_info.urls)
                     DocumentService.check_document_creation_limits(count, features)
 
+        # Campus: cap how many files one knowledge base may hold.
+        from services.campus.knowledge_limit_service import ensure_request_document_quota
+
+        ensure_request_document_quota(knowledge_config, dataset, session=session)
+
         # if dataset is empty, update dataset data_source_type
         if not dataset.data_source_type and knowledge_config.data_source:
             dataset.data_source_type = knowledge_config.data_source.info_list.data_source_type
@@ -2993,6 +3006,11 @@ class DocumentService:
                 score_threshold_enabled=False,
             )
         # save dataset
+        # Campus: the import wizard creates its Dataset here, so the workspace
+        # quota has to be enforced on this path too.
+        from services.campus.knowledge_limit_service import ensure_dataset_quota
+
+        ensure_dataset_quota(tenant_id, session=session)
         dataset = Dataset(
             tenant_id=tenant_id,
             name="",

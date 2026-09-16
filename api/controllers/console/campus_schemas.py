@@ -124,6 +124,27 @@ class SlotCapacityPayload(CampusRequestModel):
 class StudentListQuery(CampusRequestModel):
     limit: int = Field(default=100, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
+    # Matched against the student number or the display name.
+    keyword: str | None = Field(default=None, max_length=128)
+    # The restore view is the only caller that wants soft-deleted rows.
+    include_deleted: bool = False
+
+
+class StudentRenamePayload(CampusRequestModel):
+    display_name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_non_whitespace(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be whitespace-only")
+        return normalized
+
+
+class RetentionPurgeResponse(CampusResponseModel):
+    purged: list[str]
+    failed: list[list[str]]
 
 
 class AllowanceAdjustmentPayload(CampusRequestModel):
@@ -172,6 +193,20 @@ class PortalLoginResponse(CampusResponseModel):
     must_change_password: bool = False
 
 
+class ModelUsageResponse(CampusResponseModel):
+    model: str
+    used_usd: Decimal
+    requests: int
+
+
+class AllowanceResponse(CampusResponseModel):
+    remaining_usd: Decimal
+    used_usd: Decimal
+    total_usd: Decimal
+    model_calls_enabled: bool
+    by_model: list[ModelUsageResponse]
+
+
 class StudentResponse(CampusResponseModel):
     id: str
     student_number: str
@@ -180,6 +215,11 @@ class StudentResponse(CampusResponseModel):
     status: StudentStatus
     has_credential: bool | None = None
     virtual_identity: bool | None = None
+    # Set once the student has been soft-deleted; cleared by a restore.
+    deleted_at: datetime | None = None
+    # Present on the list too, so an administrator can read every student's
+    # allowance without opening each one. None means the lookup did not answer.
+    allowance: AllowanceResponse | None = None
 
 
 class StudentListResponse(CampusResponseModel):
@@ -245,6 +285,87 @@ class SlotCapacityResponse(CampusResponseModel):
     waitlisted: int
 
 
+class SlotCapacitySettingPayload(CampusRequestModel):
+    capacity: int = Field(ge=1)
+
+
+class SlotCapacitySettingResponse(CampusResponseModel):
+    capacity: int
+    platform_default: int
+    configured_capacity: int | None = None
+    is_default: bool
+
+
+class KnowledgeLimitSettingPayload(CampusRequestModel):
+    max_datasets_per_workspace: int = Field(ge=1)
+    max_documents_per_dataset: int = Field(ge=1)
+
+
+class KnowledgeLimitSettingResponse(CampusResponseModel):
+    max_datasets_per_workspace: int
+    max_documents_per_dataset: int
+    platform_max_datasets_per_workspace: int
+    platform_max_documents_per_dataset: int
+    configured_max_datasets_per_workspace: int | None = None
+    configured_max_documents_per_dataset: int | None = None
+    is_default: bool
+
+
+class PortalLoginPageResponse(CampusResponseModel):
+    id: str
+    filename: str
+    size_bytes: int
+    digest: str
+    is_active: bool
+    created_at: datetime
+    errors: list[str] = []
+    warnings: list[str] = []
+    checks: list[str] = []
+
+
+class PortalLoginStateResponse(CampusResponseModel):
+    active_id: str | None = None
+    active_filename: str | None = None
+    pages: list[PortalLoginPageResponse] = []
+
+
+class DefaultAllowancePayload(CampusRequestModel):
+    default_allowance_usd: Decimal = Field(ge=0)
+
+
+class DefaultAllowanceResponse(CampusResponseModel):
+    default_allowance_usd: Decimal
+    platform_default_usd: Decimal
+    configured_default_allowance_usd: Decimal | None = None
+    is_default: bool
+
+
+class DefaultAllowanceChangeResponse(CampusResponseModel):
+    default_allowance_usd: Decimal
+    platform_default_usd: Decimal
+    configured_default_allowance_usd: Decimal | None = None
+    is_default: bool
+    previous_configured_default_allowance_usd: Decimal | None = None
+    scanned_students: int
+    changed_students: int
+
+
+class StudentKnowledgeLimitResponse(CampusResponseModel):
+    max_datasets_per_workspace: int
+    max_documents_per_dataset: int
+
+
+class SlotCapacitySettingChangeResponse(CampusResponseModel):
+    capacity: int
+    platform_default: int
+    configured_capacity: int | None = None
+    is_default: bool
+    previous_configured_capacity: int | None = None
+    scanned_slots: int
+    changed_slots: int
+    promoted_waiters: int
+
+
 class AccessDecisionResponse(CampusResponseModel):
     allowed: bool
     reservation_id: str | None = None
@@ -252,23 +373,10 @@ class AccessDecisionResponse(CampusResponseModel):
     server_now: datetime | None = None
 
 
-class ModelUsageResponse(CampusResponseModel):
-    model: str
-    used_usd: Decimal
-    requests: int
-
-
-class AllowanceResponse(CampusResponseModel):
-    remaining_usd: Decimal
-    used_usd: Decimal
-    total_usd: Decimal
-    model_calls_enabled: bool
-    by_model: list[ModelUsageResponse]
-
-
 class StudentDetailResponse(StudentResponse):
     workspace_id: str | None
-    allowance: AllowanceResponse | None
+    created_at: datetime
+    deleted_at: datetime | None = None
 
 
 class ResultResponse(CampusResponseModel):
@@ -313,11 +421,23 @@ class LabManualResponse(CampusResponseModel):
     data: list[LabManualChapterResponse]
 
 
+class ManualChapterReferenceResponse(CampusResponseModel):
+    id: str
+    #: The title as a student reads it — no file extension.
+    title: str
+    #: A short derived teaser of the document body, shown under the title.
+    summary: str | None = None
+    #: Absolute URL on the manual origin; the portal links straight at it.
+    view_url: str
+
+
 class ExperimentTrackResponse(CampusResponseModel):
     track: ExperimentTrack
     #: Whether the platform serves this track through Dify or through a manual.
     kind: str
     chapters: int
+    #: The same chapters in reading order, with the URL each one opens by.
+    chapter_list: list[ManualChapterReferenceResponse]
 
 
 class ExperimentTrackListResponse(CampusResponseModel):
@@ -328,7 +448,7 @@ class TrackPresentationPayload(CampusRequestModel):
     track: ExperimentTrack
     title: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=300)
-    position: int = Field(ge=1, le=3)
+    position: int = Field(ge=1, le=4)
 
     @field_validator("title", "description")
     @classmethod
@@ -341,13 +461,13 @@ class TrackPresentationPayload(CampusRequestModel):
 
 class PortalPresentationPayload(CampusRequestModel):
     login_html: str = Field(min_length=1, max_length=200_000)
-    tracks: list[TrackPresentationPayload] = Field(min_length=3, max_length=3)
+    tracks: list[TrackPresentationPayload] = Field(min_length=4, max_length=4)
 
     @model_validator(mode="after")
     def validate_tracks(self):
         if {item.track for item in self.tracks} != set(ExperimentTrack):
             raise ValueError("presentation must configure every experiment track exactly once")
-        if {item.position for item in self.tracks} != {1, 2, 3}:
+        if {item.position for item in self.tracks} != {1, 2, 3, 4}:
             raise ValueError("presentation track positions must use positions 1, 2, and 3")
         return self
 
@@ -363,12 +483,15 @@ register_schema_models(
     VirtualLoginPayload,
     StudentRosterSyncPayload,
     StudentStatusPayload,
+    StudentRenamePayload,
     StudentCreatePayload,
     StudentPasswordResetPayload,
     PortalPasswordChangePayload,
     ReservationCreatePayload,
     SlotListQuery,
     SlotCapacityPayload,
+    SlotCapacitySettingPayload,
+    DefaultAllowancePayload,
     StudentListQuery,
     AllowanceAdjustmentPayload,
     AdministratorPayload,
@@ -382,6 +505,7 @@ register_response_schema_models(
     PortalLoginResponse,
     StudentResponse,
     StudentListResponse,
+    RetentionPurgeResponse,
     RosterSyncResponse,
     RosterParsedResponse,
     AdministratorResponse,
@@ -392,6 +516,15 @@ register_response_schema_models(
     SlotListResponse,
     AdminSlotListResponse,
     SlotCapacityResponse,
+    SlotCapacitySettingResponse,
+    SlotCapacitySettingChangeResponse,
+    DefaultAllowanceResponse,
+    DefaultAllowanceChangeResponse,
+    KnowledgeLimitSettingPayload,
+    KnowledgeLimitSettingResponse,
+    StudentKnowledgeLimitResponse,
+    PortalLoginPageResponse,
+    PortalLoginStateResponse,
     AccessDecisionResponse,
     ModelUsageResponse,
     AllowanceResponse,
@@ -403,6 +536,7 @@ register_response_schema_models(
     LabManualChapterListResponse,
     LabManualResponse,
     ExperimentTrackResponse,
+    ManualChapterReferenceResponse,
     ExperimentTrackListResponse,
     PortalPresentationResponse,
 )

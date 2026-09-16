@@ -174,6 +174,7 @@
   "fileUploader.uploadFromComputer": "从本地上传",
   "fileUploader.uploadFromComputerLimit": "上传 {{type}} 不能超过 {{size}}",
   "fileUploader.uploadFromComputerReadError": "文件读取失败，请重新选择。",
+  "fileUploader.audioDurationLimit": "语音时长不能超过 {{seconds}} 秒，请上传 1 分钟以内的语音。",
   "fileUploader.uploadFromComputerUploadError": "文件上传失败，请重新上传。",
   "imageInput.browse": "浏览",
   "imageInput.dropImageHere": "将图片拖放到此处，或",

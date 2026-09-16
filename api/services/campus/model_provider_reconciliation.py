@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from core.helper.model_provider_cache import ProviderCredentialsCache, ProviderCredentialsCacheType
 from core.plugin.impl.plugin import PluginInstaller
 from core.plugin.plugin_service import PluginService
 from core.provider_manager import ProviderConfigurationCacheSource, ProviderManager
@@ -130,6 +131,9 @@ class CampusModelProviderReconciler:
         credential_name: str,
         base_url: str,
         models: Sequence[CampusModel],
+        vision_models: Sequence[str] = (),
+        audio_models: Sequence[str] = (),
+        document_models: Sequence[str] = (),
         plugin_manager: ModelPluginManager | None = None,
     ) -> None:
         self._session = session
@@ -138,6 +142,9 @@ class CampusModelProviderReconciler:
         self._credential_name = credential_name
         self._base_url = base_url
         self._models = tuple(models)
+        self._vision_models = frozenset(name.strip() for name in vision_models if name.strip())
+        self._audio_models = frozenset(name.strip() for name in audio_models if name.strip())
+        self._document_models = frozenset(name.strip() for name in document_models if name.strip())
         self._llms = tuple(model.name for model in self._models if model.model_type is ModelType.LLM)
         if not self._llms:
             raise ValueError("at least one target llm is required")
@@ -231,9 +238,11 @@ class CampusModelProviderReconciler:
             )
         }
         encrypted_api_key = self._opaque_gateway_key(tenant_id, existing.values())
+        provider_model_ids: list[str] = []
         for model in self._models:
             key = (model.name, model.model_type)
             credential = existing.get(key)
+            managed = self._compatible_credentials(model, encrypted_api_key)
             if credential is None:
                 credential = ProviderModelCredential(
                     tenant_id=tenant_id,
@@ -241,14 +250,20 @@ class CampusModelProviderReconciler:
                     model_name=model.name,
                     model_type=model.model_type,
                     credential_name=self._credential_name,
-                    encrypted_config=json.dumps(
-                        self._compatible_credentials(model, encrypted_api_key),
-                        separators=(",", ":"),
-                    ),
+                    encrypted_config=json.dumps(managed, separators=(",", ":")),
                 )
                 self._session.add(credential)
                 self._session.flush()
                 existing[key] = credential
+            else:
+                # Converge campus-owned fields (endpoint, capability flags) on an
+                # existing row while keeping plugin-managed keys such as
+                # stream_mode_delimiter or function_calling_type untouched.
+                current = json.loads(credential.encrypted_config or "{}")
+                if any(current.get(field) != value for field, value in managed.items()):
+                    credential.encrypted_config = json.dumps(
+                        {**current, **managed}, separators=(",", ":")
+                    )
 
             provider_model = self._session.scalar(
                 select(ProviderModel).where(
@@ -259,19 +274,42 @@ class CampusModelProviderReconciler:
                 )
             )
             if provider_model is None:
-                self._session.add(
-                    ProviderModel(
-                        tenant_id=tenant_id,
-                        provider_name=self._target_provider,
-                        model_name=model.name,
-                        model_type=model.model_type,
-                        credential_id=credential.id,
-                        is_valid=True,
-                    )
+                provider_model = ProviderModel(
+                    tenant_id=tenant_id,
+                    provider_name=self._target_provider,
+                    model_name=model.name,
+                    model_type=model.model_type,
+                    credential_id=credential.id,
+                    is_valid=True,
                 )
+                self._session.add(provider_model)
+                self._session.flush()
             else:
                 provider_model.credential_id = credential.id
                 provider_model.is_valid = True
+
+            provider_model_ids.append(provider_model.id)
+
+        self._invalidate_decrypted_credentials_caches(tenant_id, provider_model_ids)
+
+    def _invalidate_decrypted_credentials_caches(self, tenant_id: str, provider_model_ids: Iterable[str]) -> None:
+        """Drop the decrypted-credential entries Dify keys by provider model id.
+
+        Dify caches decrypted model credentials for 24h in ``ProviderCredentialsCache``
+        and only its own mutation paths delete the entry. The reconciler writes rows
+        directly, so without this the previously decrypted payload (and therefore the
+        capability flags derived from it, plus the credential-hashed plugin model
+        schema behind them) keeps being served until the TTL expires. Reconcile is an
+        explicit convergence command, so every target model is dropped rather than
+        only the rows this run changed: the cache can be stale even when the row is
+        already correct.
+        """
+        for provider_model_id in provider_model_ids:
+            ProviderCredentialsCache(
+                tenant_id=tenant_id,
+                identity_id=provider_model_id,
+                cache_type=ProviderCredentialsCacheType.MODEL,
+            ).delete()
 
     def _opaque_gateway_key(
         self,
@@ -306,6 +344,9 @@ class CampusModelProviderReconciler:
         }
         if model.model_type is ModelType.LLM:
             credentials.update(mode="chat", api_type="chat_completions", context_size=OPENAI_COMPATIBLE_CONTEXT_SIZE)
+            credentials["vision_support"] = "support" if model.name in self._vision_models else "no_support"
+            credentials["audio_support"] = "support" if model.name in self._audio_models else "no_support"
+            credentials["document_support"] = "support" if model.name in self._document_models else "no_support"
         elif model.model_type is ModelType.TEXT_EMBEDDING:
             credentials.update(max_chunks="1", context_size=OPENAI_COMPATIBLE_CONTEXT_SIZE)
         elif model.model_type is ModelType.RERANK:

@@ -1,0 +1,12 @@
+/* Un-hide the sign-in form for browsers that never run portal.js.
+ *
+ * portal.css keeps #login-view out of the first paint (see the `booting` rule)
+ * because the portal cannot know whether this visitor is signed in until an API
+ * call comes back. Only a browser without JavaScript stays in that state
+ * forever, so this stylesheet exists purely to undo the hiding for that case.
+ *
+ * It has to be a file rather than a <style> block: the portal is served with
+ * `style-src 'self'`, so an inline stylesheet is refused by the browser and the
+ * fallback would silently do nothing.
+ */
+body.booting #login-view { display: grid; }

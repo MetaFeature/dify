@@ -141,12 +141,19 @@ export class CampusApi {
    */
   async #request(path, options = {}) {
     const headers = new Headers(options.headers)
-    if (options.body)
+    // This client signs every body as JSON, so a plain object handed in by a
+    // caller must be serialised here: fetch would otherwise send the literal
+    // "[object Object]" and the server could only answer with a bare 400.
+    const body = options.body && typeof options.body === 'object'
+      ? JSON.stringify(options.body)
+      : options.body
+    if (body)
       headers.set('content-type', 'application/json')
     let response
     try {
       response = await this.fetcher(`${CAMPUS_API_BASE}${path}`, {
         ...options,
+        body,
         headers,
         credentials: 'same-origin',
       })

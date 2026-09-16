@@ -11,10 +11,13 @@ def test_portal_presentation_uses_defaults_then_publishes_sanitized_content(sqli
     )
     with Session(sqlite_engine, expire_on_commit=False) as session:
         service = PortalPresentationService(session=session)
+        # The reference shelf is the fourth row of the chooser and ships in the
+        # default presentation alongside the three experiments.
         assert [item.track for item in service.published().tracks] == [
             ExperimentTrack.LARGE_MODEL,
             ExperimentTrack.AGENT,
             ExperimentTrack.DEEP_LEARNING,
+            ExperimentTrack.REFERENCE,
         ]
 
         draft = service.save_draft(

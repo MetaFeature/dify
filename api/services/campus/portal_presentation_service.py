@@ -38,6 +38,7 @@ DEFAULT_PRESENTATION = PortalPresentation(
         TrackPresentation(ExperimentTrack.LARGE_MODEL, "大模型实验", "在 Dify 工作区完成，需预约时段", 1),
         TrackPresentation(ExperimentTrack.AGENT, "智能体实验", "在自己的电脑上完成", 2),
         TrackPresentation(ExperimentTrack.DEEP_LEARNING, "深度学习实验", "在自己的电脑上完成", 3),
+        TrackPresentation(ExperimentTrack.REFERENCE, "参考资料", "课程其他参考资料", 4),
     ),
     is_custom=False,
 )

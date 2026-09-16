@@ -263,10 +263,11 @@ def test_roster_sync_derives_new_student_password_and_requires_change(campus_ses
     student = campus_session.scalar(select(CampusStudent).where(CampusStudent.student_number == "20260009"))
     assert student is not None
     assert result.default_passwords == 1
-    assert credentials.authenticate("20260009", "0009").student_number == "20260009"
+    # "Student Nine" has a latin initial, so the derived head is "s".
+    assert credentials.authenticate("20260009", "s0009").student_number == "20260009"
     assert credentials.must_change_password(student.id)
 
-    credentials.change_password(student.id, "0009", "Changed123")
+    credentials.change_password(student.id, "s0009", "Changed123")
 
     assert not credentials.must_change_password(student.id)
 

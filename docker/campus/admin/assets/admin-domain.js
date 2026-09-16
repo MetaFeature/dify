@@ -2,7 +2,7 @@
 
 const CAMPUS_TIME_ZONE = 'Asia/Shanghai'
 
-/** @typedef {{ student_number: string, display_name: string, cohort?: string | null, password?: string | null }} RosterRow */
+/** @typedef {{ student_number: string, display_name: string, cohort?: string | null }} RosterRow */
 
 /**
  * Return the Campus calendar date independently of the browser time zone.
@@ -29,18 +29,18 @@ const ROSTER_COLUMN_ALIASES = new Map([
   ['student_number', 'student_number'],
   ['display_name', 'display_name'],
   ['cohort', 'cohort'],
-  ['password', 'password'],
+  ['class', 'cohort'],
   ['学号', 'student_number'],
   ['姓名', 'display_name'],
   ['班级', 'cohort'],
-  ['密码', 'password'],
 ])
 
 /**
- * Parse the administrator roster CSV. The first row must name its columns
- * (student_number and display_name required; cohort and password optional).
- * Fields must not contain commas or quotes — this parser is deliberately
- * simple and rejects rows with a mismatched field count.
+ * Parse the administrator roster CSV. The first row must name its columns;
+ * 学号/姓名 (student_number and display_name) are required and 班级 (cohort) is
+ * optional — any other column is rejected rather than silently ignored. Fields
+ * must not contain commas or quotes — this parser is deliberately simple and
+ * rejects rows with a mismatched field count.
  *
  * @param {string} text
  * @returns {{ rows: RosterRow[], errors: string[] }}
@@ -83,26 +83,106 @@ export function parseRosterCsv(text) {
       student_number: record.student_number,
       display_name: record.display_name,
       cohort: record.cohort || null,
-      password: record.password || null,
     })
   }
   return { rows, errors }
 }
 
 /**
- * Shape roster rows into the sync payload, dropping empty optional fields.
+ * Shape roster rows into the sync payload.
  *
  * @param {RosterRow[]} rows
  */
 export function rosterPayload(rows) {
   return {
+    // A blank or missing 班级 is sent as null; the backend only ever applies a
+    // real value, so an import cannot wipe a class set elsewhere.
     students: rows.map(row => ({
       student_number: row.student_number,
       display_name: row.display_name,
-      ...(row.cohort ? { cohort: row.cohort } : {}),
-      ...(row.password ? { password: row.password } : {}),
+      cohort: row.cohort || null,
     })),
   }
+}
+
+/**
+ * Validate the unified slot capacity field before it reaches the backend.
+ *
+ * @param {string} raw
+ * @returns {{ capacity: number, error?: undefined } | { error: string, capacity?: undefined }}
+ */
+export function slotCapacityPayload(raw) {
+  const text = String(raw).trim()
+  if (!/^\d+$/.test(text))
+    return { error: '统一容量必须是不小于 1 的整数。' }
+  const capacity = Number.parseInt(text, 10)
+  if (capacity < 1)
+    return { error: '统一容量必须是不小于 1 的整数。' }
+  // PostgreSQL stores the column as a 32-bit integer.
+  if (capacity > 2147483647)
+    return { error: '统一容量超出允许范围。' }
+  return { capacity }
+}
+
+/**
+ * Validate the knowledge-limit fields before they reach the backend.
+ *
+ * @param {string} datasetsRaw
+ * @param {string} documentsRaw
+ */
+export function knowledgeLimitPayload(datasetsRaw, documentsRaw) {
+  const parsed = {}
+  for (const [field, raw, message] of [
+    ['max_datasets_per_workspace', datasetsRaw, '每工作区知识库上限必须是不小于 1 的整数。'],
+    ['max_documents_per_dataset', documentsRaw, '单库文件上限必须是不小于 1 的整数。'],
+  ]) {
+    const text = String(raw).trim()
+    if (!/^\d+$/.test(text))
+      return { error: message }
+    const value = Number.parseInt(text, 10)
+    if (value < 1)
+      return { error: message }
+    // PostgreSQL stores the column as a 32-bit integer.
+    if (value > 2147483647)
+      return { error: message }
+    parsed[field] = value
+  }
+  return parsed
+}
+
+/**
+ * Validate the platform default allowance before it reaches the backend.
+ *
+ * The column keeps four decimals and the gateway converts the amount into whole
+ * quota units, so the field takes an amount with at most two decimals — what an
+ * administrator types in 元 — and nothing else.
+ *
+ * @param {string} raw
+ * @returns {{ default_allowance_usd: number, error?: undefined } | { error: string, default_allowance_usd?: undefined }}
+ */
+export function defaultAllowancePayload(raw) {
+  const text = String(raw).trim()
+  if (!/^\d+(\.\d{1,2})?$/.test(text))
+    return { error: '默认额度必须是不小于 0 的数字，最多两位小数。' }
+  const amount = Number.parseFloat(text)
+  if (!Number.isFinite(amount) || amount < 0)
+    return { error: '默认额度必须是不小于 0 的数字，最多两位小数。' }
+  // The column holds 14 digits with 4 decimals; anything larger cannot be stored.
+  if (amount >= 10000000000)
+    return { error: '默认额度超出允许范围。' }
+  return { default_allowance_usd: amount }
+}
+
+/**
+ * Render a decimal string from the API as the amount an administrator typed.
+ *
+ * @param {string | number | null | undefined} value
+ */
+export function allowanceAmount(value) {
+  if (value === null || value === undefined)
+    return ''
+  const amount = Number.parseFloat(String(value))
+  return Number.isFinite(amount) ? String(amount) : String(value)
 }
 
 /**

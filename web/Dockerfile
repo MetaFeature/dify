@@ -5,8 +5,11 @@ LABEL maintainer="takatost@gmail.com"
 # if you located in China, you can use aliyun mirror to speed up
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
-# if you located in China, you can use taobao registry to speed up
-# RUN npm config set registry https://registry.npmmirror.com
+# Registry is a build argument so a deployment behind a slow or blocked route to
+# the public registry can point at a mirror without editing this file, e.g.
+#   docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com web
+ARG NPM_REGISTRY=https://registry.npmjs.org
+RUN npm config set registry "$NPM_REGISTRY"
 
 RUN apk add --no-cache tzdata
 RUN corepack enable

@@ -5,6 +5,10 @@ const CONSOLE_API_BASE = '/console/api/campus'
 /** @typedef {{ starts_at: string, ends_at: string, capacity: number, confirmed: number, waitlisted: number, reservable: boolean }} AdminSlot */
 /** @typedef {{ data: AdminSlot[], server_now: string }} AdminSlotList */
 /** @typedef {{ starts_at: string, ends_at: string, capacity: number, previous_capacity: number, confirmed: number, waitlisted: number }} SlotCapacityChange */
+/** @typedef {{ capacity: number, platform_default: number, configured_capacity: number | null, is_default: boolean }} SlotCapacitySetting */
+/** @typedef {{ capacity: number, platform_default: number, configured_capacity: number | null, is_default: boolean, previous_configured_capacity: number | null, scanned_slots: number, changed_slots: number, promoted_waiters: number }} SlotCapacitySettingChange */
+/** Amounts arrive as decimal strings, the way every other allowance response is shaped. @typedef {{ default_allowance_usd: string, platform_default_usd: string, configured_default_allowance_usd: string | null, is_default: boolean }} DefaultAllowanceSetting */
+/** @typedef {{ default_allowance_usd: string, platform_default_usd: string, configured_default_allowance_usd: string | null, is_default: boolean, previous_configured_default_allowance_usd: string | null, scanned_students: number, changed_students: number }} DefaultAllowanceSettingChange */
 /** @typedef {{ id: string, student_number: string, display_name: string, cohort: string | null, status: string, has_credential?: boolean | null, virtual_identity?: boolean | null }} AdminStudent */
 /** @typedef {{ created: number, updated: number, password_resets: number }} SyncOutcome */
 /** @typedef {{ account_id: string, display_name: string }} Administrator */
@@ -46,9 +50,93 @@ export class AdminApi {
     })
   }
 
-  /** @param {number} limit @param {number} offset @returns {Promise<{ data: AdminStudent[] }>} */
-  async listStudents(limit, offset) {
-    return this.#request(`/admin/students?limit=${limit}&offset=${offset}`)
+  /** @returns {Promise<SlotCapacitySetting>} */
+  async knowledgeLimitSetting() {
+    return this.#request('/admin/knowledge-limits')
+  }
+
+  /** @param {{ max_datasets_per_workspace: number, max_documents_per_dataset: number }} payload */
+  async setKnowledgeLimit(payload) {
+    return this.#request('/admin/knowledge-limits', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async restoreKnowledgeLimit() {
+    return this.#request('/admin/knowledge-limits', { method: 'DELETE' })
+  }
+
+  /** @returns {Promise<DefaultAllowanceSetting>} */
+  async defaultAllowanceSetting() {
+    return this.#request('/admin/default-allowance')
+  }
+
+  /** @param {number} defaultAllowanceUsd @returns {Promise<DefaultAllowanceSettingChange>} */
+  async setDefaultAllowance(defaultAllowanceUsd) {
+    return this.#request('/admin/default-allowance', {
+      method: 'PUT',
+      body: JSON.stringify({ default_allowance_usd: defaultAllowanceUsd }),
+    })
+  }
+
+  /** @returns {Promise<DefaultAllowanceSettingChange>} */
+  async restoreDefaultAllowance() {
+    return this.#request('/admin/default-allowance', { method: 'DELETE' })
+  }
+
+  async slotCapacitySetting() {
+    return this.#request('/admin/slot-capacity')
+  }
+
+  /** @param {number} capacity @returns {Promise<SlotCapacitySettingChange>} */
+  async setSlotCapacityDefault(capacity) {
+    return this.#request('/admin/slot-capacity', {
+      method: 'PUT',
+      body: JSON.stringify({ capacity }),
+    })
+  }
+
+  /** @returns {Promise<SlotCapacitySettingChange>} */
+  async restoreSlotCapacityDefault() {
+    return this.#request('/admin/slot-capacity', { method: 'DELETE' })
+  }
+
+  /**
+   * @param {number} limit @param {number} offset
+   * @param {string} [keyword] matched against the student number or name
+   * @returns {Promise<{ data: AdminStudent[] }>}
+   */
+  async listStudents(limit, offset, keyword = '') {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    const needle = keyword.trim()
+    if (needle)
+      params.set('keyword', needle)
+    return this.#request(`/admin/students?${params}`)
+  }
+
+
+  /** @param {string} studentNumber @returns {Promise<AdminStudent>} */
+  async deleteStudent(studentNumber) {
+    return this.#request(`/admin/students/${encodeURIComponent(studentNumber)}`, { method: 'DELETE' })
+  }
+
+  /** @param {string} studentNumber @returns {Promise<AdminStudent>} */
+  async restoreStudent(studentNumber) {
+    return this.#request(`/admin/students/${encodeURIComponent(studentNumber)}/restore`, { method: 'POST' })
+  }
+
+  /** @param {string} studentNumber @param {string} displayName @returns {Promise<AdminStudent>} */
+  async renameStudent(studentNumber, displayName) {
+    return this.#request(`/admin/students/${encodeURIComponent(studentNumber)}/name`, {
+      method: 'PUT',
+      body: JSON.stringify({ display_name: displayName }),
+    })
+  }
+
+  /** Permanently purge students soft-deleted longer ago than the retention window. */
+  async purgeExpiredStudents() {
+    return this.#request('/admin/students/purge', { method: 'POST' })
   }
 
   /**
@@ -103,6 +191,35 @@ export class AdminApi {
   }
 
   /** @param {File} file @returns {Promise<{ data: import('./admin-domain.js').RosterRow[] }>} */
+  async portalLoginState() {
+    return this.#request('/admin/portal-login')
+  }
+
+  /** @param {File} file @returns {Promise<unknown>} */
+  async uploadPortalLoginPage(file) {
+    const body = new FormData()
+    body.append('file', file)
+    return this.#request('/admin/portal-login', { method: 'POST', body })
+  }
+
+  /** @param {string} pageId @returns {Promise<unknown>} */
+  async activatePortalLoginPage(pageId) {
+    return this.#request(
+      `/admin/portal-login/pages/${encodeURIComponent(pageId)}/activate`,
+      { method: 'POST' },
+    )
+  }
+
+  /** @returns {Promise<unknown>} */
+  async restoreBuiltInPortalLogin() {
+    return this.#request('/admin/portal-login', { method: 'DELETE' })
+  }
+
+  /** @param {string} pageId @returns {Promise<unknown>} */
+  async deletePortalLoginPage(pageId) {
+    return this.#request(`/admin/portal-login/pages/${encodeURIComponent(pageId)}`, { method: 'DELETE' })
+  }
+
   async parseRosterWorkbook(file) {
     const body = new FormData()
     body.append('file', file)
@@ -230,6 +347,30 @@ export class AdminApi {
   }
 
   /**
+   * The printable usage report for one granularity.
+   *
+   * The page has to travel through XHR rather than a plain link: the console
+   * only accepts the CSRF token from the X-CSRF-Token header, so opening the
+   * endpoint in a tab can never authenticate (see CODEBUDDY §31).
+   *
+   * @param {string} granularity
+   * @returns {Promise<{ blob: Blob, filename: string | null }>}
+   */
+  async usageReportPage(granularity) {
+    return this.#fetchBlob(`/admin/usage-report?granularity=${encodeURIComponent(granularity)}`)
+  }
+
+  /**
+   * The same three tables as a workbook, ready to save.
+   *
+   * @param {string} granularity
+   * @returns {Promise<{ blob: Blob, filename: string | null }>}
+   */
+  async usageReportWorkbook(granularity) {
+    return this.#fetchBlob(`/admin/usage-report.xlsx?granularity=${encodeURIComponent(granularity)}`)
+  }
+
+  /**
    * @template T
    * @param {string} path
    * @param {RequestInit} [options]
@@ -237,6 +378,34 @@ export class AdminApi {
    */
   async #request(path, options = {}) {
     return this.#send(`${CONSOLE_API_BASE}${path}`, options)
+  }
+
+  /**
+   * Fetch a file rather than JSON, with the same session and CSRF handling.
+   *
+   * @param {string} path
+   * @param {RequestInit} [options]
+   * @returns {Promise<{ blob: Blob, filename: string | null }>}
+   */
+  async #fetchBlob(path, options = {}) {
+    const headers = new Headers(options.headers)
+    const csrfToken = csrfTokenFromCookie(this.cookieSource())
+    if (csrfToken)
+      headers.set('X-CSRF-Token', csrfToken)
+    let response
+    try {
+      response = await this.fetcher(`${CONSOLE_API_BASE}${path}`, {
+        ...options,
+        headers,
+        credentials: 'same-origin',
+      })
+    }
+    catch {
+      throw new AdminApiError(0, '无法连接服务，请检查网络后重试。')
+    }
+    if (!response.ok)
+      throw new AdminApiError(response.status, await errorMessage(response))
+    return { blob: await response.blob(), filename: filenameFrom(response) }
   }
 
   /**
@@ -260,8 +429,14 @@ export class AdminApi {
   async #send(url, options) {
     const headers = new Headers(options.headers)
     // FormData must keep the boundary the browser generates, so its content
-    // type is left alone; everything else this client sends is JSON.
-    if (options.body && !(options.body instanceof FormData))
+    // type and body are left alone; everything else this client sends is
+    // JSON, and a caller that hands over a plain object would otherwise be
+    // coerced to the literal "[object Object]" while the header still claims
+    // JSON — which the server can only reject with a bare 400.
+    const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
+      ? JSON.stringify(options.body)
+      : options.body
+    if (body && !(options.body instanceof FormData))
       headers.set('content-type', 'application/json')
     const csrfToken = csrfTokenFromCookie(this.cookieSource())
     if (csrfToken)
@@ -270,6 +445,7 @@ export class AdminApi {
     try {
       response = await this.fetcher(url, {
         ...options,
+        body,
         headers,
         credentials: 'same-origin',
       })
@@ -300,4 +476,16 @@ async function errorMessage(response) {
     // fall through to the generic message
   }
   return `操作失败（HTTP ${response.status}），请稍后重试。`
+}
+
+/**
+ * The server names the download, so the saved file matches the granularity.
+ *
+ * @param {Response} response
+ * @returns {string | null}
+ */
+function filenameFrom(response) {
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  return match ? decodeURIComponent(match[1]) : null
 }

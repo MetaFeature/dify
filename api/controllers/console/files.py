@@ -70,6 +70,8 @@ class FileApi(Resource):
             image_file_size_limit=dify_config.UPLOAD_IMAGE_FILE_SIZE_LIMIT,
             video_file_size_limit=dify_config.UPLOAD_VIDEO_FILE_SIZE_LIMIT,
             audio_file_size_limit=dify_config.UPLOAD_AUDIO_FILE_SIZE_LIMIT,
+            # Campus: the client also refuses clips longer than this.
+            audio_duration_limit=dify_config.CAMPUS_AUDIO_MAX_DURATION_SECONDS,
             workflow_file_upload_limit=dify_config.WORKFLOW_FILE_UPLOAD_LIMIT,
             image_file_batch_limit=dify_config.IMAGE_FILE_BATCH_LIMIT,
             single_chunk_attachment_limit=dify_config.SINGLE_CHUNK_ATTACHMENT_LIMIT,
@@ -103,10 +105,22 @@ class FileApi(Resource):
         if source not in ("datasets", None):
             source = None
 
+        content = file.stream.read()
+        # Campus: voice uploads are capped by duration as well as by size. The
+        # helper raises a ValueError, which the console error handler turns into
+        # a 400 whose message reaches the uploader.
+        from services.campus.audio_duration import ensure_audio_duration_within_limit
+
+        ensure_audio_duration_within_limit(
+            content=content,
+            filename=file.filename,
+            mime_type=file.mimetype,
+        )
+
         try:
             upload_file = FileService(db.engine).upload_file(
                 filename=file.filename,
-                content=file.stream.read(),
+                content=content,
                 mimetype=file.mimetype,
                 user=current_user,
                 source=source,

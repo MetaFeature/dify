@@ -1,7 +1,7 @@
 ## Frontend Workflow
 
 - Refer to the `./docs/test.md` and `./docs/lint.md` for detailed frontend workflow instructions.
-- For frontend coding tasks, also apply the repo-local `how-to-write-component` skill when the change touches React components, state ownership, routing, styling, or Tailwind classes.
+- Use `how-to-write-component` for component ownership, state, generated API, or interaction-contract decisions. For isolated copy or styling edits, consult the affected component and relevant token/primitive contract directly.
 - For frontend reviews, use the repo-local `frontend-code-review` skill as the canonical checklist.
 
 ## i18n

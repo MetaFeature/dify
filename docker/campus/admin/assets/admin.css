@@ -1,96 +1,279 @@
+/* Campus administration portal.
+ *
+ * Same DeepSeek-derived language as the access portal (see portal.css): a
+ * blue-tinted near-white page with a soft mesh, white rounded surfaces, and the
+ * brand blue (#4d6bfe) as the single accent for primary actions. The font stack
+ * resolves to locally installed CJK fonts so the intranet never waits on a webfont.
+ */
 :root {
-  color: #172036;
-  background: #f3f6fb;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  font-synthesis: none;
+  --ds-font-body: "DM Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ds-font-mono: "Fragment Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ds-radius-card: 24px;
+  --ds-radius-panel: 16px;
+  --ds-radius-media: 12px;
+  --ds-radius-input: 12px;
+  --ds-radius-sm: 8px;
+  --ds-radius-pill: 100px;
+  --ds-blur-glass: 12px;
+
+  /* Palette follows https://www.deepseek.com/ (see docs/deepseek风格.png): an airy
+     blue-tinted page, white rounded cards, and the site's brand blue
+     (--ds-color-brand: #4d6bfe) as the single accent. */
+  --ds-color-bg-page: #f7f9ff;
+  --ds-color-mesh-1: rgba(120, 152, 255, 0.42);
+  --ds-color-mesh-2: rgba(168, 192, 255, 0.34);
+  --ds-color-mesh-3: rgba(198, 213, 255, 0.38);
+  --ds-color-grid: rgba(77, 107, 254, 0.05);
+  --ds-color-brand: #4d6bfe;
+  --ds-color-brand-deep: #3a65c2;
+  --ds-color-brand-soft: #eef2ff;
+  --ds-color-brand-soft-strong: #e5edff;
+  /* Every white rounded block is 50% translucent by request, so `surface`
+     and `surface-strong` intentionally hold the same value now. */
+  --ds-color-surface: rgba(255, 255, 255, 0.5);
+  --ds-color-surface-strong: rgba(255, 255, 255, 0.5);
+  --ds-color-surface-soft: rgba(77, 107, 254, 0.04);
+  --ds-color-surface-hover: rgba(77, 107, 254, 0.08);
+  --ds-color-border: rgba(15, 23, 42, 0.08);
+  --ds-color-border-strong: rgba(77, 107, 254, 0.36);
+  --ds-color-divider: rgba(15, 23, 42, 0.06);
+  --ds-color-text: #1b2430;
+  --ds-color-text-secondary: #3d4757;
+  --ds-color-text-muted: #7b8598;
+  --ds-color-success: #12a150;
+  --ds-color-success-soft: #e8f8ef;
+  --ds-color-danger: #e5484d;
+  --ds-color-danger-soft: #fef0f0;
+  --ds-color-warning: #b7791f;
+  --ds-color-warning-soft: #fff7e6;
+  --ds-shadow-card: 0 10px 30px rgba(28, 50, 120, 0.06);
+  --ds-shadow-raised: 0 24px 60px rgba(28, 50, 120, 0.10);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: #f3f6fb; }
-button, input, textarea { font: inherit; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .48; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid rgb(34 86 186 / 25%); outline-offset: 2px; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--ds-color-text);
+  /* Soft blue mesh over a near-white page, with the faint grid the reference
+     screenshot shows. Fixed so the panel keeps its backdrop while scrolling. */
+  background:
+    radial-gradient(1100px 620px at 80% -12%, var(--ds-color-mesh-1) 0, transparent 62%),
+    radial-gradient(880px 520px at 6% 18%, var(--ds-color-mesh-2) 0, transparent 64%),
+    radial-gradient(760px 520px at 94% 82%, var(--ds-color-mesh-3) 0, transparent 62%),
+    var(--ds-color-bg-page);
+  background-attachment: fixed;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--ds-color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ds-color-grid) 1px, transparent 1px);
+  background-size: 88px 88px;
+}
+
 [hidden] { display: none !important; }
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--ds-color-accent);
+  outline-offset: 2px;
+}
 
 .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 48px; }
 .masthead { height: 84px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
-.brand-mark { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; color: white; background: #2453a6; font-size: 13px; font-weight: 800; letter-spacing: .08em; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--ds-radius-panel);
+  color: #fff;
+  background: var(--ds-color-brand);
+  box-shadow: 0 10px 24px rgba(77, 107, 254, .28);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
 .brand strong, .brand small { display: block; }
-.brand strong { font-size: 16px; }
-.brand small { margin-top: 2px; color: #6d7690; font-size: 12px; }
-.masthead-links a { color: #36547f; font-size: 13px; font-weight: 700; text-decoration: none; padding: 8px 13px; border: 1px solid #d5ddea; border-radius: 11px; background: white; }
-.masthead-links a:hover { border-color: #9fb1ce; background: #f5f8fd; }
+.brand strong { font-size: 16px; letter-spacing: -.01em; }
+.brand small { margin-top: 2px; color: var(--ds-color-text-muted); font-size: 12px; }
+.masthead-links a {
+  transition: transform .15s, background .15s, border-color .15s;
+  color: var(--ds-color-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 8px 16px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-pill);
+  background: transparent;
+}
+.masthead-links a:hover { transform: translateY(-1px); border-color: var(--ds-color-border-strong); background: var(--ds-color-surface-hover); }
 
-.panel { border: 1px solid #e1e7f0; border-radius: 18px; background: white; box-shadow: 0 12px 35px rgb(45 61 96 / 6%); }
+.panel {
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-color-surface-strong);
+  backdrop-filter: blur(var(--ds-blur-glass));
+  box-shadow: var(--ds-shadow-card);
+}
 .auth-panel { max-width: 520px; margin: 60px auto; padding: 40px; text-align: center; }
-.auth-panel h1 { margin: 0 0 10px; font-size: 26px; }
-.primary-link { display: inline-block; margin-top: 18px; padding: 12px 22px; border-radius: 12px; color: white; background: #2458ae; font-weight: 700; text-decoration: none; }
-.muted { margin: 4px 0 0; color: #707b92; font-size: 13px; line-height: 1.6; }
-h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.auth-panel h1 { margin: 0 0 10px; font-size: 26px; font-weight: 600; }
+.primary-link {
+  display: inline-block;
+  transition: transform .15s, background .15s;
+  margin-top: 18px;
+  padding: 12px 24px;
+  border-radius: var(--ds-radius-pill);
+  color: #fff;
+  background: var(--ds-color-brand);
+  box-shadow: 0 10px 24px rgba(77, 107, 254, 0.28);
+  font-weight: 600;
+  text-decoration: none;
+}
+.primary-link:hover { transform: translateY(-1px); background: var(--ds-color-brand-deep); }
+.muted { margin: 4px 0 0; color: var(--ds-color-text-muted); font-size: 13px; line-height: 1.6; }
+h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; font-weight: 600; }
 
-.tabs { display: flex; gap: 8px; margin-bottom: 14px; }
-.tab { padding: 9px 16px; border: 1px solid #d5ddea; border-radius: 11px; color: #56617b; background: white; font-weight: 700; font-size: 13px; }
-.tab.active { color: white; border-color: #2458ae; background: #2458ae; }
-.tab-panel { padding: 24px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; padding: 6px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-pill); background: var(--ds-color-surface-strong); backdrop-filter: blur(var(--ds-blur-glass)); width: fit-content; }
+.tab {
+  padding: 9px 18px;
+  transition: transform .15s, background .15s, color .15s;
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-color-text-secondary);
+  background: transparent;
+  font-weight: 600;
+  font-size: 13px;
+}
+.tab:hover { transform: translateY(-1px); background: var(--ds-color-surface-hover); }
+.tab.active { color: #fff; background: var(--ds-color-brand); box-shadow: 0 6px 16px rgba(77, 107, 254, 0.24); }
+.tab-panel { padding: 26px; }
 .section-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
 
-.message { margin: 0 0 14px; padding: 11px 13px; border-radius: 10px; color: #285d43; background: #eaf7f0; font-size: 13px; line-height: 1.5; }
-.message.error { color: #923642; background: #fff0f2; }
+.message { margin: 0 0 14px; padding: 12px 14px; border-radius: var(--ds-radius-input); color: var(--ds-color-success); background: var(--ds-color-success-soft); font-size: 13px; line-height: 1.5; }
+.message.error { color: var(--ds-color-danger); background: var(--ds-color-danger-soft); }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 10px 8px; border-bottom: 1px solid #edf0f5; text-align: left; }
-th { color: #7b859c; font-weight: 700; }
+th, td { padding: 11px 8px; border-bottom: 1px solid var(--ds-color-divider); text-align: left; }
+th { color: var(--ds-color-text-muted); font-weight: 600; }
 td .secondary { margin-right: 6px; }
-.capacity-input { width: 90px; height: 34px; padding: 0 10px; border: 1px solid #d7deea; border-radius: 9px; }
-.badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
-.badge.active { color: #285d43; background: #eaf7f0; }
-.badge.suspended { color: #777f90; background: #edf0f4; }
-.badge.virtual { color: #825e22; background: #fff5d9; }
-.badge.credential { color: #345687; background: #e9f0fb; }
-.badge.ended { color: #777f90; background: #edf0f4; }
-.badge.running { color: #285d43; background: #eaf7f0; }
+/* The detail and the inline forms both expand inside the table, directly under
+   the row they belong to. */
+.student-detail-row td { padding: 18px 14px; color: var(--ds-color-text-secondary); background: var(--ds-color-surface-soft); line-height: 1.8; }
+.row-form { display: grid; gap: 14px; max-width: 560px; }
+.row-form-title { margin: 0; color: var(--ds-color-text); font-weight: 700; }
+.row-form input { width: 100%; height: 38px; padding: 0 12px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-input); background: var(--ds-color-surface-strong); }
+.row-form .row-actions { display: flex; gap: 12px; }
 
-.secondary { min-height: 34px; padding: 0 12px; border: 1px solid #d5ddea; border-radius: 10px; color: #36547f; background: white; font-weight: 700; font-size: 13px; }
-.secondary:hover:not(:disabled) { border-color: #9fb1ce; background: #f5f8fd; }
-.primary { min-height: 40px; padding: 0 18px; border: 0; border-radius: 11px; color: white; background: #2458ae; font-weight: 700; }
+.capacity-input {
+  width: 90px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-color-surface-strong);
+}
+.badge { display: inline-block; padding: 3px 10px; border-radius: var(--ds-radius-pill); font-size: 11px; font-weight: 700; }
+.badge.active { color: var(--ds-color-success); background: var(--ds-color-success-soft); }
+.badge.exhausted { color: var(--ds-color-danger); background: var(--ds-color-danger-soft); }
+
+.badge.suspended { color: var(--ds-color-text-muted); background: var(--ds-color-surface-hover); }
+.badge.virtual { color: var(--ds-color-warning); background: var(--ds-color-warning-soft); }
+.badge.credential { color: var(--ds-color-accent); background: var(--ds-color-accent-soft); }
+.badge.ended { color: var(--ds-color-text-muted); background: var(--ds-color-surface-hover); }
+.badge.running { color: var(--ds-color-success); background: var(--ds-color-success-soft); }
+
+.secondary {
+  transition: transform .15s, box-shadow .15s, background .15s, border-color .15s;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-color-text);
+  background: transparent;
+  font-weight: 600;
+  font-size: 13px;
+}
+.secondary:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--ds-color-border-strong); background: var(--ds-color-surface-hover); }
+.primary {
+  transition: transform .15s, box-shadow .15s, background .15s, border-color .15s;
+  min-height: 40px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: var(--ds-radius-pill);
+  color: #fff;
+  background: var(--ds-color-brand);
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(77, 107, 254, 0.24);
+}
+.primary:hover:not(:disabled) { transform: translateY(-1px); background: var(--ds-color-brand-deep); }
+.primary:active:not(:disabled), .secondary:active:not(:disabled), .tab:active { transform: translateY(0); }
 .compact { min-height: 32px; font-size: 12px; }
-.danger { color: #a13f49; }
+.danger { color: var(--ds-color-danger); }
 
 .inline-form { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
-.inline-form input { flex: 1 1 140px; height: 38px; padding: 0 12px; border: 1px solid #d7deea; border-radius: 10px; }
-.pager { display: flex; align-items: center; gap: 10px; color: #7b859c; font-size: 13px; }
+/* The roster toolbar: the restore view toggle and the retention sweep. */
+.student-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.checkbox-inline { display: inline-flex; align-items: center; gap: 9px; color: var(--ds-color-text-secondary); font-size: 13px; font-weight: 600; }
+.checkbox-inline input { width: 18px; height: 18px; }
+.badge.deleted { color: var(--ds-color-text-muted); background: var(--ds-color-surface-hover); }
+.student-detail-row td .detail-stamp { color: var(--ds-color-text-muted); }
+.inline-form input { flex: 1 1 140px; height: 38px; padding: 0 12px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-input); background: var(--ds-color-surface-strong); }
+.pager { display: flex; align-items: center; gap: 10px; color: var(--ds-color-text-muted); font-size: 13px; }
 
-textarea { width: 100%; padding: 12px; border: 1px solid #d7deea; border-radius: 12px; background: #fbfcfe; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-media);
+  background: var(--ds-color-surface-strong);
+  resize: vertical;
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+}
 .roster-actions { display: flex; gap: 10px; margin: 14px 0; }
-#roster-report ul { margin: 8px 0; padding-left: 20px; color: #923642; font-size: 13px; }
-.preview-summary { padding: 12px 14px; border: 1px solid #dbe6f6; border-radius: 12px; background: #f4f8ff; font-size: 14px; }
-.preview-summary b { color: #1d4b99; }
+#roster-report ul { margin: 8px 0; padding-left: 20px; color: var(--ds-color-danger); font-size: 13px; }
+.preview-summary { padding: 13px 15px; border: 1px solid var(--ds-color-accent-soft); border-radius: var(--ds-radius-media); background: var(--ds-color-accent-soft); font-size: 14px; }
+.preview-summary b { color: var(--ds-color-accent); }
 
-#student-detail { margin-top: 14px; padding: 14px; border: 1px solid #dbe6f6; border-radius: 12px; background: #f8fafd; font-size: 13px; line-height: 1.8; }
+#student-detail { margin-top: 14px; padding: 16px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-media); background: var(--ds-color-surface-soft); font-size: 13px; line-height: 1.8; }
 
 @media (max-width: 720px) {
   .shell { width: calc(100% - 24px); }
   .section-heading { flex-direction: column; }
-  .tabs { flex-wrap: wrap; }
+  .tabs { width: 100%; }
   table { display: block; overflow-x: auto; }
 }
 
 /* Model gateway tab: prose rather than a data table. */
-#tab-gateway h3 { margin: 20px 0 8px; font-size: 15px; }
+#tab-gateway h3 { margin: 20px 0 8px; font-size: 15px; font-weight: 600; }
 #tab-gateway p { margin: 0 0 12px; line-height: 1.6; }
-#tab-gateway code { padding: 1px 5px; border-radius: 4px; background: #f1f2f4; font-size: 12px; }
-#tab-gateway a.primary { display: inline-block; text-decoration: none; }
+#tab-gateway code { padding: 1px 6px; border-radius: 6px; background: var(--ds-color-surface-hover); font-family: var(--ds-font-mono); font-size: 12px; }
+/* .primary is written for a <button>, whose UA styling centres its label in the
+   min-height box. An <a> does not, so the label would sit at the top of the
+   pill; flex centring gives the anchor the same box behaviour. */
+#tab-gateway a.primary { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .gateway-notes { margin: 0 0 12px; padding-left: 20px; line-height: 1.7; }
 .gateway-notes li { margin-bottom: 6px; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 12px 0 0; }
+.report-line { display: inline-flex; align-items: center; gap: 10px; }
+.report-line .muted { margin: 0; white-space: nowrap; }
+#report-status { min-height: 20px; }
+#report-status.error { color: var(--ds-color-danger); }
 
 /* Lab manual tab: an authoring form above the chapter list. */
 .manual-form { display: grid; gap: 10px; margin-bottom: 14px; }
-.manual-form textarea { width: 100%; padding: 10px 12px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; font-size: 13px; resize: vertical; }
-.manual-form input { width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid #d7deea; border-radius: 9px; }
+.manual-form textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-sm); font: inherit; font-size: 13px; resize: vertical; }
+.manual-form input { width: 100%; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-input); }
 .manual-actions { display: flex; gap: 8px; }
-#tab-manuals .section-heading select { height: 34px; padding: 0 8px; border: 1px solid #d7deea; border-radius: 8px; font: inherit; }
+#tab-manuals .section-heading select { height: 34px; padding: 0 10px; border: 1px solid var(--ds-color-border); border-radius: var(--ds-radius-input); font: inherit; background: var(--ds-color-surface-strong); }
 #manual-report { margin-bottom: 14px; }
 #manual-report p { margin: 0; }
 

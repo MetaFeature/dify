@@ -280,6 +280,10 @@ class ExternalDatasetService:
             select(Dataset).where(Dataset.name == args.get("name"), Dataset.tenant_id == tenant_id).limit(1)
         ):
             raise DatasetNameDuplicateError(f"Dataset with name {args.get('name')} already exists.")
+        # Campus: an external knowledge base holds a place in the same quota.
+        from services.campus.knowledge_limit_service import ensure_dataset_quota
+
+        ensure_dataset_quota(tenant_id, session=session)
         external_knowledge_api = session.scalar(
             select(ExternalKnowledgeApis)
             .where(

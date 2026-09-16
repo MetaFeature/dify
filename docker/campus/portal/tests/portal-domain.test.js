@@ -128,6 +128,7 @@ test('experiment tracks are presented with the platform label and the right dest
       track: 'large-model',
       title: '大模型实验',
       detail: '在 Dify 工作区完成，需预约时段',
+      chapters: [],
       manualAvailable: false,
       reservationsAvailable: true,
     },
@@ -135,6 +136,7 @@ test('experiment tracks are presented with the platform label and the right dest
       track: 'deep-learning',
       title: '深度学习实验',
       detail: '在自己的电脑上完成 · 3 份课件',
+      chapters: [],
       manualAvailable: true,
       reservationsAvailable: false,
     },
@@ -142,6 +144,7 @@ test('experiment tracks are presented with the platform label and the right dest
       track: 'agent',
       title: '智能体实验',
       detail: '在自己的电脑上完成',
+      chapters: [],
       manualAvailable: false,
       reservationsAvailable: false,
     },
@@ -174,4 +177,32 @@ test('published presentation controls labels and experiment order', () => {
   )
 
   assert.deepEqual(cards.map(card => card.title), ['实验一', '实验二', '实验三'])
+})
+
+test('the administrator chapter list reaches the card in its own order', () => {
+  // The chooser renders exactly what the backend published, so the titles and
+  // their reading order are the administrator's, not a client-side guess.
+  const [card] = experimentTrackCards([
+    {
+      track: 'reference',
+      kind: 'manual',
+      chapters: 2,
+      chapter_list: [
+        { id: 'c1', title: '课程大纲', view_url: 'http://manual:18083/c1/view' },
+        { id: 'c2', title: '参考文献', view_url: 'http://manual:18083/c2/view' },
+      ],
+    },
+  ])
+
+  assert.equal(card.title, '参考资料')
+  assert.equal(card.manualAvailable, true)
+  assert.deepEqual(card.chapters.map(chapter => chapter.title), ['课程大纲', '参考文献'])
+  assert.equal(card.chapters[0].view_url, 'http://manual:18083/c1/view')
+})
+
+test('a track without a chapter list still reports its published count', () => {
+  const [card] = experimentTrackCards([{ track: 'agent', kind: 'manual', chapters: 4 }])
+
+  assert.equal(card.manualAvailable, true)
+  assert.deepEqual(card.chapters, [])
 })

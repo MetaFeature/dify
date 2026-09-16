@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from configs import dify_config
 from configs.extra.campus_config import ModelApiProtocol, ModelCredentialScope
+from core.plugin.entities.plugin import PluginInstallationSource
 from core.plugin.impl.plugin import PluginInstaller
 from core.plugin.plugin_service import PluginService
 from graphon.model_runtime.entities.model_entities import ModelType
@@ -184,10 +185,43 @@ class MarketplaceProviderPluginInstaller:
         raise CampusProvisioningError("Campus model provider plugin installation timed out")
 
     def _install(self, tenant_id: str, plugin_unique_identifier: str) -> None:
-        if not self._local_package_path:
-            PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+        if self._local_package_path:
+            self._install_from_local_package(tenant_id, plugin_unique_identifier)
             return
-        self._install_from_local_package(tenant_id, plugin_unique_identifier)
+        if self._install_from_daemon_cache(tenant_id, plugin_unique_identifier):
+            return
+        PluginService.install_from_marketplace_pkg(tenant_id, [plugin_unique_identifier])
+
+    def _install_from_daemon_cache(self, tenant_id: str, plugin_unique_identifier: str) -> bool:
+        """Install the pinned provider plugin from the daemon's local copy.
+
+        The campus deployment keeps the public Marketplace switched off, which
+        also closes ``PluginService.install_from_marketplace_pkg``. The daemon
+        already holds the pinned package, and installing a cached package needs
+        no marketplace call, so new student workspaces stay provisionable.
+        Returns False when the daemon does not have the package, letting the
+        caller fall back to the marketplace path.
+        """
+        manager = PluginInstaller()
+        try:
+            manager.fetch_plugin_manifest(tenant_id, plugin_unique_identifier)
+            manager.decode_plugin_from_identifier(tenant_id, plugin_unique_identifier)
+        except Exception:
+            logger.warning(
+                "Campus provider plugin is not cached in the plugin daemon. tenant_id=%s identifier=%s",
+                tenant_id,
+                plugin_unique_identifier,
+                exc_info=True,
+            )
+            return False
+        manager.install_from_identifiers(
+            tenant_id,
+            [plugin_unique_identifier],
+            PluginInstallationSource.Marketplace,
+            [{"plugin_unique_identifier": plugin_unique_identifier}],
+        )
+        PluginService.invalidate_plugin_model_providers_cache(tenant_id)
+        return True
 
     def _install_from_local_package(self, tenant_id: str, plugin_unique_identifier: str) -> None:
         package = Path(self._local_package_path)
@@ -335,6 +369,9 @@ class DifyModelConfigurator:
         api_protocol: ModelApiProtocol,
         credential_scope: ModelCredentialScope = "provider",
         plugin_package_path: str = "",
+        vision_models: Sequence[str] = (),
+        audio_models: Sequence[str] = (),
+        document_models: Sequence[str] = (),
         plugin_installer: ProviderPluginInstaller | None = None,
         provider_service: ModelProviderCredentialService | None = None,
     ) -> None:
@@ -348,6 +385,9 @@ class DifyModelConfigurator:
         self._base_url = base_url
         self._models = tuple(models)
         self._api_protocol = api_protocol
+        self._vision_models = frozenset(name.strip() for name in vision_models if name.strip())
+        self._audio_models = frozenset(name.strip() for name in audio_models if name.strip())
+        self._document_models = frozenset(name.strip() for name in document_models if name.strip())
         self._plugin_installer = plugin_installer or MarketplaceProviderPluginInstaller(
             local_package_path=plugin_package_path
         )
@@ -410,6 +450,9 @@ class DifyModelConfigurator:
             credentials["mode"] = "chat"
             credentials["api_type"] = "responses" if self._api_protocol == "responses" else "chat_completions"
             credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
+            credentials["vision_support"] = "support" if model.name in self._vision_models else "no_support"
+            credentials["audio_support"] = "support" if model.name in self._audio_models else "no_support"
+            credentials["document_support"] = "support" if model.name in self._document_models else "no_support"
         elif model.model_type is ModelType.TEXT_EMBEDDING:
             credentials["max_chunks"] = "1"
             credentials["context_size"] = OPENAI_COMPATIBLE_DEFAULT_CONTEXT_SIZE
@@ -531,3 +574,26 @@ class DifySessionIssuer:
             raise CampusProvisioningError("Campus student Dify account is missing or inactive")
         TenantService.switch_tenant(account, tenant_id, session=self._session)
         return AccountService.login(account, session=self._session, ip_address=ip_address)
+
+
+class DifyAccountDeleter:
+    """Hand one Dify account to Dify's own deletion pipeline.
+
+    `AccountService.delete_account` only queues a Celery task; that task is what
+    removes the tenant together with its apps, knowledge bases and files. So this
+    call returns as soon as the task is queued, which keeps a retention sweep from
+    blocking on Dify's cleanup.
+    """
+
+    _session: Session
+
+    def __init__(self, *, session: Session) -> None:
+        self._session = session
+
+    def __call__(self, account_id: str) -> None:
+        account = self._session.get(Account, account_id)
+        if account is None:
+            # Dify already forgot this account; only the Campus rows are left.
+            logger.info("campus retention: Dify account %s is already gone", account_id)
+            return
+        AccountService.delete_account(account, session=self._session)

@@ -80,7 +80,24 @@ for upstream in campus_api campus_portal campus_web campus_plugin_daemon; do
     echo "Campus nginx ${upstream} does not reuse upstream connections" >&2
     exit 1
   }
+  # The pool must also survive container recreation: a static `server api:5001;`
+  # is resolved once at startup, so a recreated container's new IP is only
+  # picked up by an explicit reload (and the failure surfaces as a 500 from the
+  # auth_request subrequest, not as a 502).
+  printf '%s\n' "${upstream_block}" | grep -Eq '^[[:space:]]+server [a-z_]+:[0-9]+ resolve;$' || {
+    echo "Campus nginx ${upstream} does not re-resolve its upstream at runtime" >&2
+    exit 1
+  }
+  printf '%s\n' "${upstream_block}" | grep -Eq '^[[:space:]]+zone [a-zA-Z0-9_]+ [0-9]+k?;$' || {
+    echo "Campus nginx ${upstream} does not declare the shared zone that resolve requires" >&2
+    exit 1
+  }
 done
+
+grep -Eq '^resolver 127\.0\.0\.11 valid=[0-9]+s ipv6=off;$' "${template}" || {
+  echo "Campus nginx does not resolve upstream names through Docker's embedded DNS" >&2
+  exit 1
+}
 
 if grep -Eq 'proxy_pass http://(api:5001|portal:8080|web:3000|plugin_daemon:5002)' "${template}"; then
   echo "Campus nginx still bypasses its bounded upstream connection pools" >&2
@@ -208,7 +225,7 @@ sed -n '/^[[:space:]]*location \/console\/api {$/,/^[[:space:]]*}/p' "${template
     exit 1
   }
 
-blocked_auth_patterns="$(awk '
+blocked_patterns="$(awk '
   /^[[:space:]]*location ~ / {
     pattern = $0
     sub(/^[[:space:]]*location ~ /, "", pattern)
@@ -219,9 +236,22 @@ blocked_auth_patterns="$(awk '
   in_location && /return 404;/ { print pattern }
   in_location && /^[[:space:]]*}/ { in_location = 0 }
 ' "${template}")"
-[[ -n "${blocked_auth_patterns}" ]] || {
-  echo "Campus nginx does not define blocked student authentication routes" >&2
+[[ -n "${blocked_patterns}" ]] || {
+  echo "Campus nginx does not define blocked student surfaces" >&2
   exit 1
+}
+
+# Every path a student must not reach has to be matched by one of those
+# patterns; otherwise the surface is published even though the navigation entry
+# is hidden.
+is_blocked() {
+  local route="$1" pattern
+  while IFS= read -r pattern; do
+    if printf '%s\n' "${route}" | grep -Eq "${pattern}"; then
+      return 0
+    fi
+  done <<<"${blocked_patterns}"
+  return 1
 }
 
 for route in \
@@ -230,17 +260,38 @@ for route in \
   /console/api/login \
   /console/api/email-code-login \
   /console/api/oauth/login/github; do
-  route_is_blocked=false
-  while IFS= read -r blocked_auth_pattern; do
-    if printf '%s\n' "${route}" | grep -Eq "${blocked_auth_pattern}"; then
-      route_is_blocked=true
-      break
-    fi
-  done <<<"${blocked_auth_patterns}"
-  [[ "${route_is_blocked}" == "true" ]] || {
+  is_blocked "${route}" || {
     echo "student Dify authentication route is not blocked: ${route}" >&2
     exit 1
   }
+done
+
+for route in \
+  /plugins \
+  /marketplace \
+  /tools \
+  /integrations/custom-endpoint \
+  /console/api/workspaces/current/plugin/install/pkg \
+  /console/api/workspaces/current/plugin/install/marketplace \
+  /console/api/workspaces/current/plugin/upload/pkg \
+  /console/api/workspaces/current/plugin/upgrade/marketplace \
+  /console/api/workspaces/current/plugin/uninstall \
+  /console/api/workspaces/current/plugin/tasks; do
+  is_blocked "${route}" || {
+    echo "plugin or marketplace surface is still published: ${route}" >&2
+    exit 1
+  }
+done
+
+# The read-only plugin routes stay published: provider and model pages use them.
+for route in \
+  /console/api/workspaces/current/plugin/list \
+  /console/api/workspaces/current/plugin/icon \
+  /console/api/workspaces/current/plugin/readme; do
+  if is_blocked "${route}"; then
+    echo "read-only plugin route is blocked and will break the console: ${route}" >&2
+    exit 1
+  fi
 done
 
 # Administration routes must not be published on a campus interface: named

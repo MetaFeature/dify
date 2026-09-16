@@ -7,4 +7,14 @@ FROM ${DIFY_API_BASE_IMAGE}
 # dependencies while keeping the Campus extension in a separate image.
 USER root
 COPY --chown=dify:dify api /app/api/
+
+# Campus-only runtime dependency: the roster initial-password rule derives the
+# pinyin of a student's first name character. It is installed here rather than
+# declared in pyproject.toml so the pinned upstream dependency set (installed in
+# the base image) stays untouched. Installing through the image's own uv keeps
+# the resolver and cache semantics of the rest of the runtime.
+RUN uv pip install --python /app/api/.venv/bin/python --no-cache "pypinyin==0.55.0"
+# Reads the length of browser-recorded voice clips so the Campus upload limit
+# can reject anything longer than a minute. Pure Python: no ffmpeg needed.
+RUN uv pip install --python /app/api/.venv/bin/python --no-cache "mutagen==1.47.0"
 USER dify

@@ -1,3 +1,6 @@
+import logging
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
@@ -6,6 +9,12 @@ from sqlalchemy.orm import Session
 from models.campus import CampusAllowanceAdjustment, CampusGatewayBinding
 from services.campus.domain import AllowanceSummary, GatewayUsage, ModelGateway, ModelUsageSummary
 from services.campus.errors import CampusConflictError, CampusValidationError, GatewayBindingNotFoundError
+
+logger = logging.getLogger(__name__)
+
+# A page is at most 500 rows; the gateway is on the same Docker network, so a
+# handful of concurrent lookups keeps a page responsive without hammering it.
+_USAGE_FETCH_WORKERS = 8
 
 
 class AllowanceService:
@@ -26,6 +35,51 @@ class AllowanceService:
         """Fetch gateway usage and return only the redacted dollar-denominated view."""
         binding = self._binding(student_id)
         return self._to_summary(self._gateway.get_usage(binding.gateway_token_id))
+
+    def allows_model_calls(self, student_id: str) -> bool:
+        """Return whether the student may still start a session on their allowance.
+
+        A student who has never been provisioned has no gateway binding yet, so
+        there is nothing to exhaust and the gate stays open — provisioning runs
+        later in the same login. Once a binding exists, only a positive remaining
+        quota opens the gate.
+        """
+        try:
+            return self.get_summary(student_id).model_calls_enabled
+        except GatewayBindingNotFoundError:
+            return True
+
+    def summaries_for(self, student_ids: Sequence[str]) -> dict[str, AllowanceSummary]:
+        """Allowance per student, for one page of the administration list.
+
+        The gateway exposes usage one token at a time, so a page costs one call
+        per bound student. They run on a small pool and a row that fails is left
+        out of the result: a gateway hiccup must not blank the whole list, and
+        the caller renders a missing entry as "unknown" rather than as zero.
+        """
+        if not student_ids:
+            return {}
+        bindings = {
+            binding.student_id: binding.gateway_token_id
+            for binding in self._session.scalars(
+                select(CampusGatewayBinding).where(CampusGatewayBinding.student_id.in_(list(student_ids)))
+            )
+        }
+        if not bindings:
+            return {}
+        summaries: dict[str, AllowanceSummary] = {}
+        with ThreadPoolExecutor(max_workers=min(_USAGE_FETCH_WORKERS, len(bindings))) as pool:
+            pending = {
+                pool.submit(self._gateway.get_usage, token_id): student_id
+                for student_id, token_id in bindings.items()
+            }
+            for future in as_completed(pending):
+                student_id = pending[future]
+                try:
+                    summaries[student_id] = self._to_summary(future.result())
+                except Exception:
+                    logger.warning("campus allowance lookup failed for student %s", student_id, exc_info=True)
+        return summaries
 
     def adjust(
         self,

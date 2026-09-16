@@ -26,8 +26,10 @@ deployment; a registry mirror is allowed only when it retains that digest.
   credential row. Excel and SSO remain fail-closed interfaces until their
   real schemas are supplied.
 - UTC+8 has twelve fixed two-hour slots per day. The rolling seven-day window,
-  per-slot administrator-adjustable capacity (default 500, zero closes a
-  slot), the one-effective-plus-one-pending claim rule, FIFO waitlist,
+  an administrator-managed unified capacity that is written into every slot
+  that has not started yet (per-slot adjustments remain available as detail and
+  are overwritten by the next unified save; zero closes a single slot),
+  the one-effective-plus-one-pending claim rule, FIFO waitlist,
   cancellation until slot end (an in-progress cancellation revokes access
   immediately), promotion, and slot-time access are enforced in the database
   service.
@@ -183,15 +185,18 @@ The Campus administration portal owns that loopback listener's root: opening
 `127.0.0.1:${CAMPUS_ADMIN_PORT:-18081}/` serves the static page from
 `campus/admin/`, while the stock Dify console stays reachable on its own
 routes (`/signin` for administrator login, `/apps` for the console itself).
-The portal covers per-slot capacity, the student roster (XLSX/CSV import with a
+The portal covers a unified slot capacity plus per-slot capacity detail, the
+student roster (XLSX/CSV import with a
 mandatory preview, single-student entry, suspension, password reset),
 allowance adjustments, named-administrator account creation, Portal presentation,
 and learning-document publication. It calls
 `/console/api/campus/admin/*` with the Dify console session cookies and the
-CSRF double-submit header. XLSX accepts `学号,姓名,班级,密码`; CSV accepts
-those names or `student_number,display_name,cohort,password`. A blank password
-gives a new student the final four student-number characters and requires
-replacement at first login; it never resets an existing student's credential.
+CSRF double-submit header. Both the XLSX template and the CSV paste box carry
+exactly two columns, `学号,姓名` (or `student_number,display_name`); any other
+column is rejected. A new student's initial password is the pinyin of the first
+name character followed by the final four student-number characters
+(`张三`/`20260001` → `zhang0001`) and must be replaced at first login; an import
+never resets an existing student's credential.
 
 The portal is intentionally a Chinese-only, framework-independent static
 surface. It does not modify or import the upstream Dify `web/` application;
@@ -476,6 +481,10 @@ Use a virtual identity from the protected environment file:
 2. Verify the student, workspace, managed gateway user/token, and provider
    credential are created once. Repeat login and verify all IDs are unchanged.
 3. `GET /console/api/campus/slots?day=YYYY-MM-DD`; verify twelve UTC+8 slots.
+   `PUT /console/api/campus/admin/slot-capacity` with a new value; verify every
+   slot that has not started reports it while a running or ended slot keeps its
+   own capacity, then `DELETE` that route and verify the platform default comes
+   back.
 4. Reserve a future slot. Fill a test slot to capacity in an isolated test run,
    verify FIFO waitlisting, cancel a confirmed booking, and verify promotion.
 5. Before the slot, `/console/api/campus/session/launch` must be rejected. At

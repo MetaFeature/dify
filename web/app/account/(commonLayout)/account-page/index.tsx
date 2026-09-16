@@ -30,6 +30,11 @@ const descriptionClassName = `
   mt-1 body-xs-regular text-text-tertiary
 `
 
+// The Campus deployment keeps student identity under Campus control, so the
+// account page shows the name and email read-only and keeps only the password
+// (and the account-linking / deletion actions).
+export const SHOW_ACCOUNT_IDENTITY_EDITING = false
+
 export default function AccountPage() {
   const { t } = useTranslation()
   const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
@@ -186,12 +191,14 @@ export default function AccountPage() {
           <div className="flex-1 rounded-lg bg-components-input-bg-normal p-2 system-sm-regular text-components-input-text-filled">
             <span className="pl-1">{userProfile.name}</span>
           </div>
-          <div
-            className="cursor-pointer rounded-lg bg-components-button-tertiary-bg px-3 py-2 system-sm-medium text-components-button-tertiary-text"
-            onClick={handleEditName}
-          >
-            {t(($) => $['operation.edit'], { ns: 'common' })}
-          </div>
+          {SHOW_ACCOUNT_IDENTITY_EDITING && (
+            <div
+              className="cursor-pointer rounded-lg bg-components-button-tertiary-bg px-3 py-2 system-sm-medium text-components-button-tertiary-text"
+              onClick={handleEditName}
+            >
+              {t(($) => $['operation.edit'], { ns: 'common' })}
+            </div>
+          )}
         </div>
       </div>
       <div className="mb-8">
@@ -200,7 +207,7 @@ export default function AccountPage() {
           <div className="flex-1 rounded-lg bg-components-input-bg-normal p-2 system-sm-regular text-components-input-text-filled">
             <span className="pl-1">{userProfile.email}</span>
           </div>
-          {systemFeatures.enable_change_email && (
+          {SHOW_ACCOUNT_IDENTITY_EDITING && systemFeatures.enable_change_email && (
             <div
               className="cursor-pointer rounded-lg bg-components-button-tertiary-bg px-3 py-2 system-sm-medium text-components-button-tertiary-text"
               onClick={() => setShowUpdateEmail(true)}

@@ -119,3 +119,93 @@ def test_adjustment_request_id_cannot_be_reused_with_different_parameters(campus
         )
 
     assert gateway.adjustments == [("42", 500, "adjustment-1")]
+
+
+def test_gate_opens_while_quota_remains_and_closes_when_it_is_spent(campus_session: Session):
+    gateway = FakeModelGateway()
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
+    student = campus_session.query(CampusStudent).one()
+
+    assert service.allows_model_calls(student.id) is True
+
+    gateway.remaining_quota = 0
+
+    assert service.allows_model_calls(student.id) is False
+
+
+def test_gate_stays_open_for_a_student_without_a_gateway_binding(campus_session: Session):
+    gateway = FakeModelGateway()
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
+    unprovisioned = CampusStudent(
+        student_number="20260002", display_name="Student Two", status=StudentStatus.ACTIVE
+    )
+    campus_session.add(unprovisioned)
+    campus_session.commit()
+
+    assert service.allows_model_calls(unprovisioned.id) is True
+
+
+class FlakyModelGateway(FakeModelGateway):
+    """A gateway that refuses one token, to prove one bad row cannot blank a page."""
+
+    def __init__(self, broken_token_id: str) -> None:
+        super().__init__()
+        self.broken_token_id = broken_token_id
+
+    def get_usage(self, token_id: str) -> GatewayUsage:
+        if token_id == self.broken_token_id:
+            raise ModelGatewayError("model gateway transport failed")
+        return super().get_usage(token_id)
+
+
+def _student_with_binding(session: Session, *, number: str, token_id: str) -> CampusStudent:
+    student = CampusStudent(student_number=number, display_name=number, status=StudentStatus.ACTIVE)
+    session.add(student)
+    session.flush()
+    session.add(CampusGatewayBinding(student_id=student.id, gateway_token_id=token_id))
+    session.commit()
+    return student
+
+
+def test_page_summaries_cover_every_bound_student(campus_session: Session):
+    gateway = FakeModelGateway()
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
+    first = campus_session.query(CampusStudent).one()
+    second = _student_with_binding(campus_session, number="20260002", token_id="43")
+
+    summaries = service.summaries_for([first.id, second.id])
+
+    assert set(summaries) == {first.id, second.id}
+    assert summaries[first.id].remaining_usd == Decimal("20.0000")
+
+
+def test_page_summaries_skip_students_without_a_binding(campus_session: Session):
+    gateway = FakeModelGateway()
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
+    bound = campus_session.query(CampusStudent).one()
+    unprovisioned = CampusStudent(
+        student_number="20260009", display_name="Unprovisioned", status=StudentStatus.ACTIVE
+    )
+    campus_session.add(unprovisioned)
+    campus_session.commit()
+
+    summaries = service.summaries_for([bound.id, unprovisioned.id])
+
+    assert set(summaries) == {bound.id}
+
+
+def test_page_summaries_omit_a_row_the_gateway_refused(campus_session: Session):
+    gateway = FlakyModelGateway(broken_token_id="43")
+    service = AllowanceService(session=campus_session, gateway=gateway, quota_units_per_usd=100)
+    working = campus_session.query(CampusStudent).one()
+    broken = _student_with_binding(campus_session, number="20260002", token_id="43")
+
+    summaries = service.summaries_for([working.id, broken.id])
+
+    assert set(summaries) == {working.id}
+
+
+def test_page_summaries_are_empty_for_an_empty_page(campus_session: Session):
+    service = AllowanceService(session=campus_session, gateway=FakeModelGateway(), quota_units_per_usd=100)
+
+    assert service.summaries_for([]) == {}

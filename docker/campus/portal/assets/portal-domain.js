@@ -154,7 +154,11 @@ export async function launchWorkspace(launchSession, navigate) {
   navigate('/apps')
 }
 
-/** @typedef {{ track: string, kind: string, chapters: number }} ExperimentTrackSummary */
+/**
+ * @typedef {{ id: string, title: string, summary?: string | null, view_url: string }} ManualChapterReference
+ * @typedef {{ track: string, kind: string, chapters: number,
+ *             chapter_list?: ManualChapterReference[] }} ExperimentTrackSummary
+ */
 /** @typedef {{ track: string, title: string, detail: string, manualAvailable: boolean, reservationsAvailable: boolean }} ExperimentTrackCard */
 
 /**
@@ -164,6 +168,7 @@ export async function launchWorkspace(launchSession, navigate) {
 const TRACK_TITLES = /** @type {Record<string, string>} */ ({
   'large-model': '大模型实验',
   'deep-learning': '深度学习实验',
+  'reference': '参考资料',
   agent: '智能体实验',
 })
 
@@ -185,13 +190,15 @@ export function experimentTrackCards(tracks, presentation = []) {
     const title = configured?.title || TRACK_TITLES[summary.track]
     if (!title)
       continue
-    const published = summary.chapters > 0
+    const chapters = summary.chapter_list || []
+    const published = chapters.length > 0 || summary.chapters > 0
     cards.push({
       track: summary.track,
       title,
       detail: `${configured?.description || (summary.kind === 'dify' ? '在 Dify 工作区完成，需预约时段' : '在自己的电脑上完成')}${published ? ` · ${summary.chapters} 份课件` : ''}`,
       manualAvailable: published,
       reservationsAvailable: summary.kind === 'dify',
+      chapters,
     })
   }
   return cards.sort((left, right) => {

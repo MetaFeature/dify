@@ -15,7 +15,7 @@ from models.campus import (
     StudentStatus,
 )
 from services.account_service import TokenPair
-from services.campus.errors import AccessSlotRequiredError
+from services.campus.errors import AccessSlotRequiredError, CampusAllowanceExhaustedError
 from services.campus.identity_source import UnconfiguredIdentitySource
 from services.campus.portal_session_service import PortalSessionService
 from services.campus.reservation_service import ReservationService
@@ -34,6 +34,16 @@ class FakeSessionIssuer:
 class UnusedPlatformProvisioner:
     def ensure_ready(self, student_id: str) -> None:
         raise AssertionError("session resolution must not provision a platform")
+
+
+class StubAllowanceGate:
+    def __init__(self, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[str] = []
+
+    def allows_model_calls(self, student_id: str) -> bool:
+        self.calls.append(student_id)
+        return self.allowed
 
 
 @pytest.fixture
@@ -66,7 +76,10 @@ def campus_session(sqlite_engine) -> Session:
         yield session
 
 
-def _real_session_composition(campus_session: Session) -> tuple[str, FakeSessionIssuer, SessionLaunchService]:
+def _real_session_composition(
+    campus_session: Session,
+    allowance_gate: StubAllowanceGate | None = None,
+) -> tuple[str, FakeSessionIssuer, SessionLaunchService]:
     student = campus_session.query(CampusStudent).one()
     portal_token = "portal-token"
     campus_session.add(
@@ -96,6 +109,7 @@ def _real_session_composition(campus_session: Session) -> tuple[str, FakeSession
     )
     campus_session.commit()
     issuer = FakeSessionIssuer()
+    gate = allowance_gate or StubAllowanceGate()
     service = SessionLaunchService(
         session=campus_session,
         portal_sessions=PortalSessionService(
@@ -105,12 +119,13 @@ def _real_session_composition(campus_session: Session) -> tuple[str, FakeSession
             session_ttl=timedelta(hours=3),
         ),
         reservations=ReservationService(session=campus_session, capacity=500, booking_days=7),
+        allowance_gate=gate,
         session_issuer=issuer,
     )
     return portal_token, issuer, service
 
 
-def test_public_session_composition_launches_inside_slot_even_with_zero_model_allowance(campus_session: Session):
+def test_public_session_composition_launches_inside_slot(campus_session: Session):
     portal_token, issuer, service = _real_session_composition(campus_session)
 
     tokens = service.launch(
@@ -133,4 +148,19 @@ def test_public_session_composition_fails_closed_outside_reserved_slot(campus_se
             ip_address=None,
         )
 
+    assert issuer.calls == []
+
+
+def test_public_session_composition_fails_closed_when_the_allowance_is_exhausted(campus_session: Session):
+    gate = StubAllowanceGate(allowed=False)
+    portal_token, issuer, service = _real_session_composition(campus_session, gate)
+
+    with pytest.raises(CampusAllowanceExhaustedError):
+        service.launch(
+            portal_token,
+            now=datetime(2026, 8, 11, 2, 30, tzinfo=UTC),
+            ip_address="10.0.0.8",
+        )
+
+    assert gate.calls == [campus_session.query(CampusStudent).one().id]
     assert issuer.calls == []

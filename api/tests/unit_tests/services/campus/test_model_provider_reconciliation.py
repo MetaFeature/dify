@@ -138,6 +138,12 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
 
     plugins = PluginManager()
     monkeypatch.setattr(CampusModelProviderReconciler, "_invalidate_provider_caches", lambda *_: None)
+    decrypted_cache_drops: list[str] = []
+    monkeypatch.setattr(
+        CampusModelProviderReconciler,
+        "_invalidate_decrypted_credentials_caches",
+        lambda _self, tenant_id, provider_model_ids: decrypted_cache_drops.extend(provider_model_ids),
+    )
 
     with Session(sqlite_engine, expire_on_commit=False) as session:
         legacy_credential = ProviderCredential(
@@ -242,6 +248,61 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
         assert second_summary.clean
         assert plugins.uninstalled == ["openai-installation", "deepseek-installation"]
         assert session.query(ProviderModelCredential).count() == 3
+
+        # Capability flags live in the credential payload, so a later reconcile
+        # must converge existing rows instead of skipping them.
+        existing = (
+            session.query(ProviderModelCredential)
+            .filter(ProviderModelCredential.model_name == "deepseek-v4-flash")
+            .one()
+        )
+        existing_config = json.loads(existing.encrypted_config)
+        existing_config["vision_support"] = "no_support"
+        existing_config["stream_mode_delimiter"] = "\n\n"
+        existing.encrypted_config = json.dumps(existing_config)
+        session.commit()
+
+        capabilities = CampusModelProviderReconciler(
+            session=session,
+            target_provider=TARGET_PROVIDER,
+            credential_name="Campus managed",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models(
+                "llm:deepseek-v4-flash,llm:glm-5.3-flash,speech2text:qwen-audio-3.0-asr-flash"
+            ),
+            vision_models=("deepseek-v4-flash",),
+            document_models=("deepseek-v4-flash",),
+            plugin_manager=plugins,
+        )
+
+        drops_before = len(decrypted_cache_drops)
+        assert capabilities.reconcile(["tenant-1"]).clean
+
+        converged = json.loads(
+            session.query(ProviderModelCredential)
+            .filter(ProviderModelCredential.model_name == "deepseek-v4-flash")
+            .one()
+            .encrypted_config
+        )
+        assert converged["vision_support"] == "support"
+        assert converged["document_support"] == "support"
+        assert converged["audio_support"] == "no_support"
+        # Plugin-managed keys survive the campus-owned field rewrite.
+        assert converged["stream_mode_delimiter"] == "\n\n"
+
+        # Dify caches decrypted credentials per provider model id for 24h, so a
+        # converging reconcile must drop every target model's entry.
+        assert sorted(decrypted_cache_drops[drops_before:]) == sorted(
+            provider_model.id for provider_model in session.query(ProviderModel).all()
+        )
+
+        non_llm = json.loads(
+            session.query(ProviderModelCredential)
+            .filter(ProviderModelCredential.model_name == "qwen-audio-3.0-asr-flash")
+            .one()
+            .encrypted_config
+        )
+        assert "vision_support" not in non_llm
 
         workflow.graph = json.dumps(
             {

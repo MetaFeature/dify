@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from models.campus import CampusStudent, CampusWorkspaceBinding
 from services.account_service import TokenPair
-from services.campus.domain import AccessDecision
-from services.campus.errors import AccessSlotRequiredError, CampusProvisioningError
+from services.campus.domain import AccessDecision, AllowanceGate
+from services.campus.errors import AccessSlotRequiredError, CampusAllowanceExhaustedError, CampusProvisioningError
 
 
 class PortalSessionResolver(Protocol):
@@ -28,6 +28,7 @@ class SessionLaunchService:
     _session: Session
     _portal_sessions: PortalSessionResolver
     _reservations: AccessDecisionService
+    _allowance_gate: AllowanceGate
     _session_issuer: SessionIssuer
 
     def __init__(
@@ -36,11 +37,13 @@ class SessionLaunchService:
         session: Session,
         portal_sessions: PortalSessionResolver,
         reservations: AccessDecisionService,
+        allowance_gate: AllowanceGate,
         session_issuer: SessionIssuer,
     ) -> None:
         self._session = session
         self._portal_sessions = portal_sessions
         self._reservations = reservations
+        self._allowance_gate = allowance_gate
         self._session_issuer = session_issuer
 
     def access_check(self, raw_token: str, *, now: datetime) -> AccessDecision:
@@ -49,6 +52,10 @@ class SessionLaunchService:
 
     def launch(self, raw_token: str, *, now: datetime, ip_address: str | None) -> TokenPair:
         student = self._portal_sessions.resolve(raw_token, now=now)
+        # An exhausted allowance also closes the door on an already-issued portal
+        # session, so a student cannot re-enter Dify after spending everything.
+        if not self._allowance_gate.allows_model_calls(student.id):
+            raise CampusAllowanceExhaustedError(student.student_number)
         decision = self._reservations.access_decision(student.id, now=now)
         if not decision.allowed:
             raise AccessSlotRequiredError("an active confirmed reservation is required")

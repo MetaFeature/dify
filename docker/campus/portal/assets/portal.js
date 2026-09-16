@@ -37,15 +37,10 @@ const elements = {
   requiredPasswordForm: requiredElement('#required-password-form', HTMLFormElement),
   requiredPasswordMessage: requiredElement('#required-password-message', HTMLElement),
   tracksView: requiredElement('#tracks-view', HTMLElement),
-  manualView: requiredElement('#manual-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
   trackList: requiredElement('#track-list', HTMLElement),
   tracksMessage: requiredElement('#tracks-message', HTMLElement),
   tracksRefresh: requiredElement('#tracks-refresh', HTMLButtonElement),
-  manualTitle: requiredElement('#manual-title', HTMLElement),
-  manualChapters: requiredElement('#manual-chapters', HTMLElement),
-  manualBody: requiredElement('#manual-body', HTMLElement),
-  manualBack: requiredElement('#manual-back', HTMLButtonElement),
   dashboardBack: requiredElement('#dashboard-back', HTMLButtonElement),
   loginForm: requiredElement('#login-form', HTMLFormElement),
   loginError: requiredElement('#login-error', HTMLElement),
@@ -82,9 +77,18 @@ let portalPresentation = null
 void bootstrapPortal()
 
 async function bootstrapPortal() {
-  await loadPortalPresentation()
-  if (new URLSearchParams(window.location.search).get('from') === 'manual')
-    await restoreTracksFromManual()
+  try {
+    await loadPortalPresentation()
+    // Always ask the API who we are. A reload — or a Back/Forward — must not
+    // drop a live session just because the URL carries no marker.
+    await restoreSession()
+  }
+  finally {
+    // Only now is the answer known. `booting` kept the sign-in form out of the
+    // first paint; dropping it any earlier is what made a refresh flash the
+    // login page at students whose session was perfectly valid.
+    document.body.classList.remove('booting')
+  }
 }
 
 async function loadPortalPresentation() {
@@ -97,22 +101,48 @@ async function loadPortalPresentation() {
   }
 }
 
-async function restoreTracksFromManual() {
+async function restoreSession() {
   try {
     const summaries = await api.listExperimentTracks()
     elements.loginView.hidden = true
     elements.requiredPasswordView.hidden = true
-    elements.manualView.hidden = true
     elements.dashboardView.hidden = true
     elements.tracksView.hidden = false
     hideMessage(elements.tracksMessage)
     renderTrackCards(experimentTrackCards(summaries, portalPresentation?.tracks || []))
-    window.history.replaceState(null, '', '/portal/')
+    // Straight to the chooser, with the URL tidied and no extra history entry.
+    rememberView('tracks', { replace: true })
   }
   catch {
     // A missing or expired session keeps the normal login page visible.
   }
 }
+
+/**
+ * Record which view the current history entry stands for.
+ *
+ * Without one entry per view, Back leaves the portal altogether — which is
+ * exactly what students read as being signed out.
+ *
+ * @param {'tracks' | 'dashboard'} view @param {{ replace?: boolean }} [options]
+ */
+function rememberView(view, { replace = false } = {}) {
+  if (window.history.state?.view === view)
+    return
+  const entry = { view }
+  if (replace)
+    window.history.replaceState(entry, '', '/portal/')
+  else
+    window.history.pushState(entry, '', '/portal/')
+}
+
+// Back and Forward move between the portal's own views.
+window.addEventListener('popstate', (event) => {
+  if (event.state?.view === 'dashboard')
+    void showReservations({ replace: true })
+  else
+    void showTracks({ replace: true })
+})
 
 function campusNow() {
   return campusClock()
@@ -305,8 +335,7 @@ async function refreshDashboard() {
     if (error instanceof CampusApiError && error.status === 401) {
       elements.dashboardView.hidden = true
       elements.tracksView.hidden = true
-      elements.manualView.hidden = true
-      elements.loginView.hidden = false
+        elements.loginView.hidden = false
       showMessage(elements.loginError, messageFor(error), true)
       return
     }
@@ -341,11 +370,16 @@ async function loadSlots() {
 
 /** @param {import('./campus-api.js').Dashboard} dashboard */
 function renderDashboard({ access, reservations, allowance }) {
+  // An exhausted allowance closes only the Dify workspace. The reservation
+  // centre, the manuals and signing in stay open, so this disables the launch
+  // button rather than the page, and the reason is spelled out on the button.
+  const exhausted = !allowance.model_calls_enabled
   elements.accessState.textContent = access.allowed ? '可进入' : '未开放'
   elements.accessDetail.textContent = access.allowed && access.ends_at ? `访问权限至 ${formatTime(access.ends_at)}` : '需在已确认的预约时段内进入'
-  elements.launchButton.disabled = !access.allowed
+  elements.launchButton.disabled = !access.allowed || exhausted
+  elements.launchButton.title = exhausted ? '模型额度已用尽，无法进入 Dify 工作区' : ''
   elements.allowanceRemaining.textContent = allowance.remaining_usd
-  elements.allowanceDetail.textContent = `累计使用 $${allowance.used_usd} · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
+  elements.allowanceDetail.textContent = `累计使用 ${allowance.used_usd} 元 · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
   const unfinished = reservations.find(item => item.status === 'confirmed' || item.status === 'waitlisted')
   elements.reservationState.textContent = unfinished ? statusLabel(unfinished.status) : '暂无'
   elements.reservationDetail.textContent = unfinished ? `${formatDateTime(unfinished.starts_at)} – ${formatTime(unfinished.ends_at)}` : messages.reservations.noneDetail
@@ -507,13 +541,13 @@ function requiredElement(selector, type) {
   return element
 }
 
-/** Show the experiment selection page and load the three tracks. */
-async function showTracks() {
-  elements.manualView.hidden = true
+/** Show the experiment selection page and load every track. */
+async function showTracks({ replace = false } = {}) {
   elements.dashboardView.hidden = true
   elements.tracksView.hidden = false
   hideMessage(elements.tracksMessage)
   elements.trackList.textContent = '正在读取实验列表…'
+  rememberView('tracks', { replace })
   try {
     renderTrackCards(experimentTrackCards(await api.listExperimentTracks(), portalPresentation?.tracks || []))
   }
@@ -523,7 +557,14 @@ async function showTracks() {
   }
 }
 
-/** @param {import('./portal-domain.js').ExperimentTrackCard[]} cards */
+/**
+ * One row per experiment. The manual titles are the administrator's own
+ * chapter list, laid out in two columns, and each one is a plain link to the
+ * byte-preserved HTML on the dedicated manual origin — there is no reader
+ * page in the portal any more.
+ *
+ * @param {import('./portal-domain.js').ExperimentTrackCard[]} cards
+ */
 function renderTrackCards(cards) {
   if (!cards.length) {
     elements.trackList.textContent = '暂无可用实验。'
@@ -539,101 +580,135 @@ function renderTrackCards(cards) {
     const detail = document.createElement('p')
     detail.className = 'muted'
     detail.textContent = card.detail
-    const actions = document.createElement('div')
-    actions.className = 'row-actions'
-    if (card.reservationsAvailable)
-      actions.append(trackAction(card.track, 'reservations', '进入预约中心', false))
-    actions.append(trackAction(card.track, 'manual', '查看实验手册与课件', !card.manualAvailable))
-    item.append(heading, detail, actions)
+    item.id = `track-${card.track}`
+    const actions = trackActions(card)
+    // The reservation button belongs right under the description line,
+    // before the chapter titles, not after them.
+    item.append(heading, detail, ...(actions ? [actions] : []), chapterLinks(card))
     list.append(item)
   }
   elements.trackList.replaceChildren(list)
 }
 
-function trackAction(track, destination, label, disabled) {
+/** The chapter titles, two per row, each linking at the manual origin. */
+function chapterLinks(card) {
+  const grid = document.createElement('ul')
+  grid.className = 'chapter-links'
+  for (const chapter of card.chapters) {
+    const item = document.createElement('li')
+    const link = document.createElement('a')
+    link.className = 'chapter-link'
+    link.href = chapter.view_url
+    const title = document.createElement('span')
+    title.className = 'chapter-link-title'
+    title.textContent = chapter.title
+    link.append(title)
+    // The teaser is derived from the document itself; a document without
+    // readable text simply has none.
+    if (chapter.summary) {
+      const summary = document.createElement('span')
+      summary.className = 'chapter-link-summary'
+      summary.textContent = chapter.summary
+      link.append(summary)
+    }
+    item.append(link)
+    grid.append(item)
+  }
+  if (!card.chapters.length) {
+    const empty = document.createElement('li')
+    empty.className = 'chapter-empty'
+    empty.textContent = card.reservationsAvailable ? '在预约中心进入 Dify 工作区' : '还没有发布内容'
+    grid.append(empty)
+  }
+  return grid
+}
+
+/** The reservation shortcut, or null when the track has no such destination. */
+function trackActions(card) {
+  if (!card.reservationsAvailable)
+    return null
+  const actions = document.createElement('div')
+  actions.className = 'row-actions'
   const action = document.createElement('button')
   action.type = 'button'
-  action.className = destination === 'reservations' ? 'primary' : 'secondary'
-  action.textContent = label
-  action.disabled = disabled
-  action.dataset.track = track
-  action.dataset.destination = destination
-  return action
+  action.className = 'primary'
+  action.textContent = '进入预约中心'
+  action.dataset.destination = 'reservations'
+  actions.append(action)
+  return actions
 }
+
+//: How long the jumped-to card's text stays bright before it eases back.
+const FLASH_MS = 1600
+let flashingCard = null
+let flashTimer = 0
+
+/**
+ * Brighten the text inside the card that was jumped to, then let it ease back.
+ *
+ * Every experiment is handled the same way — heading, description and chapter
+ * titles all brighten together. Re-clicking restarts the brightening instead of
+ * looking inert, so the class is dropped and the layout re-read before it goes
+ * back on. Only one card is ever bright at a time.
+ *
+ * @param {HTMLElement} card
+ */
+function flashTrackCard(card) {
+  if (flashingCard && flashingCard !== card)
+    flashingCard.classList.remove('is-flashing')
+  window.clearTimeout(flashTimer)
+  card.classList.remove('is-flashing')
+  void card.clientWidth
+  card.classList.add('is-flashing')
+  flashingCard = card
+  flashTimer = window.setTimeout(() => {
+    card.classList.remove('is-flashing')
+    if (flashingCard === card)
+      flashingCard = null
+  }, FLASH_MS)
+}
+
+/**
+ * Centre an experiment card, which is where its name in the grey line points.
+ *
+ * @param {string} track
+ */
+function centreTrackCard(track) {
+  const card = document.getElementById(`track-${track}`)
+  if (card)
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  return card
+}
+
+// Delegated on the document: the cards are re-rendered on every refresh
+// while the grey line is static markup.
+document.addEventListener('click', (event) => {
+  const link = event.target instanceof Element ? event.target.closest('[data-jump-track]') : null
+  if (!link)
+    return
+  event.preventDefault()
+  const card = centreTrackCard(link.getAttribute('data-jump-track') || '')
+  if (card)
+    flashTrackCard(card)
+})
 
 elements.trackList.addEventListener('click', async (event) => {
   const button = event.target instanceof Element ? event.target.closest('button[data-destination]') : null
   if (!(button instanceof HTMLButtonElement) || button.disabled)
     return
-  if (button.dataset.destination === 'reservations') {
+  if (button.dataset.destination === 'reservations')
     await showReservations()
-    return
-  }
-  await showManual(button.dataset.track || '', button.closest('.track-card')?.querySelector('h2')?.textContent || '实验手册')
 })
 
 elements.tracksRefresh.addEventListener('click', () => { void showTracks() })
-elements.manualBack.addEventListener('click', () => { void showTracks() })
 elements.dashboardBack.addEventListener('click', () => { void showTracks() })
 
 /** Show the reservation centre, which is the large-model track's destination. */
-async function showReservations() {
+async function showReservations({ replace = false } = {}) {
   elements.tracksView.hidden = true
-  elements.manualView.hidden = true
   elements.dashboardView.hidden = false
   hideMessage(elements.message)
+  rememberView('dashboard', { replace })
   await refreshDashboard()
 }
 
-/**
- * Show one track's manual.
- *
- * The API returns only the ordered document list. Each filename opens the
- * byte-preserved HTML on the dedicated manual origin.
- *
- * @param {string} track
- * @param {string} title
- */
-async function showManual(track, title) {
-  elements.tracksView.hidden = true
-  elements.dashboardView.hidden = true
-  elements.manualView.hidden = false
-  elements.manualTitle.textContent = title
-  elements.manualChapters.textContent = ''
-  elements.manualBody.hidden = false
-  elements.manualBody.textContent = '正在读取实验手册…'
-  let chapters
-  try {
-    chapters = await api.labManual(track)
-  }
-  catch (error) {
-    elements.manualBody.textContent = messageFor(error)
-    return
-  }
-  if (!chapters.length) {
-    elements.manualBody.textContent = '这本实验手册还没有发布章节。'
-    return
-  }
-  const nav = document.createElement('ol')
-  nav.className = 'chapter-list'
-  for (const chapter of chapters) {
-    const item = document.createElement('li')
-    const link = document.createElement('a')
-    link.className = 'manual-open'
-    link.href = chapter.content_url
-    link.target = '_blank'
-    link.rel = 'noopener'
-    const documentTitle = document.createElement('span')
-    documentTitle.className = 'manual-open-title'
-    documentTitle.textContent = chapter.title
-    const filename = document.createElement('small')
-    filename.textContent = chapter.original_filename
-    const openLabel = document.createElement('strong')
-    openLabel.textContent = '打开 HTML 手册'
-    link.append(documentTitle, filename, openLabel)
-    item.append(link)
-    nav.append(item)
-  }
-  elements.manualChapters.replaceChildren(nav)
-  elements.manualBody.hidden = true
-}

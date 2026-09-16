@@ -23,7 +23,7 @@ class CampusConfig(BaseSettings):
         default=None, description="Hidden Dify owner account for student workspaces"
     )
     CAMPUS_DEFAULT_ALLOWANCE_USD: Decimal = Field(
-        default=Decimal(20), ge=Decimal(0), description="Model allowance granted to each new student, in US dollars"
+        default=Decimal(10), ge=Decimal(0), description="Model allowance granted to each new student, in US dollars"
     )
     CAMPUS_RESERVATION_CAPACITY: int = Field(default=500, ge=1)
     CAMPUS_BOOKING_DAYS: int = Field(default=7, ge=1, le=31)
@@ -67,3 +67,24 @@ class CampusConfig(BaseSettings):
         ),
     )
     CAMPUS_MODEL_PROVIDER_API_PROTOCOL: ModelApiProtocol = "chat"
+    # Comma-separated gateway LLM names that accept image input. The plugin
+    # carries vision and audio support as credential fields, so a model is only
+    # advertised as multimodal when the gateway route actually serves it.
+    CAMPUS_MODEL_PROVIDER_VISION_MODELS: str = Field(default="")
+    CAMPUS_MODEL_PROVIDER_AUDIO_MODELS: str = Field(default="")
+    # Comma-separated gateway LLM names that accept document attachments. Dify
+    # filters non-image attachments out at the host layer unless the model
+    # advertises ``document`` in its feature list, so PDF/Word uploads are
+    # silently dropped for models left out of this list.
+    CAMPUS_MODEL_PROVIDER_DOCUMENT_MODELS: str = Field(default="")
+    # Platform defaults for the per-student knowledge limits. An administrator
+    # may replace both from the Campus administration portal; these values only
+    # apply while no setting row exists.
+    # Directory the Campus API writes uploaded login pages to; the portal
+    # container mounts the same directory read-only as /custom.
+    CAMPUS_PORTAL_LOGIN_STORAGE_DIR: str = "/app/api/storage/campus-portal-login"
+
+    # Longest voice clip a student may upload, in seconds. 0 disables the limit.
+    CAMPUS_AUDIO_MAX_DURATION_SECONDS: int = Field(default=60, ge=0)
+    CAMPUS_KNOWLEDGE_MAX_DATASETS_PER_WORKSPACE: int = Field(default=1, ge=1)
+    CAMPUS_KNOWLEDGE_MAX_DOCUMENTS_PER_DATASET: int = Field(default=5, ge=1)

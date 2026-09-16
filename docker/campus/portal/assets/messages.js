@@ -14,6 +14,7 @@ export const messages = Object.freeze({
   errors: {
     'bad-request': '请求内容有误，请检查后重试。',
     busy: '服务器当前负载较高，暂时无法补约本时段，请稍后重试。',
+    campus_allowance_exhausted: '本学期的模型额度已用完，暂时无法登录。请联系管理员。',
     conflict: '当前操作与已有预约冲突，请刷新后重试。',
     duplicate_slot_claim: '你已经预约了这个时段，无需重复预约。',
     forbidden: '当前预约时段尚未生效。',

@@ -40,7 +40,7 @@ test('the learning-document tab offers all tracks in the required order', () => 
   const panel = page.slice(page.indexOf('id="tab-manuals"'), page.indexOf('id="tab-gateway"'))
   const options = [...panel.matchAll(/<option value="([a-z-]+)"/g)].map(match => match[1])
 
-  assert.deepEqual(options, ['large-model', 'agent', 'deep-learning'])
+  assert.deepEqual(options, ['large-model', 'agent', 'deep-learning', 'reference'])
 })
 
 test('the learning-document tab explains byte preservation and origin isolation', () => {
@@ -84,4 +84,78 @@ test('the raw-file form does not offer content rewriting helpers', () => {
 
   assert.match(panel, /id="manual-file"/)
   assert.doesNotMatch(panel, /manual-html|manual-image/)
+})
+
+test('the slot tab says a unified capacity only rewrites slots that have not started', () => {
+  // The unified value overwrites per-slot exceptions, so the panel has to name
+  // the slots it touches and the ones it leaves alone before an administrator
+  // presses save.
+  const panel = page.slice(page.indexOf('id="tab-slots"'), page.indexOf('id="tab-students"'))
+
+  assert.match(panel, /id="slot-capacity-input"/)
+  assert.match(panel, /id="slot-capacity-restore"/)
+  assert.match(panel, /尚未开始/)
+  assert.match(panel, /覆盖/)
+  assert.match(panel, /进行中与已结束的时段不受影响/)
+})
+
+test('the default allowance panel names who a save reaches', () => {
+  // Lowering the default must not look like it takes quota away from students
+  // who already hold a model account, so the panel says so before the save.
+  const panel = page.slice(page.indexOf('id="tab-students"'), page.indexOf('id="tab-knowledge"'))
+
+  assert.match(panel, /id="default-allowance-input"/)
+  assert.match(panel, /id="default-allowance-save"/)
+  assert.match(panel, /id="default-allowance-restore"/)
+  assert.match(panel, /尚未开通模型账号/)
+  assert.match(panel, /已经开通的用户额度保持不变/)
+})
+
+test('allowance and password edit in a row panel, not a browser dialog', () => {
+  const scriptSource = script.slice(script.indexOf("else if (action === 'reset-password')"), script.indexOf("else if (action === 'rename')"))
+
+  assert.match(scriptSource, /openRowPanel\(row, passwordPanel\(studentNumber\)\)/)
+  assert.match(scriptSource, /openRowPanel\(row, allowancePanel\(studentNumber\)\)/)
+  assert.doesNotMatch(scriptSource, /window\.prompt/)
+})
+
+test('a confirmed panel reloads the roster so the row shows the new state', () => {
+  const submit = script.slice(script.indexOf('async function submitPanel('))
+  const body = submit.slice(0, submit.indexOf('\n}\n'))
+
+  assert.match(body, /await action\(\)/)
+  // The reload is what writes the new balance or password state back into the row.
+  assert.match(body, /await loadStudents\(\)/)
+  // A rejected submit keeps the panel open with the server's reason.
+  assert.match(body, /catch \(error\) \{[\s\S]{0,120}?showMessage\(messageFor\(error\), true\)/)
+})
+
+test('the row panels carry the fields the API needs', () => {
+  const allowance = script.slice(script.indexOf('function allowancePanel('), script.indexOf('/** The inline form for resetting'))
+  const password = script.slice(script.indexOf('function passwordPanel('), script.indexOf('/** @param {string} title'))
+
+  assert.match(allowance, /name="delta"/)
+  assert.match(allowance, /name="reason"/)
+  assert.match(allowance, /delta_usd: delta/)
+  assert.match(password, /name="password"/)
+  // Both name their own cancel, and nothing opens a second panel at once.
+  const panelForm = script.slice(script.indexOf('function panelForm('))
+  assert.match(panelForm, /data-panel-cancel/)
+  assert.match(script, /function openRowPanel\(sourceRow, content\) \{[\s\S]{0,80}?closeRowPanel\(\)/)
+})
+
+test('the gateway tab offers a usage report at every granularity, plus Excel', () => {
+  const panel = page.slice(page.indexOf('id="tab-gateway"'))
+
+  for (const granularity of ['day', 'month', 'year']) {
+    assert.match(panel, new RegExp(`data-report-page="${granularity}"`))
+    assert.match(panel, new RegExp(`data-report-xlsx="${granularity}"`))
+  }
+  assert.match(panel, /三张表/)
+  // A plain link cannot carry the console CSRF header, so the tab must not
+  // offer one: the buttons fetch the report and open the blob instead.
+  assert.doesNotMatch(panel, /href="\/console\/api\//)
+  assert.match(script, /api\.usageReportPage\(/)
+  assert.match(script, /api\.usageReportWorkbook\(/)
+  assert.match(script, /function openBlob\(/)
 })

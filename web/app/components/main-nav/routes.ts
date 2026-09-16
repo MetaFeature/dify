@@ -1,5 +1,3 @@
-import { buildIntegrationPath } from '@/app/components/integrations/routes'
-
 type MainNavRouteVisibility = 'all' | 'notDatasetOperator' | 'appDeployEditor'
 
 const DATASET_COLLECTION_ROUTES = new Set(['create', 'create-from-pipeline', 'connect'])
@@ -73,16 +71,8 @@ export const MAIN_NAV_ROUTES = [
     activeIcon: 'i-custom-vender-main-nav-knowledge-active',
     visibility: 'all',
   },
-  {
-    key: 'integrations',
-    href: buildIntegrationPath('provider'),
-    labelKey: 'mainNav.integrations',
-    active: (path: string) =>
-      isPathUnderRoute(path, '/integrations') || isPathUnderRoute(path, '/tools'),
-    icon: 'i-custom-vender-main-nav-integrations',
-    activeIcon: 'i-custom-vender-main-nav-integrations-active',
-    visibility: 'all',
-  },
+  // The Campus deployment hides the integrations entry: students must not reach
+  // the tool/custom-endpoint surfaces from the workspace navigation.
   {
     key: 'marketplace',
     href: '/marketplace',

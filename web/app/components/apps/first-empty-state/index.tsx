@@ -23,7 +23,6 @@ type EmptyCreateAction = {
 type Props = {
   onCreateBlank: () => void
   onCreateLearnDify?: (app: App) => void
-  onCreateTemplate: () => void
   onImportDSL: () => void
   onTryLearnDify?: (params: TryAppSelection) => void
   showLearnDify: boolean
@@ -32,7 +31,6 @@ type Props = {
 function FirstEmptyState({
   onCreateBlank,
   onCreateLearnDify,
-  onCreateTemplate,
   onImportDSL,
   onTryLearnDify,
   showLearnDify,
@@ -40,13 +38,6 @@ function FirstEmptyState({
   const { t } = useTranslation()
 
   const actions: EmptyCreateAction[] = [
-    {
-      id: 'template',
-      icon: <span aria-hidden className="i-ri-function-add-line size-4" />,
-      title: t(($) => $['newApp.startFromTemplate'], { ns: 'app' }),
-      description: t(($) => $['firstEmpty.templateDescription'], { ns: 'app' }),
-      onClick: onCreateTemplate,
-    },
     {
       id: 'blank',
       icon: <span aria-hidden className="i-ri-add-box-line size-4" />,
@@ -89,7 +80,7 @@ function FirstEmptyState({
             </div>
             <div className="flex w-full flex-col gap-2">
               <div className="flex flex-col gap-2">
-                {actions.slice(0, 2).map((action) => (
+                {actions.map((action) => (
                   <FirstEmptyActionCard
                     key={action.id}
                     description={action.description}
@@ -100,20 +91,6 @@ function FirstEmptyState({
                   />
                 ))}
               </div>
-              <div className="flex items-center gap-2 text-text-tertiary">
-                <div className="h-px min-w-0 flex-1 bg-linear-to-r from-background-body/0 to-divider-regular" />
-                <span className="system-xs-medium-uppercase uppercase">
-                  {t(($) => $['firstEmpty.or'], { ns: 'app' })}
-                </span>
-                <div className="h-px min-w-0 flex-1 bg-linear-to-r from-divider-regular to-background-body/0" />
-              </div>
-              <FirstEmptyActionCard
-                description={actions[2]!.description}
-                icon={actions[2]!.icon}
-                onClick={actions[2]!.onClick}
-                title={actions[2]!.title}
-                visualStyle="list"
-              />
             </div>
           </div>
         </section>

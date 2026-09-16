@@ -8,6 +8,10 @@
 **/*.pyc
 **/.mypy_cache
 **/.ruff_cache
+**/.venv
+# Runtime data must never enter the build context: volumes/ is a symlink to the
+# bulk disk, and a leftover volumes.* copy would be root-owned and unreadable.
+docker/volumes*
 .git
 .github
 *.md

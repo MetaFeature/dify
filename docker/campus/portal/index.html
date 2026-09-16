@@ -4,15 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <title>南京工程学院 · AI 实践平台</title>
+    <title>南京工程学院 · AI 应用平台</title>
     <link rel="stylesheet" href="./assets/portal.css">
+    <!-- `booting` keeps the sign-in form out of the first paint: the portal only
+         learns whether this visitor has a session after an API round trip, and
+         showing the form before that answer flashed the login page at students
+         who were already signed in. Without modules nothing would ever remove
+         the class, so that case gets the form back — from a stylesheet, not a
+         <style> block, because `style-src 'self'` refuses inline CSS. -->
+    <noscript><link rel="stylesheet" href="./assets/portal-noscript.css"></noscript>
   </head>
-  <body>
+  <body class="booting">
     <main class="shell">
       <header class="masthead">
-        <a class="brand" href="/portal/" aria-label="南京工程学院 AI 实践平台首页">
+        <a class="brand" href="/portal/" aria-label="南京工程学院 AI 应用平台首页">
           <span class="brand-mark" aria-hidden="true">NJIT</span>
-          <span><strong>AI 实践平台</strong><small>南京工程学院</small></span>
+          <span><strong>AI 应用平台</strong><small>南京工程学院</small></span>
         </a>
       </header>
 
@@ -25,11 +32,11 @@
         </article>
         <form id="login-form" class="panel login-panel">
           <div>
-            <p class="eyebrow">STUDENT ACCESS</p>
-            <h2>学生登录</h2>
-            <p class="muted">请使用管理员提供的学生账号和密码。</p>
+            <p class="eyebrow">USER ACCESS</p>
+            <h2>用户登录</h2>
+            <p class="muted">请使用管理员提供的用户账号和密码。</p>
           </div>
-          <label>账号<input id="student-number" name="studentNumber" autocomplete="username" placeholder="请输入学生账号" required maxlength="64"></label>
+          <label>账号<input id="student-number" name="studentNumber" autocomplete="username" placeholder="请输入用户账号" required maxlength="64"></label>
           <label>密码<input id="login-code" name="loginCode" type="password" autocomplete="current-password" placeholder="请输入密码" required maxlength="255"></label>
           <button class="primary" type="submit">登录并进入预约中心</button>
           <p id="login-error" class="message error" role="alert" hidden></p>
@@ -49,22 +56,11 @@
 
       <section id="tracks-view" class="tracks" hidden>
         <div class="welcome-row">
-          <div><p class="eyebrow">EXPERIMENTS</p><h1>选择实验</h1><p class="muted">大模型实验在平台的 Dify 工作区完成；智能体实验和深度学习实验在自己的电脑上完成。三个实验均可查看实验手册与课件。</p></div>
+          <div><p class="eyebrow">EXPERIMENTS</p><h1>选择实验</h1><p class="muted"><a class="track-jump" href="#track-large-model" data-jump-track="large-model">大模型实验</a>在平台的 Dify 工作区完成；<a class="track-jump" href="#track-agent" data-jump-track="agent">智能体实验</a>和<a class="track-jump" href="#track-deep-learning" data-jump-track="deep-learning">深度学习实验</a>在自己的电脑上完成。</p></div>
           <button id="tracks-refresh" class="secondary" type="button">刷新</button>
         </div>
         <div id="track-list" class="track-list" aria-live="polite"></div>
         <p id="tracks-message" class="message" role="status" hidden></p>
-      </section>
-
-      <section id="manual-view" class="manual" hidden>
-        <div class="welcome-row">
-          <div><p class="eyebrow">LEARNING DOCUMENTS</p><h1 id="manual-title">实验手册与课件</h1></div>
-          <button id="manual-back" class="secondary" type="button">返回实验选择</button>
-        </div>
-        <div class="manual-layout">
-          <nav id="manual-chapters" class="manual-chapters" aria-label="章节"></nav>
-          <article id="manual-body" class="panel manual-body" aria-live="polite"></article>
-        </div>
       </section>
 
       <section id="dashboard-view" class="dashboard" hidden>
@@ -78,7 +74,7 @@
 
         <div class="stats-grid">
           <article class="stat-card"><span>当前访问</span><strong id="access-state">未开放</strong><small id="access-detail">需在已确认的预约时段内进入</small></article>
-          <article class="stat-card accent"><span>模型余额</span><strong><i>$</i><span id="allowance-remaining">—</span></strong><small id="allowance-detail">正在读取使用情况</small></article>
+          <article class="stat-card accent"><span>模型余额</span><strong><span id="allowance-remaining">—</span><i>元</i></strong><small id="allowance-detail">正在读取使用情况</small></article>
           <article class="stat-card"><span>当前预约</span><strong id="reservation-state">—</strong><small id="reservation-detail">正在读取预约状态</small><small id="reservation-countdown" class="countdown" hidden></small></article>
         </div>
 

@@ -182,6 +182,9 @@ def test_model_only_configurator_creates_openai_compatible_model_credentials(sql
                 "mode": "chat",
                 "api_type": "chat_completions",
                 "context_size": "4096",
+                "vision_support": "no_support",
+                "audio_support": "no_support",
+                "document_support": "no_support",
             }
             assert credential_name == "Campus managed"
             events.append("model-credential-created")
@@ -250,7 +253,15 @@ def test_model_only_configurator_supplies_required_fields_for_each_model_type(sq
 
     common = {"api_key": "managed-secret", "endpoint_url": "http://model-gateway:3000/v1"}
     assert credentials_by_type == {
-        "llm": {**common, "mode": "chat", "api_type": "chat_completions", "context_size": "4096"},
+        "llm": {
+            **common,
+            "mode": "chat",
+            "api_type": "chat_completions",
+            "context_size": "4096",
+            "vision_support": "no_support",
+            "audio_support": "no_support",
+            "document_support": "no_support",
+        },
         "text-embedding": {**common, "max_chunks": "1", "context_size": "4096"},
         "rerank": {**common, "context_size": "4096"},
     }
@@ -918,3 +929,44 @@ def test_configuration_is_scoped_to_the_workspace_being_asked_about(sqlite_engin
 
         configurator = _configurator(session, "llm:deepseek-v4-flash,text-embedding:bge-m3")
         assert configurator.needs_configuration("tenant-2")
+
+
+def test_llm_credential_advertises_image_input_only_for_configured_models(sqlite_engine) -> None:
+    ProviderCredential.metadata.create_all(
+        sqlite_engine,
+        tables=[ProviderCredential.__table__, ProviderModelCredential.__table__],
+    )
+    credentials_by_type: dict[str, dict[str, str]] = {}
+
+    class ProviderService:
+        def create_model_credential(self, *, model_type: str, credentials: dict[str, str], **_: object) -> None:
+            credentials_by_type[model_type] = credentials
+
+        def update_model_credential(self, **_: object) -> None:
+            raise AssertionError("new workspace must create its model credentials")
+
+    with Session(sqlite_engine) as session:
+        configurator = DifyModelConfigurator(
+            session=session,
+            provider="langgenius/openai_api_compatible/openai_api_compatible",
+            provider_plugin_unique_identifier="langgenius/openai_api_compatible:0.0.66@checksum",
+            credential_name="Campus managed",
+            credential_scope="model",
+            api_key_field="api_key",
+            base_url_field="endpoint_url",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4.1-flash"),
+            api_protocol="chat",
+            vision_models=("deepseek-v4.1-flash",),
+            document_models=("deepseek-v4.1-flash",),
+            plugin_installer=SimpleNamespace(ensure_installed=lambda *_: None),
+            provider_service=ProviderService(),
+        )
+
+        configurator.configure("tenant-1", "managed-secret")
+
+    # The gateway serves image and document input for this model but rejects
+    # audio parts, so only vision and document may be advertised to the plugin.
+    assert credentials_by_type["llm"]["vision_support"] == "support"
+    assert credentials_by_type["llm"]["audio_support"] == "no_support"
+    assert credentials_by_type["llm"]["document_support"] == "support"

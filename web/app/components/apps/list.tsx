@@ -275,7 +275,6 @@ function List({ controlRefreshList = 0, onCreateLearnDify, onTryLearnDify }: Pro
           <FirstEmptyState
             onCreateBlank={openCreateBlankModal}
             onCreateLearnDify={onCreateLearnDify}
-            onCreateTemplate={openCreateTemplateDialog}
             onImportDSL={openCreateFromDSLModal}
             onTryLearnDify={onTryLearnDify}
             showLearnDify={systemFeatures.enable_learn_app}

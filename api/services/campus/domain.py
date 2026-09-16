@@ -59,6 +59,43 @@ class SlotCapacityChange:
 
 
 @dataclass(frozen=True)
+class SlotCapacityApplication:
+    """Outcome of applying one platform default capacity to unstarted slots."""
+
+    scanned: int
+    changed: int
+    promoted: int
+
+
+@dataclass(frozen=True)
+class DefaultAllowanceState:
+    """The default allowance in force plus the provenance an administrator needs."""
+
+    default_allowance_usd: Decimal
+    platform_default_usd: Decimal
+    configured_default_allowance_usd: Decimal | None
+
+    @property
+    def is_default(self) -> bool:
+        return self.configured_default_allowance_usd is None
+
+
+@dataclass(frozen=True)
+class DefaultAllowanceChange:
+    previous_configured_default_allowance_usd: Decimal | None
+    state: DefaultAllowanceState
+    application: "AllowanceApplication"
+
+
+@dataclass(frozen=True)
+class AllowanceApplication:
+    """Outcome of applying one default allowance to students who lack an account."""
+
+    scanned: int
+    changed: int
+
+
+@dataclass(frozen=True)
 class AccessDecision:
     allowed: bool
     reservation_id: str | None = None
@@ -80,10 +117,34 @@ class GatewayUsage:
     by_model: tuple[ModelUsage, ...]
 
 
+@dataclass(frozen=True)
+class GatewayUsageDay:
+    """One day of consumed quota from the gateway, in one dimension."""
+
+    day: int
+    quota: int
+    requests: int
+    token_id: int | None = None
+    student_number: str = ""
+    student_name: str = ""
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class GatewayUsageSeries:
+    quota_units_per_usd: int
+    by_token: tuple[GatewayUsageDay, ...]
+    by_model: tuple[GatewayUsageDay, ...]
+
+
 class ModelGateway(Protocol):
     def get_usage(self, token_id: str) -> GatewayUsage: ...
 
     def adjust_quota(self, token_id: str, delta_quota: int, request_id: str) -> GatewayUsage: ...
+
+    def delete_managed_token(self, token_id: str) -> None: ...
+
+    def usage_series(self, start: int, end: int, offset_seconds: int) -> GatewayUsageSeries: ...
 
 
 @dataclass(frozen=True)
@@ -109,6 +170,8 @@ class StudentAdministrationDetail:
     display_name: str
     cohort: str | None
     status: StudentStatus
+    created_at: datetime
+    deleted_at: datetime | None
     workspace_id: str | None
     allowance: AllowanceSummary | None
 
@@ -173,6 +236,12 @@ class ModelConfigurator(Protocol):
 
 class PlatformProvisioner(Protocol):
     def ensure_ready(self, student_id: str) -> ProvisionedPlatform | None: ...
+
+
+class AllowanceGate(Protocol):
+    """Decide whether a student still has model allowance to start a session."""
+
+    def allows_model_calls(self, student_id: str) -> bool: ...
 
 
 class IdentitySource(Protocol):

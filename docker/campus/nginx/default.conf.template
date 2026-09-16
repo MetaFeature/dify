@@ -1,26 +1,39 @@
+# Docker's embedded DNS. Together with the `resolve` parameter on each upstream
+# server below, nginx re-resolves these names while running. Without it nginx
+# resolves once at startup and caches the address, so recreating a container
+# (which changes its IP) makes every request to that upstream fail with
+# "connect() failed (111: Connection refused)" until an explicit reload -- and
+# because the Access check is an auth_request subrequest, browsers see that as a
+# bare 500 rather than a 502.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
 upstream campus_api {
-    server api:5001;
+    zone campus_api 64k;
+    server api:5001 resolve;
     keepalive 32;
     keepalive_requests 1000;
     keepalive_timeout 60s;
 }
 
 upstream campus_portal {
-    server portal:8080;
+    zone campus_portal 64k;
+    server portal:8080 resolve;
     keepalive 16;
     keepalive_requests 1000;
     keepalive_timeout 60s;
 }
 
 upstream campus_web {
-    server web:3000;
+    zone campus_web 64k;
+    server web:3000 resolve;
     keepalive 32;
     keepalive_requests 1000;
     keepalive_timeout 60s;
 }
 
 upstream campus_plugin_daemon {
-    server plugin_daemon:5002;
+    zone campus_plugin_daemon 64k;
+    server plugin_daemon:5002 resolve;
     keepalive 8;
     keepalive_requests 1000;
     keepalive_timeout 60s;
@@ -40,6 +53,23 @@ server {
       proxy_set_header X-Original-URI $request_uri;
       proxy_set_header Cookie "campus_portal_session=$cookie_campus_portal_session";
       include proxy.conf;
+    }
+
+    # Plugin installation, the Marketplace and the integration/tool surfaces are
+    # not published on a campus interface. Hiding the navigation entry alone
+    # would still leave them reachable by URL, and a student-installed model
+    # provider plugin would serve model calls without passing the metered
+    # gateway. The administrator keeps them on the loopback listener below.
+    location ~ ^/(plugins|marketplace|integrations|tools)(/|$) {
+      return 404;
+    }
+
+    # The matching plugin administration API: uploading, installing, upgrading,
+    # uninstalling and task control all mutate the workspace. Read-only plugin
+    # routes (list, icon, asset, readme, parameters, fetch) stay available
+    # because provider and model pages use them to render.
+    location ~ ^/console/api/workspaces/current/plugin/(upload|install|upgrade|uninstall|fetch-manifest|marketplace|tasks|permission/change|auto-upgrade/change|auto-upgrade/exclude|debugging-key) {
+      return 404;
     }
 
     # Administration lives on the host-loopback listener below, and the portal

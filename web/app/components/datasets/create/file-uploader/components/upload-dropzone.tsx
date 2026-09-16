@@ -4,6 +4,7 @@ import type { FileUploadConfig } from '../hooks/use-file-upload'
 import { cn } from '@langgenius/dify-ui/cn'
 import { useTranslation } from 'react-i18next'
 import { useProviderContextSelector } from '@/context/provider-context'
+import { useCampusKnowledgeLimits } from '@/service/use-campus'
 
 export type UploadDropzoneProps = {
   dropRef: RefObject<HTMLDivElement | null>
@@ -31,6 +32,7 @@ const UploadDropzone = ({
   onFileChange,
 }: UploadDropzoneProps) => {
   const { t } = useTranslation()
+  const { data: knowledgeLimits } = useCampusKnowledgeLimits()
   const enableBilling = useProviderContextSelector((state) => state.enableBilling)
 
   return (
@@ -80,6 +82,14 @@ const UploadDropzone = ({
                 batchCount: fileUploadConfig.batch_count_limit,
               })}
         </div>
+        {knowledgeLimits && (
+          <div>
+            {t(($) => $['stepOne.uploader.limit'], {
+              ns: 'datasetCreation',
+              files: knowledgeLimits.max_documents_per_dataset,
+            })}
+          </div>
+        )}
         {dragging && <div ref={dragRef} className="absolute top-0 left-0 size-full" />}
       </div>
     </>

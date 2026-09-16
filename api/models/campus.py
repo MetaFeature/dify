@@ -5,6 +5,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 import sqlalchemy as sa
+from sqlalchemy import select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, DefaultFieldsMixin
@@ -17,11 +18,13 @@ class StudentStatus(StrEnum):
 
 
 class ExperimentTrack(StrEnum):
-    """One of the three practice paths a student may choose after signing in."""
+    """A practice path a student may choose after signing in, plus the
+    reference shelf that shares the same upload pipeline."""
 
     LARGE_MODEL = "large-model"
     AGENT = "agent"
     DEEP_LEARNING = "deep-learning"
+    REFERENCE = "reference"
 
 
 #: Every experiment track may publish learning documents. The large-model
@@ -50,6 +53,7 @@ class CampusStudent(DefaultFieldsMixin, Base):
     __table_args__ = (
         sa.UniqueConstraint("student_number", name="campus_students_student_number_key"),
         sa.Index("campus_students_status_idx", "status"),
+        sa.Index("campus_students_deleted_at_idx", "deleted_at"),
     )
 
     student_number: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -59,6 +63,9 @@ class CampusStudent(DefaultFieldsMixin, Base):
         EnumText(StudentStatus, length=16), nullable=False, default=StudentStatus.ACTIVE
     )
     initial_allowance_usd: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False, default=Decimal(0))
+    # Soft delete: the row stays so the account can be restored, and the
+    # retention job is what finally removes it (and its Dify workspace).
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime, nullable=True)
 
 
 class CampusStudentCredential(DefaultFieldsMixin, Base):
@@ -139,6 +146,88 @@ class CampusPortalSession(DefaultFieldsMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime, nullable=True)
+
+
+class CampusSlotCapacitySetting(DefaultFieldsMixin, Base):
+    """Administrator-managed platform default capacity for access slots.
+
+    One row keyed by `setting_key`. When present it overrides the environment
+    default and is applied to every access slot that has not started yet.
+    """
+
+    __tablename__ = "campus_slot_capacity_settings"
+    __table_args__ = (
+        sa.UniqueConstraint("setting_key", name="campus_slot_capacity_settings_setting_key_key"),
+    )
+
+    setting_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    capacity: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_by_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+
+
+class CampusPortalLoginPage(DefaultFieldsMixin, Base):
+    """An administrator-uploaded replacement for the built-in portal login page.
+
+    At most one row is active. The row keeps the stored file's name, size and
+    digest plus the validation report produced when it was uploaded, so the
+    administrator can audit what is being served without re-reading the file.
+    """
+
+    __tablename__ = "campus_portal_login_pages"
+    __table_args__ = (
+        sa.Index("campus_portal_login_pages_active_idx", "is_active"),
+    )
+
+    filename: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    digest: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    validation_json: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    uploaded_by_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+
+    @classmethod
+    def active(cls, session: Session) -> CampusPortalLoginPage | None:
+        return session.scalar(select(cls).where(cls.is_active.is_(True)).order_by(cls.created_at.desc()))
+
+
+class CampusKnowledgeLimitSetting(DefaultFieldsMixin, Base):
+    """Administrator-managed platform limits for student knowledge bases.
+
+    One row keyed by `setting_key`. When present it overrides the environment
+    defaults: how many knowledge bases a student workspace may create and how
+    many files each of those knowledge bases may hold.
+    """
+
+    __tablename__ = "campus_knowledge_limit_settings"
+    __table_args__ = (
+        sa.UniqueConstraint("setting_key", name="campus_knowledge_limit_settings_setting_key_key"),
+    )
+
+    setting_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    max_datasets_per_workspace: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    max_documents_per_dataset: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_by_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+
+
+class CampusAllowanceSetting(DefaultFieldsMixin, Base):
+    """Administrator-managed platform default model allowance.
+
+    One row keyed by `setting_key`. When present it overrides the environment
+    default and is the allowance every student without a model account yet
+    receives. Students whose model account already exists keep the allowance
+    their account was created with, so lowering the default never takes quota
+    away from a student who is already using the platform.
+    """
+
+    __tablename__ = "campus_allowance_settings"
+    __table_args__ = (
+        sa.UniqueConstraint("setting_key", name="campus_allowance_settings_setting_key_key"),
+    )
+
+    setting_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    default_allowance_usd: Mapped[Decimal] = mapped_column(sa.Numeric(14, 4), nullable=False)
+    updated_by_account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
 
 
 class CampusAccessSlot(DefaultFieldsMixin, Base):
@@ -225,6 +314,9 @@ class CampusLabManualChapter(DefaultFieldsMixin, Base):
     # ``body_html`` is retained only for records created by the retired
     # text-based editor. New uploads are held byte-for-byte in document_data.
     body_html: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    # A short plain-text teaser of the document body, shown under the title in
+    # the experiment chooser. Derived from the upload, never authored.
+    summary: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     document_data: Mapped[bytes | None] = mapped_column(sa.LargeBinary, nullable=True)
     original_filename: Mapped[str | None] = mapped_column(sa.String(255), nullable=True)
     document_size_bytes: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

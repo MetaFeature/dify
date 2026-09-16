@@ -15,6 +15,33 @@ import { FileAppearanceTypeEnum } from './types'
  * @param t - Translation function
  * @returns Localized error message
  */
+/**
+ * Read a local audio file's length in seconds.
+ *
+ * Resolves to `null` when the browser cannot decode the metadata — the server
+ * still enforces the limit, so an unreadable file is left to the upload check
+ * instead of being blocked here.
+ */
+export const readAudioDuration = (file: File): Promise<number | null> => {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const audio = document.createElement('audio')
+    const finish = (value: number | null) => {
+      URL.revokeObjectURL(url)
+      audio.onloadedmetadata = null
+      audio.onerror = null
+      resolve(value)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => {
+      const { duration } = audio
+      finish(Number.isFinite(duration) && duration > 0 ? duration : null)
+    }
+    audio.onerror = () => finish(null)
+    audio.src = url
+  })
+}
+
 export const getFileUploadErrorMessage = (
   error: any,
   defaultMessage: string,

@@ -462,6 +462,27 @@ require_running_service() {
   service_running "${service}" || fail "${service} is not running"
 }
 
+# api, api_websocket, worker and worker_beat are four containers built from one
+# image. `docker compose up -d <service>` only compares the services it was
+# named, so refreshing one of them leaves its siblings running the previous
+# image and half of a backend change silently never takes effect. Compose cannot
+# express "recreate these together", so the deployment asserts it instead.
+assert_shared_image() {
+  local first_service="" first_image="" service container_id image_id
+  for service in "$@"; do
+    container_id="$("${COMPOSE[@]}" ps -q "${service}")"
+    [[ -n "${container_id}" ]] || fail "${service} container is missing"
+    image_id="$(docker inspect --format '{{.Image}}' "${container_id}")"
+    image_id="${image_id#sha256:}"
+    if [[ -z "${first_service}" ]]; then
+      first_service="${service}"
+      first_image="${image_id}"
+    elif [[ "${image_id}" != "${first_image}" ]]; then
+      fail "${service} runs image ${image_id:0:12} but ${first_service} runs ${first_image:0:12}; redeploy the whole stack ('manage.sh restart', or 'docker compose up -d' without naming services) so the api family moves together"
+    fi
+  done
+}
+
 assert_service_healthy() {
   local service="$1" container_id health attempt
   container_id="$("${COMPOSE[@]}" ps -q "${service}")"
@@ -1158,6 +1179,8 @@ verify() {
   for service in api portal model-gateway worker worker_beat nginx; do
     require_running_service "${service}"
   done
+  # The four api-family containers must have been (re)created by the same build.
+  assert_shared_image api api_websocket worker worker_beat
   verify_wsl_loopback_routing
   verify_campus_heartbeat
   wait_for_campus_health "${campus_port}"

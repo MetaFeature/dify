@@ -8,6 +8,7 @@ import { createSystemFeaturesWrapper } from '@/__tests__/utils/mock-system-featu
 import { renderWithNuqs } from '@/test/nuqs-testing'
 import { AppModeEnum } from '@/types/app'
 import List from '../list'
+import { SHOW_TEMPLATE_CREATION } from '@/app/components/app/create-app-dropdown'
 
 vi.mock('react-i18next', async () => {
   const { createReactI18nextMock } = await import('@/test/i18n-mock')
@@ -984,8 +985,11 @@ describe('List', () => {
     })
   })
 
-  describe('Create Menu', () => {
-    it('should render all create menu options', async () => {
+  // The Campus deployment does not offer template-based app creation.
+const itTemplateCreation = SHOW_TEMPLATE_CREATION ? it : it.skip
+
+describe('Create Menu', () => {
+    itTemplateCreation('should render all create menu options', async () => {
       renderList()
 
       fireEvent.click(screen.getByRole('button', { name: 'common.operation.create' }))
@@ -1005,7 +1009,7 @@ describe('List', () => {
       expect(screen.getByTestId('create-app-modal'))!.toBeInTheDocument()
     })
 
-    it('should open template dialog from create menu', async () => {
+    itTemplateCreation('should open template dialog from create menu', async () => {
       renderList()
 
       fireEvent.click(screen.getByRole('button', { name: 'common.operation.create' }))
