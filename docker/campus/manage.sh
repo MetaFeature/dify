@@ -1089,6 +1089,17 @@ reconcile_model_accounts_runtime() {
   "${COMPOSE[@]}" exec -T api flask campus-model-accounts reconcile
 }
 
+# Reports by default; pass --apply to migrate and re-index. Re-embedding spends
+# quota and can take minutes, so it is never implied by a plain invocation.
+repair_catalog_datasets() {
+  local gateway_port model_spec
+  require_running_service api
+  gateway_port="$(env_value CAMPUS_GATEWAY_ADMIN_PORT)"; gateway_port="${gateway_port:-13000}"
+  model_spec="$(gateway_catalog_model_spec "${gateway_port}")"
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers stale-datasets --models "${model_spec}" </dev/null
+  "${COMPOSE[@]}" exec -T api flask campus-model-providers repair-datasets --models "${model_spec}" "$@" </dev/null
+}
+
 reconcile_gateway_routes_runtime() {
   local gateway_port="$1" rows retired_ids id endpoint payload active_ids preserve_models
   rows="$(gateway_channel_model_rows)" || fail "invalid Campus gateway channel model catalog"
@@ -1788,7 +1799,7 @@ deploy_branding() {
 }
 
 usage() {
-  echo "usage: $0 {start|stop|restart|status|heartbeat|gateway-up|migrate-provider-config|migrate-model-sync-config|reconcile-model-providers|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
+  echo "usage: $0 {start|stop|restart|status|heartbeat|gateway-up|migrate-provider-config|migrate-model-sync-config|reconcile-model-providers|repair-catalog-datasets [--apply]|validate|backup|deploy|deploy-branding|repair-loopback-routing|verify|verify-demo-accounts|baseline|open-bootstrap|promote|rollback-promotion}" >&2
   exit 2
 }
 
@@ -1809,6 +1820,10 @@ case "${1:-}" in
   migrate-provider-config) migrate_provider_config ;;
   migrate-model-sync-config) migrate_model_sync_config ;;
   reconcile-model-providers) reconcile_model_providers ;;
+  repair-catalog-datasets)
+    shift
+    repair_catalog_datasets "$@"
+    ;;
   validate) validate ;;
   backup) backup ;;
   deploy) deploy ;;

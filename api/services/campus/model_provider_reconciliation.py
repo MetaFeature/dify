@@ -16,6 +16,7 @@ from core.plugin.impl.plugin import PluginInstaller
 from core.plugin.plugin_service import PluginService
 from core.provider_manager import ProviderConfigurationCacheSource, ProviderManager
 from graphon.model_runtime.entities.model_entities import ModelType
+from models.dataset import Dataset
 from models.model import App, AppModelConfig, Conversation
 from models.provider import (
     LoadBalancingModelConfig,
@@ -39,6 +40,24 @@ LEGACY_MODEL_PROVIDERS = frozenset(
 )
 LEGACY_MODEL_PLUGIN_IDS = frozenset({"langgenius/deepseek", "langgenius/openai"})
 OPENAI_COMPATIBLE_CONTEXT_SIZE = "4096"
+
+
+def _dataset_rerank_model(dataset: Dataset) -> str | None:
+    """The reranking model a dataset actually uses, or None when reranking is off."""
+    retrieval_model = dataset.retrieval_model or {}
+    if not retrieval_model.get("reranking_enable"):
+        return None
+    return (retrieval_model.get("reranking_model") or {}).get("reranking_model_name") or None
+
+
+def _stale_dataset(dataset: Dataset, model_type: str, model_name: str | None) -> StaleDatasetModel:
+    return StaleDatasetModel(
+        dataset_id=dataset.id,
+        tenant_id=dataset.tenant_id,
+        name=dataset.name,
+        model_type=model_type,
+        model_name=model_name or "",
+    )
 
 
 def rewrite_model_provider_references(
@@ -95,6 +114,17 @@ class DifyModelPluginManager:
 
 
 @dataclass(frozen=True)
+class StaleDatasetModel:
+    """One knowledge base pinned to a model the gateway catalog no longer publishes."""
+
+    dataset_id: str
+    tenant_id: str
+    name: str
+    model_type: str
+    model_name: str
+
+
+@dataclass(frozen=True)
 class ModelProviderReconciliationSummary:
     tenants: int = 0
     missing_target_plugins: int = 0
@@ -104,6 +134,12 @@ class ModelProviderReconciliationSummary:
     legacy_workflow_references: int = 0
     obsolete_target_models: int = 0
     speech_default_drift: int = 0
+    # Reported, never repaired here and deliberately outside `clean`: a knowledge
+    # base pinned to a model that left the catalog keeps failing every upload,
+    # but fixing it means re-embedding, which is the operator's call. Keeping it
+    # out of `clean` also keeps the heartbeat from counting a drift it cannot
+    # converge as a control-plane failure.
+    stale_dataset_models: int = 0
 
     @property
     def clean(self) -> bool:
@@ -195,7 +231,39 @@ class CampusModelProviderReconciler:
             legacy_workflow_references=self._legacy_workflow_reference_count(tenant_ids),
             obsolete_target_models=self._obsolete_target_model_count(tenant_ids),
             speech_default_drift=speech_default_drift,
+            stale_dataset_models=len(self.stale_datasets(tenant_ids)),
         )
+
+    def stale_datasets(self, tenant_ids: Sequence[str]) -> list[StaleDatasetModel]:
+        """Knowledge bases pinned to an embedding or reranking model the catalog dropped.
+
+        The catalog this reconciler publishes is the authority. A dataset that
+        still names a model the gateway no longer serves cannot embed a new file
+        and cannot rerank a query, so every upload in it fails and every
+        retrieval comes back empty or broken. The reconciler cannot repair that
+        without re-embedding the whole knowledge base, so it reports the rows and
+        leaves the migration to the operator.
+        """
+        embeddings = {model.name for model in self._models if model.model_type is ModelType.TEXT_EMBEDDING}
+        rerank = {model.name for model in self._models if model.model_type is ModelType.RERANK}
+        stale: list[StaleDatasetModel] = []
+        for dataset in self._session.scalars(
+            select(Dataset).where(
+                Dataset.tenant_id.in_(tenant_ids),
+                Dataset.indexing_technique == "high_quality",
+            )
+        ):
+            if dataset.embedding_model not in embeddings:
+                stale.append(_stale_dataset(dataset, "text-embedding", dataset.embedding_model))
+                continue
+            rerank_model = _dataset_rerank_model(dataset)
+            if rerank_model and rerank_model not in rerank:
+                stale.append(_stale_dataset(dataset, "rerank", rerank_model))
+        return stale
+
+    def replacement_model(self, model_type: ModelType) -> str | None:
+        """The catalog's first model of one type: where a stale dataset has to move."""
+        return next((model.name for model in self._models if model.model_type is model_type), None)
 
     def reconcile(self, tenant_ids: Sequence[str]) -> ModelProviderReconciliationSummary:
         for tenant_id in tenant_ids:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from sqlalchemy.orm import Session
 
 from graphon.model_runtime.entities.model_entities import ModelType
+from models.dataset import Dataset
 from models.model import App, AppModelConfig, Conversation
 from models.provider import (
     LoadBalancingModelConfig,
@@ -19,6 +20,7 @@ from models.workflow import Workflow, WorkflowType
 from services.campus.dify_adapters import parse_campus_models
 from services.campus.model_provider_reconciliation import (
     CampusModelProviderReconciler,
+    ModelProviderReconciliationSummary,
     rewrite_model_provider_references,
 )
 
@@ -102,6 +104,8 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
         App.__table__,
         AppModelConfig.__table__,
         Conversation.__table__,
+        # The audit also reports knowledge bases pinned to a dropped model.
+        Dataset.__table__,
         Provider.__table__,
         ProviderCredential.__table__,
         ProviderModel.__table__,
@@ -341,3 +345,77 @@ def test_reconciler_migrates_encrypted_credentials_and_retires_legacy_plugins(
             "provider": TARGET_PROVIDER,
             "name": "deepseek-v4-flash",
         }
+
+
+def _high_quality_dataset(
+    name: str,
+    *,
+    embedding_model: str,
+    rerank_model: str | None = None,
+    technique: str = "high_quality",
+) -> Dataset:
+    retrieval_model = (
+        {
+            "search_method": "semantic_search",
+            "reranking_enable": True,
+            "reranking_mode": "reranking_model",
+            "reranking_model": {
+                "reranking_provider_name": TARGET_PROVIDER,
+                "reranking_model_name": rerank_model,
+            },
+            "top_k": 3,
+            "score_threshold_enabled": False,
+        }
+        if rerank_model
+        else None
+    )
+    return Dataset(
+        tenant_id="tenant-1",
+        name=name,
+        data_source_type="upload_file",
+        created_by="account-1",
+        indexing_technique=technique,
+        embedding_model=embedding_model,
+        embedding_model_provider=TARGET_PROVIDER,
+        retrieval_model=retrieval_model,
+    )
+
+
+def test_reports_knowledge_bases_pinned_to_a_model_the_catalog_dropped(sqlite_engine) -> None:
+    Dataset.metadata.create_all(sqlite_engine, tables=[Dataset.__table__])
+    with Session(sqlite_engine, expire_on_commit=False) as session:
+        session.add_all(
+            [
+                _high_quality_dataset("嵌入已下线", embedding_model="BGE-m3"),
+                _high_quality_dataset(
+                    "重排已下线", embedding_model="text-embedding-v4", rerank_model="BGE-Reranker-V2-m3"
+                ),
+                _high_quality_dataset("正常", embedding_model="text-embedding-v4", rerank_model="qwen3-rerank"),
+                _high_quality_dataset("经济模式", embedding_model="BGE-m3", technique="economy"),
+            ]
+        )
+        session.commit()
+        reconciler = CampusModelProviderReconciler(
+            session=session,
+            target_provider=TARGET_PROVIDER,
+            credential_name="campus",
+            base_url="http://model-gateway:3000/v1",
+            models=parse_campus_models("llm:deepseek-v4.1-flash,text-embedding:text-embedding-v4,rerank:qwen3-rerank"),
+        )
+        rows = reconciler.stale_datasets(["tenant-1"])
+        embedding_target = reconciler.replacement_model(ModelType.TEXT_EMBEDDING)
+        rerank_target = reconciler.replacement_model(ModelType.RERANK)
+
+    assert {(row.name, row.model_type, row.model_name) for row in rows} == {
+        ("嵌入已下线", "text-embedding", "BGE-m3"),
+        ("重排已下线", "rerank", "BGE-Reranker-V2-m3"),
+    }
+    assert (embedding_target, rerank_target) == ("text-embedding-v4", "qwen3-rerank")
+
+
+def test_dataset_drift_is_reported_without_making_the_reconciler_unclean() -> None:
+    # The heartbeat treats a non-clean reconciliation as a control-plane failure
+    # and restarts containers, while migrating a knowledge base spends quota and
+    # needs an operator. So this one is reported and left out of `clean`.
+    assert ModelProviderReconciliationSummary(stale_dataset_models=2).clean is True
+    assert ModelProviderReconciliationSummary(missing_target_plugins=1).clean is False
