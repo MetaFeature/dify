@@ -371,7 +371,7 @@ done
 api_service="$(sed -n '/^[[:space:]]\{2\}api:$/,/^[[:space:]]\{2\}[a-zA-Z0-9_-]*:$/p' \
   "${DOCKER_DIR}/docker-compose.campus.yaml")"
 for setting in \
-  'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-4}' \
+  'SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-6}' \
   'SERVER_WORKER_CLASS: ${CAMPUS_API_WORKER_CLASS:-gevent}' \
   'SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}' \
   'SQLALCHEMY_POOL_SIZE: ${CAMPUS_DB_POOL_SIZE:-20}' \
@@ -382,7 +382,7 @@ for setting in \
   }
 done
 for setting in \
-  'CAMPUS_API_WORKER_AMOUNT=2' \
+  'CAMPUS_API_WORKER_AMOUNT=6' \
   'CAMPUS_API_WORKER_CLASS=gevent' \
   'CAMPUS_API_WORKER_CONNECTIONS=200' \
   'CAMPUS_BASELINE_CONCURRENCY=100' \
