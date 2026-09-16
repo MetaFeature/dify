@@ -25,6 +25,12 @@ class CampusConfig(BaseSettings):
     CAMPUS_DEFAULT_ALLOWANCE_USD: Decimal = Field(
         default=Decimal(10), ge=Decimal(0), description="Model allowance granted to each new student, in US dollars"
     )
+    # Configuring a student's workspace makes Dify validate every model
+    # credential with a real call, which spends a little of the token it is
+    # validating. That is the platform's own cost, so a managed token is created
+    # with this much head room on top of the student's allowance; without it a
+    # fresh account shows a balance like 9.9998 instead of 10.
+    CAMPUS_ALLOWANCE_PROBE_BUFFER_USD: Decimal = Field(default=Decimal("0.001"), ge=Decimal(0))
     CAMPUS_RESERVATION_CAPACITY: int = Field(default=500, ge=1)
     CAMPUS_BOOKING_DAYS: int = Field(default=7, ge=1, le=31)
     CAMPUS_CURRENT_SLOT_MAX_LOAD_PER_CPU: float = Field(default=1.0, gt=0, le=10)

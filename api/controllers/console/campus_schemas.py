@@ -66,15 +66,25 @@ class StudentCreatePayload(CampusRequestModel):
     student_number: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=255)
     cohort: str | None = Field(default=None, max_length=128)
-    password: str = Field(min_length=1, max_length=128)
+    # Left blank, the platform issues the derived initial password, the same one a
+    # roster import would use.
+    password: str | None = Field(default=None, max_length=128)
 
-    @field_validator("student_number", "display_name", "password")
+    @field_validator("student_number", "display_name")
     @classmethod
     def validate_create_text(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
             raise ValueError("value cannot be whitespace-only")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def normalize_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class PortalPasswordChangePayload(CampusRequestModel):
@@ -116,6 +126,21 @@ class StudentListQuery(CampusRequestModel):
     keyword: str | None = Field(default=None, max_length=128)
     # The restore view is the only caller that wants soft-deleted rows.
     include_deleted: bool = False
+    # The deleted view wants only those rows, not both kinds at once.
+    deleted_only: bool = False
+    # One class at a time, for working through a roster class by class.
+    cohort: str | None = Field(default=None, max_length=128)
+
+
+class StudentProvisioningProgressResponse(CampusResponseModel):
+    """How far the background roster warm up has got."""
+
+    students: int
+    ready: int
+
+
+class StudentCohortListResponse(CampusResponseModel):
+    data: list[str]
 
 
 class StudentInitialPasswordResponse(CampusResponseModel):
@@ -497,6 +522,8 @@ register_response_schema_models(
     console_ns,
     PortalLoginResponse,
     StudentInitialPasswordResponse,
+    StudentProvisioningProgressResponse,
+    StudentCohortListResponse,
     StudentResponse,
     StudentListResponse,
     RetentionPurgeResponse,

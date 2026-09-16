@@ -66,7 +66,8 @@
             </div>
           </div>
           <div class="student-toolbar">
-            <label class="checkbox-inline"><input id="students-show-deleted" type="checkbox">显示已删除</label>
+            <label class="checkbox-inline"><input id="students-show-deleted" type="checkbox">只看已删除</label>
+            <label class="checkbox-inline">班级<select id="students-cohort"><option value="">全部班级</option></select></label>
             <button id="students-purge" class="secondary compact" type="button">清除陈旧数据</button>
           </div>
           <form id="default-allowance-form" class="manual-form">
@@ -87,7 +88,7 @@
             <input name="studentNumber" placeholder="学号" required maxlength="64">
             <input name="displayName" placeholder="姓名" required maxlength="255">
             <input name="cohort" placeholder="班级（可选）" maxlength="128">
-            <input name="password" type="text" placeholder="初始密码" required maxlength="128" autocomplete="off">
+            <input name="password" type="text" placeholder="初始密码（留空自动生成）" maxlength="128" autocomplete="off">
             <button class="secondary compact" type="submit">添加用户</button>
           </form>
           <div id="student-table" aria-live="polite"></div>
@@ -135,6 +136,10 @@
             <button id="roster-confirm" class="primary" type="button" hidden>确认导入</button>
           </div>
           <div id="roster-report" aria-live="polite"></div>
+          <div id="roster-progress" class="provisioning-progress" role="status" hidden>
+            <p id="roster-progress-text" class="muted"></p>
+            <div class="progress-track"><div id="roster-progress-bar" class="progress-fill"></div></div>
+          </div>
         </section>
 
         <section id="tab-administrators" class="panel tab-panel" hidden>

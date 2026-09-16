@@ -47,13 +47,18 @@ x-campus-runtime-env: &campus-runtime-env
     CAMPUS_MODEL_PROVIDER_DOCUMENT_MODELS: ${CAMPUS_MODEL_PROVIDER_DOCUMENT_MODELS:-}
 
 services:
+  # PostgreSQL parameters come from the base file's command line (`-c ...`), so
+  # they are tuned through POSTGRES_* in envs/campus.env rather than ALTER SYSTEM.
+  db_postgres:
+    shm_size: 1gb
+
   api:
     image: *campus-dify-image
     build: *campus-dify-build
     environment:
       <<: *campus-runtime-env
       CODE_EXECUTION_API_KEY: ${SANDBOX_API_KEY:?set SANDBOX_API_KEY}
-      SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-4}
+      SERVER_WORKER_AMOUNT: ${CAMPUS_API_WORKER_AMOUNT:-6}
       SERVER_WORKER_CLASS: ${CAMPUS_API_WORKER_CLASS:-gevent}
       SERVER_WORKER_CONNECTIONS: ${CAMPUS_API_WORKER_CONNECTIONS:-200}
       SQLALCHEMY_POOL_SIZE: ${CAMPUS_DB_POOL_SIZE:-20}
@@ -129,9 +134,103 @@ services:
       <<: *campus-runtime-env
       CODE_EXECUTION_API_KEY: ${SANDBOX_API_KEY:?set SANDBOX_API_KEY}
       MIGRATION_ENABLED: "false"
-      CELERY_WORKER_AMOUNT: ${CAMPUS_CELERY_WORKER_AMOUNT:-8}
-      SQLALCHEMY_POOL_SIZE: ${CAMPUS_DB_POOL_SIZE:-20}
-      SQLALCHEMY_MAX_OVERFLOW: ${CAMPUS_DB_MAX_OVERFLOW:-10}
+      # This worker answers students (chatflow, agent, workflow, conversation).
+      # Document indexing runs on worker-dataset instead: it is the long, heavy
+      # work, and sharing one pool of slots with it is what left answers waiting.
+      CELERY_WORKER_QUEUES: ${CAMPUS_INTERACTIVE_QUEUES:-api_token,mail,ops_trace,app_deletion,app_rbac,plugin,workflow_storage,conversation,workflow,schedule_poller,schedule_executor,triggered_workflow_dispatcher,trigger_refresh_publisher,trigger_refresh_executor,retention,workflow_based_app_execution}
+      # Gevent greenlets spend nearly all their time waiting on the model
+      # service, so the slot count is the real capacity knob; the pool only has
+      # to cover the sessions those slots hold at once.
+      CELERY_WORKER_AMOUNT: ${CAMPUS_CELERY_WORKER_AMOUNT:-32}
+      SQLALCHEMY_POOL_SIZE: ${CAMPUS_WORKER_DB_POOL_SIZE:-50}
+      SQLALCHEMY_MAX_OVERFLOW: ${CAMPUS_WORKER_DB_MAX_OVERFLOW:-20}
+    # A running index task takes up to ~2 minutes; let it finish instead of
+    # losing an upload to a restart.
+    stop_grace_period: 5m
+
+  worker-dataset:
+    image: *campus-dify-image
+    build: *campus-dify-build
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - path: ./envs/core-services/shared.env
+        required: false
+      - path: ./envs/core-services/worker.env
+        required: false
+      - path: ./envs/security.env
+        required: false
+      - path: ./envs/databases/db-postgres.env
+        required: false
+      - path: ./envs/databases/db-mysql.env
+        required: false
+      - path: ./envs/databases/redis.env
+        required: false
+      - path: ./envs/vectorstores/weaviate.env
+        required: false
+      - path: ./envs/vectorstores/qdrant.env
+        required: false
+      - path: ./envs/vectorstores/oceanbase.env
+        required: false
+      - path: ./envs/vectorstores/seekdb.env
+        required: false
+      - path: ./envs/vectorstores/couchbase.env
+        required: false
+      - path: ./envs/vectorstores/pgvector.env
+        required: false
+      - path: ./envs/vectorstores/vastbase.env
+        required: false
+      - path: ./envs/vectorstores/pgvecto-rs.env
+        required: false
+      - path: ./envs/vectorstores/chroma.env
+        required: false
+      - path: ./envs/vectorstores/iris.env
+        required: false
+      - path: ./envs/vectorstores/oracle.env
+        required: false
+      - path: ./envs/vectorstores/opengauss.env
+        required: false
+      - path: ./envs/vectorstores/myscale.env
+        required: false
+      - path: ./envs/vectorstores/matrixone.env
+        required: false
+      - path: ./envs/vectorstores/elasticsearch.env
+        required: false
+      - path: ./envs/vectorstores/opensearch.env
+        required: false
+      - path: ./envs/vectorstores/milvus.env
+        required: false
+      - path: ./envs/infrastructure/nginx.env
+        required: false
+      - path: ./envs/infrastructure/certbot.env
+        required: false
+      - path: ./envs/infrastructure/ssrf-proxy.env
+        required: false
+      - path: ./envs/infrastructure/etcd.env
+        required: false
+      - path: ./envs/infrastructure/minio.env
+        required: false
+      - path: ./envs/infrastructure/milvus-standalone.env
+        required: false
+      - ./.env
+    networks:
+      - ssrf_proxy_network
+      - default
+    restart: always
+    # This is a new service, so it cannot inherit the base file's shared worker
+    # env_file list the way `worker` does; without it Celery dials the default
+    # AMQP broker instead of Redis and consumes nothing.
+    environment:
+      <<: *campus-runtime-env
+      MODE: worker
+      CODE_EXECUTION_API_KEY: ${SANDBOX_API_KEY:?set SANDBOX_API_KEY}
+      MIGRATION_ENABLED: "false"
+      CELERY_WORKER_QUEUES: ${CAMPUS_DATASET_QUEUES:-priority_dataset,priority_pipeline,dataset,dataset_summary,pipeline}
+      CELERY_WORKER_AMOUNT: ${CAMPUS_CELERY_DATASET_WORKER_AMOUNT:-8}
+      SQLALCHEMY_POOL_SIZE: ${CAMPUS_DATASET_DB_POOL_SIZE:-40}
+      SQLALCHEMY_MAX_OVERFLOW: ${CAMPUS_DATASET_DB_MAX_OVERFLOW:-20}
+    stop_grace_period: 5m
 
   worker_beat:
     image: *campus-dify-image

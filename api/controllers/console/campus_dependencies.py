@@ -248,6 +248,8 @@ def build_platform_provisioner(session: Session) -> PlatformProvisioningService:
         gateway_provisioner=gateway,
         model_configurator=RefreshingModelConfigurator(current_model_configurator),
         quota_units_per_usd=dify_config.CAMPUS_NEWAPI_QUOTA_UNITS_PER_USD,
+        # Dify's own credential probes are the platform's cost, not the student's.
+        probe_buffer_usd=dify_config.CAMPUS_ALLOWANCE_PROBE_BUFFER_USD,
     )
 
 

@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models.campus import CampusAuditEvent, CampusPortalSession, CampusStudent, StudentStatus
+from models.campus import CampusAuditEvent, CampusPortalSession, CampusStudent, CampusWorkspaceBinding, StudentStatus
 from services.campus.domain import StudentIdentity
 from services.campus.errors import CampusValidationError, StudentSuspendedError
 from services.campus.student_service import StudentAdministrationService
@@ -13,7 +13,12 @@ from services.campus.student_service import StudentAdministrationService
 
 @pytest.fixture
 def campus_session(sqlite_engine) -> Session:
-    tables = [CampusStudent.__table__, CampusAuditEvent.__table__, CampusPortalSession.__table__]
+    tables = [
+        CampusStudent.__table__,
+        CampusAuditEvent.__table__,
+        CampusPortalSession.__table__,
+        CampusWorkspaceBinding.__table__,
+    ]
     CampusStudent.metadata.create_all(sqlite_engine, tables=tables)
     with Session(sqlite_engine, expire_on_commit=False) as session:
         yield session
@@ -248,3 +253,52 @@ def test_roster_sync_updates_a_class_but_never_blanks_one(campus_session: Sessio
         actor_account_id="admin-1",
     )
     assert service.get_student("20260001").cohort == "二班"
+
+
+def test_the_class_filter_and_the_deleted_view_each_narrow_the_list(campus_session: Session) -> None:
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
+    service.sync_students(
+        [
+            StudentIdentity(student_number="20260001", display_name="一班的甲", cohort="2026 级 1 班"),
+            StudentIdentity(student_number="20260002", display_name="二班的乙", cohort="2026 级 2 班"),
+            StudentIdentity(student_number="20260003", display_name="一班的丙", cohort="2026 级 1 班"),
+        ],
+        actor_account_id="admin-1",
+    )
+    service.soft_delete("20260003", actor_account_id="admin-1")
+
+    assert [row.student_number for row in service.list_students(cohort="2026 级 1 班")] == ["20260001"]
+    # The deleted view is exactly the deleted rows, not both kinds at once.
+    assert [row.student_number for row in service.list_students(deleted_only=True)] == ["20260003"]
+    assert [row.student_number for row in service.list_students(include_deleted=True)] == [
+        "20260001",
+        "20260002",
+        "20260003",
+    ]
+    assert service.list_cohorts() == ["2026 级 1 班", "2026 级 2 班"]
+
+
+def test_provisioning_progress_counts_roster_rows_and_workspaces(
+    campus_session: Session, monkeypatch
+) -> None:
+    from models.campus import CampusWorkspaceBinding
+
+    service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
+    service.sync_students(
+        [
+            StudentIdentity(student_number="20260001", display_name="甲"),
+            StudentIdentity(student_number="20260002", display_name="乙"),
+        ],
+        actor_account_id="admin-1",
+    )
+    students = {row.student_number: row for row in service.list_students()}
+    campus_session.add(
+        CampusWorkspaceBinding(
+            student_id=students["20260001"].id,
+            dify_account_id="account-1",
+            dify_tenant_id="tenant-1",
+        )
+    )
+    campus_session.commit()
+
+    assert service.provisioning_progress() == (2, 1)

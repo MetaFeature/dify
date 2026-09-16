@@ -40,6 +40,7 @@ class PlatformProvisioningService(PlatformProvisioner):
     _gateway_provisioner: GatewayProvisioner
     _model_configurator: ModelConfigurator
     _quota_units_per_usd: int
+    _probe_buffer_usd: Decimal
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class PlatformProvisioningService(PlatformProvisioner):
         gateway_provisioner: GatewayProvisioner,
         model_configurator: ModelConfigurator,
         quota_units_per_usd: int,
+        probe_buffer_usd: Decimal = Decimal(0),
     ) -> None:
         if quota_units_per_usd < 1:
             raise ValueError("quota_units_per_usd must be positive")
@@ -57,6 +59,7 @@ class PlatformProvisioningService(PlatformProvisioner):
         self._gateway_provisioner = gateway_provisioner
         self._model_configurator = model_configurator
         self._quota_units_per_usd = quota_units_per_usd
+        self._probe_buffer_usd = probe_buffer_usd
 
     @override
     def ensure_ready(self, student_id: str) -> ProvisionedPlatform:
@@ -256,7 +259,9 @@ class PlatformProvisioningService(PlatformProvisioner):
                     raise CampusProvisioningLockError("could not release Campus provisioning lock") from release_error
 
     def _allowance_quota(self, allowance_usd: Decimal) -> int:
-        raw_quota = allowance_usd * self._quota_units_per_usd
+        # The buffer covers the credential probes Dify fires while configuring
+        # this very workspace, so a new student starts with the allowance intact.
+        raw_quota = (allowance_usd + self._probe_buffer_usd) * self._quota_units_per_usd
         if raw_quota != raw_quota.to_integral_value():
             raise ValueError("initial allowance is smaller than gateway quota precision")
         return int(raw_quota)

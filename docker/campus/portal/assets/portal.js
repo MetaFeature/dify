@@ -33,6 +33,7 @@ if (loginFormElement instanceof HTMLFormElement)
 const elements = {
   loginView: requiredElement('#login-view', HTMLElement),
   loginContent: requiredElement('#login-content', HTMLElement),
+  logout: requiredElement('#portal-logout', HTMLButtonElement),
   tracksView: requiredElement('#tracks-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
   trackList: requiredElement('#track-list', HTMLElement),
@@ -76,6 +77,11 @@ void bootstrapPortal()
 async function bootstrapPortal() {
   try {
     await loadPortalPresentation()
+    if (new URLSearchParams(window.location.search).get('logout') === '1') {
+      // The manual viewer cannot call this origin's API, so it links here.
+      await signOut()
+      return
+    }
     // Always ask the API who we are. A reload — or a Back/Forward — must not
     // drop a live session just because the URL carries no marker.
     await restoreSession()
@@ -102,6 +108,7 @@ async function restoreSession() {
   try {
     const summaries = await api.listExperimentTracks()
     elements.loginView.hidden = true
+    elements.logout.hidden = false
     elements.dashboardView.hidden = true
     elements.tracksView.hidden = false
     hideMessage(elements.tracksMessage)
@@ -158,6 +165,7 @@ elements.loginForm.addEventListener('submit', async (event) => {
     const login = await api.login(String(form.get('studentNumber')).trim(), String(form.get('loginCode')))
     elements.loginForm.reset()
     elements.loginView.hidden = true
+    elements.logout.hidden = false
     hideMessage(elements.message)
     await showTracks()
   }
@@ -352,7 +360,8 @@ function renderDashboard({ access, reservations, allowance }) {
   elements.accessDetail.textContent = access.allowed && access.ends_at ? `访问权限至 ${formatTime(access.ends_at)}` : '需在已确认的预约时段内进入'
   elements.launchButton.disabled = !access.allowed || exhausted
   elements.launchButton.title = exhausted ? '模型额度已用尽，无法进入 Dify 工作区' : ''
-  elements.allowanceRemaining.textContent = allowance.remaining_usd
+  // Amounts are stored with four decimals; students read them in 元 with two.
+  elements.allowanceRemaining.textContent = Number(allowance.remaining_usd).toFixed(2)
   elements.allowanceDetail.textContent = `累计使用 ${allowance.used_usd} 元 · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
   const unfinished = reservations.find(item => item.status === 'confirmed' || item.status === 'waitlisted')
   elements.reservationState.textContent = unfinished ? statusLabel(unfinished.status) : '暂无'
@@ -673,6 +682,25 @@ elements.trackList.addEventListener('click', async (event) => {
   if (button.dataset.destination === 'reservations')
     await showReservations()
 })
+
+/** Sign out, drop the session state and put the login form back. */
+async function signOut() {
+  try {
+    await api.logout()
+  }
+  catch {
+    // An expired session still has to land on the login view.
+  }
+  elements.logout.hidden = true
+  elements.tracksView.hidden = true
+  elements.dashboardView.hidden = true
+  elements.loginView.hidden = false
+  elements.trackList.textContent = ''
+  hideMessage(elements.message)
+  window.history.replaceState(null, '', '/portal/')
+}
+
+elements.logout.addEventListener('click', () => { void signOut() })
 
 elements.tracksRefresh.addEventListener('click', () => { void showTracks() })
 elements.dashboardBack.addEventListener('click', () => { void showTracks() })

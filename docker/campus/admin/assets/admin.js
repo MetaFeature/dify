@@ -52,6 +52,7 @@ const elements = {
   studentSearchInput: requiredElement('#student-search-input', HTMLInputElement),
   studentSearchClear: requiredElement('#student-search-clear', HTMLButtonElement),
   studentsShowDeleted: requiredElement('#students-show-deleted', HTMLInputElement),
+  studentsCohort: requiredElement('#students-cohort', HTMLSelectElement),
   studentsPurge: requiredElement('#students-purge', HTMLButtonElement),
   studentCreateForm: requiredElement('#student-create-form', HTMLFormElement),
   studentsPrev: requiredElement('#students-prev', HTMLButtonElement),
@@ -62,6 +63,9 @@ const elements = {
   rosterPreview: requiredElement('#roster-preview', HTMLButtonElement),
   rosterConfirm: requiredElement('#roster-confirm', HTMLButtonElement),
   rosterReport: requiredElement('#roster-report', HTMLElement),
+  rosterProgress: requiredElement('#roster-progress', HTMLElement),
+  rosterProgressText: requiredElement('#roster-progress-text', HTMLElement),
+  rosterProgressBar: requiredElement('#roster-progress-bar', HTMLElement),
   adminAddForm: requiredElement('#admin-add-form', HTMLFormElement),
   adminTable: requiredElement('#admin-table', HTMLElement),
   presentationForm: requiredElement('#presentation-form', HTMLFormElement),
@@ -84,8 +88,9 @@ let studentOffset = 0
 // The list is server-paged, so the filter has to travel to the API: filtering
 // in the browser would only ever search the fifty rows already on screen.
 let studentKeyword = ''
+let studentCohort = ''
+let studentDeletedOnly = false
 // The roster hides soft-deleted students unless the operator opts in.
-let studentIncludeDeleted = false
 //: The one expanded row panel: either a student's detail or a form.
 /** @type {HTMLTableRowElement | null} */
 let openPanelRow = null
@@ -343,10 +348,60 @@ elements.studentSearchClear.addEventListener('click', () => {
 })
 
 elements.studentsShowDeleted.addEventListener('change', () => {
-  studentIncludeDeleted = elements.studentsShowDeleted.checked
+  studentDeletedOnly = elements.studentsShowDeleted.checked
   studentOffset = 0
   loadStudents()
 })
+
+elements.studentsCohort.addEventListener('change', () => {
+  studentCohort = elements.studentsCohort.value
+  studentOffset = 0
+  loadStudents()
+})
+
+/** Fill the class filter with the classes the active roster mentions. */
+async function loadCohorts() {
+  try {
+    const { data } = await api.studentCohorts()
+    const selected = elements.studentsCohort.value
+    elements.studentsCohort.innerHTML = '<option value="">全部班级</option>'
+      + data.map(cohort => `<option value="${escapeHtml(cohort)}">${escapeHtml(cohort)}</option>`).join('')
+    elements.studentsCohort.value = data.includes(selected) ? selected : ''
+  }
+  catch {
+    // The filter is a convenience; a failure leaves "全部班级" in place.
+  }
+}
+
+/**
+ * Follow the background roster warm up until every student has a workspace.
+ *
+ * The import returns as soon as the roster rows exist, so without this the
+ * administrator would see nothing happen for a class-sized import.
+ */
+async function followProvisioningProgress() {
+  elements.rosterProgress.hidden = false
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    let progress
+    try {
+      progress = await api.provisioningProgress()
+    }
+    catch (error) {
+      elements.rosterProgressText.textContent = messageFor(error)
+      return
+    }
+    const { students, ready } = progress
+    const percent = students > 0 ? Math.round((ready / students) * 100) : 100
+    elements.rosterProgressText.textContent = `正在为新用户准备工作区：${ready} / ${students}（${percent}%）`
+    elements.rosterProgressBar.style.width = `${percent}%`
+    if (ready >= students) {
+      elements.rosterProgressText.textContent = `全部 ${students} 名用户的工作区已就绪。`
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000))
+  }
+  elements.rosterProgressText.textContent = '仍在后台准备中；可以离开本页，稍后回来查看。'
+}
 
 elements.studentsPurge.addEventListener('click', async () => {
   const typed = window.prompt(
@@ -537,7 +592,8 @@ elements.rosterConfirm.addEventListener('click', async () => {
     pendingRoster = null
     parsedWorkbookRoster = null
     elements.rosterConfirm.hidden = true
-    await loadStudents()
+    await Promise.all([loadStudents(), loadCohorts()])
+    void followProvisioningProgress()
   }
   catch (error) {
     renderRosterErrors([messageFor(error)])
@@ -841,7 +897,11 @@ async function loadStudents() {
   closeRowPanel()
   elements.studentTable.textContent = '正在读取用户列表…'
   try {
-    const { data } = await api.listStudents(PAGE_SIZE, studentOffset, studentKeyword, studentIncludeDeleted)
+    const { data } = await api.listStudents(PAGE_SIZE, studentOffset, {
+      keyword: studentKeyword,
+      cohort: studentCohort,
+      deletedOnly: studentDeletedOnly,
+    })
     elements.studentsPage.textContent = `第 ${Math.floor(studentOffset / PAGE_SIZE) + 1} 页`
     elements.studentsPrev.disabled = studentOffset === 0
     elements.studentsNext.disabled = data.length < PAGE_SIZE
@@ -865,7 +925,7 @@ async function loadStudents() {
       const allowance = student.allowance
       // A missing allowance means the gateway did not answer — show that as
       // unknown rather than as a balance of zero.
-      const remaining = allowance ? `${allowance.remaining_usd} 元` : '—'
+      const remaining = allowance ? `${Number(allowance.remaining_usd).toFixed(2)} 元` : '—'
       const exhausted = allowance && !allowance.model_calls_enabled
       row.innerHTML = `
         <td>${escapeHtml(student.student_number)}</td>
@@ -917,7 +977,7 @@ function openStudentDetail(row, detail) {
   body.innerHTML = `
     <b>${escapeHtml(String(detail.display_name))}</b>（${escapeHtml(String(detail.student_number))}）<br>
     工作区：${escapeHtml(String(detail.workspace_id || '未开通'))}<br>
-    额度：${allowance ? `剩余 ${allowance.remaining_usd} 元 / 总额 ${allowance.total_usd} 元（已用 ${allowance.used_usd} 元）` : '未开通'}<br>
+    额度：${allowance ? `剩余 ${Number(allowance.remaining_usd).toFixed(2)} 元 / 总额 ${Number(allowance.total_usd).toFixed(2)} 元（已用 ${Number(allowance.used_usd).toFixed(2)} 元）` : '未开通'}<br>
     <span class="detail-stamp">创建时间：${escapeHtml(formatStamp(detail.created_at))}${detail.deleted_at ? `　·　删除时间：${escapeHtml(formatStamp(detail.deleted_at))}` : ''}</span>`
   openRowPanel(row, body)
 }
@@ -1248,6 +1308,7 @@ async function bootstrap() {
   elements.adminView.hidden = false
   await Promise.all([
     loadDefaultAllowance(),
+    loadCohorts(),
     loadKnowledgeLimit(),
     loadPortalLogin(),
     loadSlotCapacity(),

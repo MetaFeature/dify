@@ -117,6 +117,11 @@ export class CampusApi {
   }
 
   /** @returns {Promise<{ result: string }>} */
+  /** Ends the portal session and clears its cookie. */
+  async logout() {
+    return this.#request('/session/logout', { method: 'POST' })
+  }
+
   async launchSession() {
     return this.#request('/session/launch', { method: 'POST' })
   }

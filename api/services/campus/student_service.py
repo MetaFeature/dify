@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from pypinyin import lazy_pinyin
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from models.campus import CampusAuditEvent, CampusStudent, StudentStatus
+from models.campus import CampusAuditEvent, CampusStudent, CampusWorkspaceBinding, StudentStatus
 from services.campus.credential_service import revoke_portal_sessions, upsert_credential
 from services.campus.domain import StudentIdentity, SyncResult
 from services.campus.errors import CampusValidationError, StudentNotFoundError, StudentSuspendedError
@@ -61,16 +61,19 @@ def derive_initial_password(display_name: str, student_number: str) -> str:
     """Return the derived initial password: name pinyin head plus the last four digits.
 
     The head is the pinyin of the name's first character (``张三`` → ``zhang``,
-    ``欧阳娜娜`` → ``ou``). Names whose first character has no latin reading — an
-    already-latin initial, punctuation, or a character missing from the pinyin
-    table — fall back to the student-number suffix alone rather than failing the
+    ``欧阳娜娜`` → ``ou``). A name without a Chinese character has no head to
+    prefix, so its password is the student number's last four characters alone
+    (``Student Nine`` with ``20260009`` → ``0009``); a first character missing
+    from the pinyin table falls back to the same suffix rather than failing the
     whole roster import, because the credential still has to be issued.
     """
     if len(student_number) < 4:
         raise CampusValidationError(f"student_number must contain at least four characters: {student_number}")
     suffix = student_number[-4:]
     head = display_name.strip()[:1]
-    if not head:
+    if not head or not _has_chinese(display_name):
+        # Names without a Chinese character have no pinyin head to prefix, so the
+        # account's own last four characters are the whole password.
         return suffix
     if head in _SURNAME_READINGS:
         return f"{_SURNAME_READINGS[head]}{suffix}"
@@ -79,6 +82,10 @@ def derive_initial_password(display_name: str, student_number: str) -> str:
         return suffix
     segment = _PASSWORD_NAME_SEGMENT.sub("", syllables[0].lower())
     return f"{segment}{suffix}" if segment else suffix
+
+
+def _has_chinese(value: str) -> bool:
+    return any("\u4e00" <= character <= "\u9fff" for character in value)
 
 
 class StudentAdministrationService:
@@ -328,24 +335,70 @@ class StudentAdministrationService:
             raise StudentSuspendedError(student.student_number)
         return student
 
+    def list_cohorts(self) -> list[str]:
+        """Every class the active roster mentions, for the per-class view."""
+        rows = self._session.scalars(
+            select(CampusStudent.cohort)
+            .where(CampusStudent.cohort.is_not(None), CampusStudent.deleted_at.is_(None))
+            .distinct()
+            .order_by(CampusStudent.cohort)
+        )
+        return [cohort for cohort in rows if cohort]
+
+    def provisioning_progress(self) -> tuple[int, int]:
+        """How many roster students exist, and how many have a workspace yet.
+
+        The roster import returns before the workspaces are built (one background
+        task per student), so the administration page needs a number to show
+        while it waits: a student counts as ready once their workspace binding
+        exists, which is the step that needs the Dify account and the models.
+        """
+        students = int(
+            self._session.scalar(
+                select(func.count())
+                .select_from(CampusStudent)
+                .where(CampusStudent.deleted_at.is_(None))
+            )
+            or 0
+        )
+        ready = int(
+            self._session.scalar(
+                select(func.count())
+                .select_from(CampusStudent)
+                .join(CampusWorkspaceBinding, CampusWorkspaceBinding.student_id == CampusStudent.id)
+                .where(CampusStudent.deleted_at.is_(None))
+            )
+            or 0
+        )
+        return students, ready
+
     def list_students(
         self,
         *,
         limit: int = 100,
         offset: int = 0,
         keyword: str | None = None,
+        cohort: str | None = None,
         include_deleted: bool = False,
+        deleted_only: bool = False,
     ) -> list[CampusStudent]:
-        """One page of students, optionally narrowed to a number-or-name match.
+        """One page of students, narrowed by keyword, class, or deletion state.
 
-        Soft-deleted students stay in the table but are hidden unless the
-        caller explicitly asks for them, which is what the restore view does.
+        Soft-deleted students stay in the table but are hidden, unless the caller
+        asks for them: the deleted view wants exactly those rows (`deleted_only`),
+        while `include_deleted` keeps both. `cohort` matches one class exactly, so
+        an administrator can work through a roster class by class.
         """
         if not 1 <= limit <= 500 or offset < 0:
             raise ValueError("invalid pagination")
         statement = select(CampusStudent).order_by(CampusStudent.student_number)
-        if not include_deleted:
+        if deleted_only:
+            statement = statement.where(CampusStudent.deleted_at.is_not(None))
+        elif not include_deleted:
             statement = statement.where(CampusStudent.deleted_at.is_(None))
+        selected_cohort = (cohort or "").strip()
+        if selected_cohort:
+            statement = statement.where(CampusStudent.cohort == selected_cohort)
         needle = (keyword or "").strip()
         if needle:
             pattern = _contains_pattern(needle)

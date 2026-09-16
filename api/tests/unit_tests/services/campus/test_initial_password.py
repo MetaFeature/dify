@@ -27,8 +27,9 @@ def test_prefers_the_surname_reading_for_polyphonic_characters(display_name: str
     assert derive_initial_password(display_name, "20260007") == f"{expected_head}0007"
 
 
-def test_lowercases_a_latin_initial() -> None:
-    assert derive_initial_password("Alice", "20260001") == "a0001"
+def test_a_latin_name_uses_the_account_suffix_alone() -> None:
+    # No Chinese character means no pinyin head to prefix.
+    assert derive_initial_password("Alice", "20260001") == "0001"
 
 
 @pytest.mark.parametrize("display_name", ["•张三", "—", "   "])

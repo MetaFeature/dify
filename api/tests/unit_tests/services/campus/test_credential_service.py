@@ -263,12 +263,12 @@ def test_roster_sync_derives_a_working_initial_password(campus_session: Session)
     student = campus_session.scalar(select(CampusStudent).where(CampusStudent.student_number == "20260009"))
     assert student is not None
     assert result.default_passwords == 1
-    # "Student Nine" has a latin initial, so the derived head is "s", and that
-    # initial password signs the student in: the platform no longer forces a
-    # change at first sign-in.
-    assert credentials.authenticate("20260009", "s0009").student_number == "20260009"
+    # "Student Nine" has no Chinese character, so there is no pinyin head to
+    # prefix: the account's own last four digits are the whole initial password,
+    # and it signs the student in (no forced change at first sign-in).
+    assert credentials.authenticate("20260009", "0009").student_number == "20260009"
 
-    credentials.change_password(student.id, "s0009", "Changed123")
+    credentials.change_password(student.id, "0009", "Changed123")
 
     assert credentials.authenticate("20260009", "Changed123").student_number == "20260009"
 

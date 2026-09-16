@@ -211,13 +211,55 @@ test('the student list sends the search term and leaves it out when blank', asyn
   }, () => 'csrf_token=tok-1')
 
   await api.listStudents(50, 0)
-  await api.listStudents(50, 50, '  张  ')
-  await api.listStudents(50, 0, '2026%')
+  await api.listStudents(50, 50, { keyword: '  张  ' })
+  await api.listStudents(50, 0, { keyword: '2026%' })
 
   assert.equal(requests[0].url, '/console/api/campus/admin/students?limit=50&offset=0')
   // Trimmed, and encoded so a `%` stays a literal the backend can escape.
   assert.equal(requests[1].url, '/console/api/campus/admin/students?limit=50&offset=50&keyword=%E5%BC%A0')
   assert.equal(requests[2].url, '/console/api/campus/admin/students?limit=50&offset=0&keyword=2026%25')
+})
+
+test('the student list filters by class and by deletion without mixing them', async () => {
+  const requests = []
+  const api = new AdminApi(async (url, options = {}) => {
+    requests.push({ url, options })
+    return response({ data: [] })
+  }, () => 'csrf_token=tok-1')
+
+  await api.listStudents(50, 0, { cohort: '  2026 级 1 班  ' })
+  await api.listStudents(50, 0, { deletedOnly: true })
+  await api.listStudents(50, 0, { cohort: '2026 级 1 班', deletedOnly: true })
+
+  assert.equal(
+    requests[0].url,
+    '/console/api/campus/admin/students?limit=50&offset=0&cohort=2026+%E7%BA%A7+1+%E7%8F%AD',
+  )
+  // Deleted rows are a view of their own: the request never asks for both kinds.
+  assert.equal(requests[1].url, '/console/api/campus/admin/students?limit=50&offset=0&deleted_only=true')
+  assert.doesNotMatch(requests[1].url, /include_deleted/)
+  assert.equal(
+    requests[2].url,
+    '/console/api/campus/admin/students?limit=50&offset=0&cohort=2026+%E7%BA%A7+1+%E7%8F%AD&deleted_only=true',
+  )
+})
+
+test('the class filter and the warm up progress come from their own endpoints', async () => {
+  const requests = []
+  const api = new AdminApi(async (url, options = {}) => {
+    requests.push({ url, options })
+    return response(url.endsWith('/cohorts') ? { data: ['2026 级 1 班'] } : { students: 7000, ready: 120 })
+  }, () => 'csrf_token=tok-1')
+
+  const cohorts = await api.studentCohorts()
+  const progress = await api.provisioningProgress()
+
+  assert.deepEqual(requests.map(({ url }) => url), [
+    '/console/api/campus/admin/students/cohorts',
+    '/console/api/campus/admin/students/provisioning-progress',
+  ])
+  assert.deepEqual(cohorts.data, ['2026 级 1 班'])
+  assert.deepEqual(progress, { students: 7000, ready: 120 })
 })
 
 test('the rename body is JSON, not a stringified object literal', async () => {

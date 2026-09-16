@@ -62,12 +62,14 @@ from controllers.console.campus_schemas import (
     SlotCapacitySettingPayload,
     SlotCapacitySettingResponse,
     SlotListQuery,
+    StudentCohortListResponse,
     StudentCreatePayload,
     StudentDetailResponse,
     StudentIdentityPayload,
     StudentInitialPasswordResponse,
     StudentListQuery,
     StudentListResponse,
+    StudentProvisioningProgressResponse,
     StudentRenamePayload,
     StudentResponse,
     StudentRosterSyncPayload,
@@ -152,7 +154,9 @@ class CampusAdminStudentListApi(Resource):
             limit=query.limit,
             offset=query.offset,
             keyword=query.keyword,
+            cohort=query.cohort,
             include_deleted=query.include_deleted,
+            deleted_only=query.deleted_only,
         )
         credentialed = credential_service().credentialed_student_ids([student.id for student in students])
         # One gateway lookup per row; rows the gateway did not answer for come
@@ -204,7 +208,8 @@ class CampusAdminStudentListApi(Resource):
                     )
                 ],
                 actor_account_id=current_user.id,
-                passwords={payload.student_number: payload.password},
+                # An empty field asks for the derived initial password.
+                passwords=({payload.student_number: payload.password} if payload.password else {}),
             )
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
@@ -589,18 +594,42 @@ class CampusAdminStudentSyncApi(Resource):
             )
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
-        try:
-            model_account_service().reconcile(
-                student_numbers=tuple(student.student_number for student in payload.students)
-            )
-        except (CampusProvisioningError, ModelGatewayError) as error:
-            raise ServiceUnavailable("Student model accounts could not be reconciled") from error
-        # One warm-up task per student so the roster's workspaces are built in
-        # parallel and the import returns immediately; sign-in repeats this work
-        # for anyone the warm up has not reached. See the task's docstring.
+        # Model accounts and workspaces are built by the warm up, one task per
+        # student, instead of in this request: a whole-roster import is thousands
+        # of students, and reconciling them here would keep the browser waiting
+        # for hours. The administration page follows the progress endpoint while
+        # the tasks run, and sign-in repeats the work for anyone they have not
+        # reached. See the task's docstring.
         for student in payload.students:
             provision_student_workspace_task.delay(student.student_number)
         return dump_response(RosterSyncResponse, result)
+
+
+@console_ns.route("/campus/admin/students/cohorts")
+class CampusAdminStudentCohortApi(Resource):
+    @console_ns.response(200, "Roster classes", console_ns.models[StudentCohortListResponse.__name__])
+    @setup_required
+    @login_required
+    @with_current_user
+    def get(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        return dump_response(StudentCohortListResponse, {"data": student_service().list_cohorts()})
+
+
+@console_ns.route("/campus/admin/students/provisioning-progress")
+class CampusAdminStudentProvisioningProgressApi(Resource):
+    @console_ns.response(
+        200, "Roster warm up progress", console_ns.models[StudentProvisioningProgressResponse.__name__]
+    )
+    @setup_required
+    @login_required
+    @with_current_user
+    def get(self, current_user: Account) -> ResponseReturnValue:
+        require_campus_enabled()
+        require_admin(current_user)
+        students, ready = student_service().provisioning_progress()
+        return dump_response(StudentProvisioningProgressResponse, {"students": students, "ready": ready})
 
 
 @console_ns.route("/campus/admin/students/sync/preview")

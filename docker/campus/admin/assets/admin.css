@@ -281,3 +281,9 @@ textarea {
 #tab-presentation th:nth-child(2) { width: 24%; }
 #tab-presentation th:nth-child(3) { width: 48%; }
 #tab-presentation th:last-child { width: 12%; }
+
+/* Roster warm up progress: the import returns before the workspaces exist, so
+   the page shows how many of them are ready yet. */
+.provisioning-progress { margin-top: 14px; display: grid; gap: 8px; }
+.progress-track { height: 10px; border-radius: 999px; background: rgba(77, 107, 254, 0.12); overflow: hidden; }
+.progress-fill { height: 100%; width: 0; border-radius: 999px; background: var(--ds-color-brand, #4d6bfe); transition: width .3s ease; }

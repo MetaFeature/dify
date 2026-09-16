@@ -107,12 +107,31 @@ export class AdminApi {
    * @param {string} [keyword] matched against the student number or name
    * @returns {Promise<{ data: AdminStudent[] }>}
    */
-  async listStudents(limit, offset, keyword = '') {
+  /**
+   * @param {number} limit @param {number} offset
+   * @param {{ keyword?: string, cohort?: string, deletedOnly?: boolean }} [filters]
+   */
+  async listStudents(limit, offset, filters = {}) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-    const needle = keyword.trim()
+    const needle = (filters.keyword ?? '').trim()
     if (needle)
       params.set('keyword', needle)
+    const cohort = (filters.cohort ?? '').trim()
+    if (cohort)
+      params.set('cohort', cohort)
+    if (filters.deletedOnly)
+      params.set('deleted_only', 'true')
     return this.#request(`/admin/students?${params}`)
+  }
+
+  /** @returns {Promise<{ data: string[] }>} */
+  async studentCohorts() {
+    return this.#request('/admin/students/cohorts')
+  }
+
+  /** @returns {Promise<{ students: number, ready: number }>} */
+  async provisioningProgress() {
+    return this.#request('/admin/students/provisioning-progress')
   }
 
 

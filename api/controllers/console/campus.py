@@ -203,6 +203,9 @@ def _manual_view_html(*, title: str, summary: str | None, content_url: str, port
     safe_title = escape(title)
     safe_content_url = escape(content_url, quote=True)
     safe_portal_url = escape(portal_url, quote=True)
+    # This page lives on the manual origin, which cannot call the portal API, so
+    # signing out is a plain navigation to the portal with a marker it acts on.
+    safe_logout_url = escape(f"{portal_url}?logout=1", quote=True)
     # The line under the title used to be the original file name, which only
     # repeated the title with ".html" stuck on the end. The document's own
     # opening paragraph is what a student can actually use; a chapter without a
@@ -363,6 +366,7 @@ def _manual_view_html(*, title: str, summary: str | None, content_url: str, port
     </div>
     <nav aria-label="手册操作">
       <a href="{safe_content_url}" target="manual-content">重新载入手册</a>
+      <a href="{safe_logout_url}">退出登录</a>
       <a class="primary" href="{safe_portal_url}">返回实验选择</a>
     </nav>
   </header>
