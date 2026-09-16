@@ -392,13 +392,21 @@ elements.studentTable.addEventListener('click', async (event) => {
       await loadStudents()
     }
     else if (action === 'reset-password') {
-      const row = button.closest('tr')
-      if (!(row instanceof HTMLTableRowElement))
+      // The initial password is derived from the student's own name and number,
+      // so the administrator has nothing to type: hand out what came back.
+      if (!window.confirm(`把「${studentNumber}」的密码重置为初始密码（姓名首字拼音 + 学号后四位）？该用户已登录的会话会全部退出。`))
         return
-      if (openPanelSource === row)
-        closeRowPanel()
-      else
-        openRowPanel(row, passwordPanel(studentNumber))
+      button.disabled = true
+      try {
+        const reset = await api.resetStudentPassword(studentNumber)
+        showMessage(`密码已重置为初始密码 ${reset.password}，请转告该用户；其登录会话已全部退出。`, false)
+      }
+      catch (error) {
+        showMessage(messageFor(error), true)
+      }
+      finally {
+        button.disabled = false
+      }
     }
     else if (action === 'adjust-allowance') {
       const row = button.closest('tr')
@@ -503,7 +511,7 @@ elements.rosterPreview.addEventListener('click', async () => {
     summary.className = 'preview-summary'
     summary.innerHTML = `将新增 <b>${preview.created}</b> 名用户，更新 <b>${preview.updated}</b> 名用户，`
       + `其中 <b>${preview.password_resets}</b> 名用户的密码将被重置，`
-      + `<b>${preview.default_passwords}</b> 名新用户将使用「姓名首字拼音 + 学号后四位」初始密码并须首次登录修改。请确认后导入。`
+      + `<b>${preview.default_passwords}</b> 名新用户将使用「姓名首字拼音 + 学号后四位」初始密码。请确认后导入。`
     elements.rosterReport.append(summary)
     elements.rosterConfirm.hidden = false
   }
@@ -944,26 +952,6 @@ function allowancePanel(studentNumber) {
         request_id: crypto.randomUUID(),
       })
       showMessage('额度已调整。', false)
-    })
-  })
-  return form
-}
-
-/** The inline form for resetting one student's password. */
-function passwordPanel(studentNumber) {
-  const form = panelForm(
-    `重置「${escapeHtml(studentNumber)}」的密码`,
-    '<label>新密码<input name="password" maxlength="128" autocomplete="off" required></label>',
-    '确认重置',
-  )
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault()
-    const password = String(new FormData(form).get('password') ?? '').trim()
-    if (!password)
-      return
-    await submitPanel(form, async () => {
-      await api.resetStudentPassword(studentNumber, password)
-      showMessage('密码已重置，该用户的登录会话已全部退出。', false)
     })
   })
   return form

@@ -186,6 +186,23 @@ test('the default allowance endpoints share the administrator route', async () =
   assert.ok(requests.every(({ options }) => options.headers.get('X-CSRF-Token') === 'tok-4'))
 })
 
+test('resetting a password sends no password: the server derives the initial one', async () => {
+  const requests = []
+  const api = new AdminApi(async (url, options = {}) => {
+    requests.push({ url, options })
+    return response({ student_number: '20260001', password: 'zhang0001' })
+  }, () => 'csrf_token=tok-5')
+
+  const reset = await api.resetStudentPassword('20260001')
+
+  assert.deepEqual(requests.map(({ url }) => url), [
+    '/console/api/campus/admin/students/20260001/password',
+  ])
+  assert.deepEqual(requests.map(({ options }) => options.method || 'GET'), ['PUT'])
+  assert.equal(requests[0].options.body, undefined)
+  assert.equal(reset.password, 'zhang0001')
+})
+
 test('the student list sends the search term and leaves it out when blank', async () => {
   const requests = []
   const api = new AdminApi(async (url, options = {}) => {

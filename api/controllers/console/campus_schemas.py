@@ -77,18 +77,6 @@ class StudentCreatePayload(CampusRequestModel):
         return normalized
 
 
-class StudentPasswordResetPayload(CampusRequestModel):
-    password: str = Field(min_length=1, max_length=128)
-
-    @field_validator("password")
-    @classmethod
-    def validate_password_text(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value cannot be whitespace-only")
-        return normalized
-
-
 class PortalPasswordChangePayload(CampusRequestModel):
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=1, max_length=128)
@@ -128,6 +116,13 @@ class StudentListQuery(CampusRequestModel):
     keyword: str | None = Field(default=None, max_length=128)
     # The restore view is the only caller that wants soft-deleted rows.
     include_deleted: bool = False
+
+
+class StudentInitialPasswordResponse(CampusResponseModel):
+    """The initial password an administrator reset just installed."""
+
+    student_number: str
+    password: str
 
 
 class StudentRenamePayload(CampusRequestModel):
@@ -190,7 +185,6 @@ class AdministratorCreatePayload(CampusRequestModel):
 class PortalLoginResponse(CampusResponseModel):
     student_id: str
     expires_at: datetime
-    must_change_password: bool = False
 
 
 class ModelUsageResponse(CampusResponseModel):
@@ -485,7 +479,6 @@ register_schema_models(
     StudentStatusPayload,
     StudentRenamePayload,
     StudentCreatePayload,
-    StudentPasswordResetPayload,
     PortalPasswordChangePayload,
     ReservationCreatePayload,
     SlotListQuery,
@@ -503,6 +496,7 @@ register_schema_models(
 register_response_schema_models(
     console_ns,
     PortalLoginResponse,
+    StudentInitialPasswordResponse,
     StudentResponse,
     StudentListResponse,
     RetentionPurgeResponse,

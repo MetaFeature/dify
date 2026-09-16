@@ -161,11 +161,9 @@ export class AdminApi {
   }
 
   /** @param {string} studentNumber @param {string} password @returns {Promise<{ result: string }>} */
-  async resetStudentPassword(studentNumber, password) {
-    return this.#request(`/admin/students/${encodeURIComponent(studentNumber)}/password`, {
-      method: 'PUT',
-      body: JSON.stringify({ password }),
-    })
+  /** @returns {Promise<{ student_number: string, password: string }>} */
+  async resetStudentPassword(studentNumber) {
+    return this.#request(`/admin/students/${encodeURIComponent(studentNumber)}/password`, { method: 'PUT' })
   }
 
   /**

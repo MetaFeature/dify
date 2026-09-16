@@ -398,7 +398,6 @@ class CampusVirtualLoginApi(Resource):
                 {
                     "student_id": issued.student_id,
                     "expires_at": issued.expires_at,
-                    "must_change_password": credential_service().must_change_password(issued.student_id),
                 },
             )
         )
@@ -603,7 +602,7 @@ class CampusPasswordChangeApi(Resource):
     @setup_required
     def post(self) -> ResponseReturnValue:
         require_campus_enabled()
-        student = portal_student(allow_initial_password=True)
+        student = portal_student()
         payload = PortalPasswordChangePayload.model_validate(console_ns.payload or {})
         try:
             credential_service().change_password(

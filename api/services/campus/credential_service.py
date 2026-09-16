@@ -7,6 +7,7 @@ to the virtual identity source.
 """
 
 import base64
+import json
 import secrets
 from datetime import datetime
 
@@ -14,7 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from libs.password import compare_password, hash_password, valid_password
-from models.campus import CampusPortalSession, CampusStudent, CampusStudentCredential
+from models.campus import CampusAuditEvent, CampusPortalSession, CampusStudent, CampusStudentCredential
 from services.campus.domain import IdentitySource, StudentIdentity
 from services.campus.errors import (
     CampusValidationError,
@@ -30,8 +31,6 @@ def upsert_credential(
     session: Session,
     student_id: str,
     password: str,
-    *,
-    must_change_password: bool = False,
 ) -> None:
     """Set or replace one student's credential without committing."""
     salt = secrets.token_bytes(16)
@@ -44,13 +43,11 @@ def upsert_credential(
                 student_id=student_id,
                 password_hashed=password_hashed,
                 password_salt=password_salt,
-                must_change_password=must_change_password,
             )
         )
     else:
         credential.password_hashed = password_hashed
         credential.password_salt = password_salt
-        credential.must_change_password = must_change_password
 
 
 def revoke_portal_sessions(session: Session, student_id: str, now_utc: datetime) -> None:
@@ -104,8 +101,20 @@ class StudentCredentialService:
             cohort=student.cohort,
         )
 
-    def set_password(self, student_number: str, password: str, *, now: datetime) -> None:
-        """Reset one student's password and revoke every live portal session."""
+    def set_password(
+        self,
+        student_number: str,
+        password: str,
+        *,
+        now: datetime,
+        actor_account_id: str | None = None,
+    ) -> None:
+        """Reset one student's password and revoke every live portal session.
+
+        An administrator reset is recorded: it changes how someone signs in, so
+        it belongs in the same attributable trail as the other administrator
+        actions (ADR-0009). The password itself is never written to the trail.
+        """
         if not password:
             raise CampusValidationError("password is required")
         student = self._session.scalar(
@@ -115,6 +124,16 @@ class StudentCredentialService:
             raise StudentNotFoundError(student_number)
         upsert_credential(self._session, student.id, password)
         revoke_portal_sessions(self._session, student.id, to_naive_utc(now))
+        if actor_account_id is not None:
+            self._session.add(
+                CampusAuditEvent(
+                    actor_account_id=actor_account_id,
+                    action="student.password_reset",
+                    target_type="student",
+                    target_id=student.id,
+                    details_json=json.dumps({"student_number": student.student_number}, separators=(",", ":")),
+                )
+            )
         self._session.commit()
 
     def change_password(
@@ -151,13 +170,6 @@ class StudentCredentialService:
             raise StudentPasswordStrengthError(str(error)) from error
         upsert_credential(self._session, student_id, new_password)
         self._session.commit()
-
-    def must_change_password(self, student_id: str) -> bool:
-        """Report whether a derived initial credential still needs replacement."""
-        value = self._session.scalar(
-            select(CampusStudentCredential.must_change_password).where(CampusStudentCredential.student_id == student_id)
-        )
-        return bool(value)
 
     def credentialed_student_ids(self, student_ids: list[str]) -> set[str]:
         """Return the subset of the given students that hold a credential row."""

@@ -33,9 +33,6 @@ if (loginFormElement instanceof HTMLFormElement)
 const elements = {
   loginView: requiredElement('#login-view', HTMLElement),
   loginContent: requiredElement('#login-content', HTMLElement),
-  requiredPasswordView: requiredElement('#required-password-view', HTMLElement),
-  requiredPasswordForm: requiredElement('#required-password-form', HTMLFormElement),
-  requiredPasswordMessage: requiredElement('#required-password-message', HTMLElement),
   tracksView: requiredElement('#tracks-view', HTMLElement),
   dashboardView: requiredElement('#dashboard-view', HTMLElement),
   trackList: requiredElement('#track-list', HTMLElement),
@@ -163,10 +160,7 @@ elements.loginForm.addEventListener('submit', async (event) => {
     elements.loginForm.reset()
     elements.loginView.hidden = true
     hideMessage(elements.message)
-    if (login.must_change_password)
-      elements.requiredPasswordView.hidden = false
-    else
-      await showTracks()
+    await showTracks()
   }
   catch (error) {
     // On the sign-in form a 401 means the credentials were rejected, not that an
@@ -178,25 +172,6 @@ elements.loginForm.addEventListener('submit', async (event) => {
   }
   finally {
     setBusy(elements.loginForm, false)
-  }
-})
-
-elements.requiredPasswordForm.addEventListener('submit', async (event) => {
-  event.preventDefault()
-  const form = new FormData(elements.requiredPasswordForm)
-  setBusy(elements.requiredPasswordForm, true)
-  hideMessage(elements.requiredPasswordMessage)
-  try {
-    await api.changePassword(String(form.get('currentPassword')), String(form.get('newPassword')))
-    elements.requiredPasswordForm.reset()
-    elements.requiredPasswordView.hidden = true
-    await showTracks()
-  }
-  catch (error) {
-    showMessage(elements.requiredPasswordMessage, passwordErrorMessage(error), true)
-  }
-  finally {
-    setBusy(elements.requiredPasswordForm, false)
   }
 })
 

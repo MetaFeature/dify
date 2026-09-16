@@ -111,11 +111,16 @@ test('the default allowance panel names who a save reaches', () => {
   assert.match(panel, /已经开通的用户额度保持不变/)
 })
 
-test('allowance and password edit in a row panel, not a browser dialog', () => {
+test('allowance edits in a row panel while a password reset just confirms', () => {
   const scriptSource = script.slice(script.indexOf("else if (action === 'reset-password')"), script.indexOf("else if (action === 'rename')"))
 
-  assert.match(scriptSource, /openRowPanel\(row, passwordPanel\(studentNumber\)\)/)
   assert.match(scriptSource, /openRowPanel\(row, allowancePanel\(studentNumber\)\)/)
+  // A reset has nothing to ask for: the platform derives the student's initial
+  // password, so the row confirms and then reports what the password became.
+  assert.match(scriptSource, /window\.confirm\(/)
+  assert.match(scriptSource, /api\.resetStudentPassword\(studentNumber\)/)
+  assert.match(scriptSource, /reset\.password/)
+  assert.doesNotMatch(scriptSource, /passwordPanel/)
   assert.doesNotMatch(scriptSource, /window\.prompt/)
 })
 
@@ -131,14 +136,14 @@ test('a confirmed panel reloads the roster so the row shows the new state', () =
 })
 
 test('the row panels carry the fields the API needs', () => {
-  const allowance = script.slice(script.indexOf('function allowancePanel('), script.indexOf('/** The inline form for resetting'))
-  const password = script.slice(script.indexOf('function passwordPanel('), script.indexOf('/** @param {string} title'))
+  const allowance = script.slice(script.indexOf('function allowancePanel('), script.indexOf('function panelForm('))
 
   assert.match(allowance, /name="delta"/)
   assert.match(allowance, /name="reason"/)
   assert.match(allowance, /delta_usd: delta/)
-  assert.match(password, /name="password"/)
-  // Both name their own cancel, and nothing opens a second panel at once.
+  // No panel asks for a password any more: the reset derives it server-side.
+  assert.doesNotMatch(script, /passwordPanel/)
+  // The panel names its own cancel, and nothing opens a second panel at once.
   const panelForm = script.slice(script.indexOf('function panelForm('))
   assert.match(panelForm, /data-panel-cancel/)
   assert.match(script, /function openRowPanel\(sourceRow, content\) \{[\s\S]{0,80}?closeRowPanel\(\)/)

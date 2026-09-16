@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from flask import request
+from sqlalchemy.orm import Session
 from werkzeug.exceptions import Forbidden, NotFound, Unauthorized
 
 from configs import dify_config
@@ -198,10 +199,18 @@ def require_admin(account: Account) -> None:
 
 
 def platform_provisioner() -> PlatformProvisioningService:
+    return build_platform_provisioner(db.session())
+
+
+def build_platform_provisioner(session: Session) -> PlatformProvisioningService:
+    """Wire the provisioning service onto a caller-supplied session.
+
+    Portal sign-in uses the request session; the roster warm-up task runs in a
+    worker with no Flask app context, so it passes a session it owns.
+    """
     principal_email = dify_config.CAMPUS_SERVICE_PRINCIPAL_EMAIL
     if not principal_email:
         raise CampusProvisioningError("Campus service principal is not configured")
-    session = db.session()
     gateway = newapi_client()
 
     def current_model_configurator() -> DifyModelConfigurator:
@@ -269,11 +278,15 @@ def portal_token() -> str:
     return token
 
 
-def portal_student(*, allow_initial_password: bool = False) -> CampusStudent:
+def portal_student() -> CampusStudent:
+    """The signed-in student, for every portal route.
+
+    The initial password is a working password: the platform no longer forces a
+    change at first sign-in, so no portal route has to special-case a student who
+    still holds it.
+    """
     try:
         student = portal_sessions().resolve(portal_token(), now=datetime.now(UTC))
     except (PortalSessionError, StudentDeletedError, StudentNotFoundError, StudentSuspendedError) as error:
         raise Unauthorized("Campus portal session is invalid") from error
-    if not allow_initial_password and credential_service().must_change_password(student.id):
-        raise Forbidden("Initial password must be changed before using the platform")
     return student

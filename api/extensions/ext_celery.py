@@ -159,6 +159,7 @@ def init_app(app: DifyApp) -> Celery:
         "tasks.install_default_plugins_task",  # tenant default plugin installation
         "tasks.app_generate.resume_agent_app_task",  # ENG-635: Agent v2 chat ask_human resume
         "tasks.workflow_run_archive_download_tasks",  # workflow-run archive download preparation
+        "tasks.campus_provision_student_task",  # Campus roster warm up
     ]
     day = dify_config.CELERY_BEAT_SCHEDULER_TIME
 

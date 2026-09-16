@@ -65,9 +65,9 @@ from controllers.console.campus_schemas import (
     StudentCreatePayload,
     StudentDetailResponse,
     StudentIdentityPayload,
+    StudentInitialPasswordResponse,
     StudentListQuery,
     StudentListResponse,
-    StudentPasswordResetPayload,
     StudentRenamePayload,
     StudentResponse,
     StudentRosterSyncPayload,
@@ -96,8 +96,10 @@ from services.campus.lab_manual_service import MAX_DOCUMENT_BYTES
 from services.campus.portal_login_page import MAX_PORTAL_LOGIN_BYTES
 from services.campus.portal_presentation_service import PortalPresentation, TrackPresentation
 from services.campus.roster_import import MAX_ROSTER_BYTES, parse_roster_xlsx
+from services.campus.student_service import derive_initial_password
 from services.campus.usage_report import render_usage_report_html, render_usage_report_xlsx
 from services.campus.usage_report_service import parse_granularity
+from tasks.campus_provision_student_task import provision_student_workspace_task
 
 
 def _allowance_response(summary: AllowanceSummary) -> dict[str, object]:
@@ -210,6 +212,9 @@ class CampusAdminStudentListApi(Resource):
             model_account_service().reconcile(student_numbers=(payload.student_number,))
         except (CampusProvisioningError, ModelGatewayError) as error:
             raise ServiceUnavailable("Student model account could not be provisioned") from error
+        # Warm up the workspace in the background: building it here would add
+        # several seconds to this request, and the student has not signed in yet.
+        provision_student_workspace_task.delay(payload.student_number)
         student = student_service().get_student(payload.student_number)
         return dump_response(StudentResponse, student), 201
 
@@ -590,6 +595,11 @@ class CampusAdminStudentSyncApi(Resource):
             )
         except (CampusProvisioningError, ModelGatewayError) as error:
             raise ServiceUnavailable("Student model accounts could not be reconciled") from error
+        # One warm-up task per student so the roster's workspaces are built in
+        # parallel and the import returns immediately; sign-in repeats this work
+        # for anyone the warm up has not reached. See the task's docstring.
+        for student in payload.students:
+            provision_student_workspace_task.delay(student.student_number)
         return dump_response(RosterSyncResponse, result)
 
 
@@ -649,22 +659,37 @@ class CampusAdminStudentImportParseApi(Resource):
 
 @console_ns.route("/campus/admin/students/<string:student_number>/password")
 class CampusAdminStudentPasswordApi(Resource):
-    @console_ns.expect(console_ns.models[StudentPasswordResetPayload.__name__])
-    @console_ns.response(200, "Password reset", console_ns.models[ResultResponse.__name__])
+    @console_ns.response(200, "Password reset", console_ns.models[StudentInitialPasswordResponse.__name__])
     @setup_required
     @login_required
     @with_current_user
     def put(self, current_user: Account, student_number: str) -> ResponseReturnValue:
+        """Reset one password to the initial password the roster would hand out.
+
+        The administrator types nothing: the initial password is derived from the
+        student's own name and number (see `derive_initial_password`), and the
+        response carries it so the reset can be passed on. The student can change
+        it afterwards from the reservation centre.
+        """
         require_campus_enabled()
         require_admin(current_user)
-        payload = StudentPasswordResetPayload.model_validate(console_ns.payload or {})
         try:
-            credential_service().set_password(student_number, payload.password, now=datetime.now(UTC))
+            student = student_service().get_student(student_number)
+            initial_password = derive_initial_password(student.display_name, student.student_number)
+            credential_service().set_password(
+                student.student_number,
+                initial_password,
+                now=datetime.now(UTC),
+                actor_account_id=current_user.id,
+            )
         except StudentNotFoundError as error:
             raise NotFound("Student not found") from error
         except CampusValidationError as error:
             raise BadRequest(str(error)) from error
-        return ResultResponse(result="success").model_dump(mode="json")
+        return dump_response(
+            StudentInitialPasswordResponse,
+            {"student_number": student.student_number, "password": initial_password},
+        )
 
 
 @console_ns.route("/campus/admin/students/<string:student_number>/status")

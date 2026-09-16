@@ -250,7 +250,7 @@ def test_roster_sync_keeps_credentials_when_password_is_omitted(campus_session: 
     assert credentials.authenticate("20260001", "Ngc0001").student_number == "20260001"
 
 
-def test_roster_sync_derives_new_student_password_and_requires_change(campus_session: Session):
+def test_roster_sync_derives_a_working_initial_password(campus_session: Session):
     service = StudentAdministrationService(session=campus_session, default_allowance_usd=Decimal(20))
     credentials = StudentCredentialService(session=campus_session)
 
@@ -263,13 +263,14 @@ def test_roster_sync_derives_new_student_password_and_requires_change(campus_ses
     student = campus_session.scalar(select(CampusStudent).where(CampusStudent.student_number == "20260009"))
     assert student is not None
     assert result.default_passwords == 1
-    # "Student Nine" has a latin initial, so the derived head is "s".
+    # "Student Nine" has a latin initial, so the derived head is "s", and that
+    # initial password signs the student in: the platform no longer forces a
+    # change at first sign-in.
     assert credentials.authenticate("20260009", "s0009").student_number == "20260009"
-    assert credentials.must_change_password(student.id)
 
     credentials.change_password(student.id, "s0009", "Changed123")
 
-    assert not credentials.must_change_password(student.id)
+    assert credentials.authenticate("20260009", "Changed123").student_number == "20260009"
 
 
 def test_preview_sync_reports_counts_without_writing(campus_session: Session):

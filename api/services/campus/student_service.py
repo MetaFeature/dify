@@ -143,7 +143,6 @@ class StudentAdministrationService:
                             self._session,
                             student.id,
                             derive_initial_password(student.display_name, student_number),
-                            must_change_password=True,
                         )
                         default_passwords += 1
             else:

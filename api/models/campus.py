@@ -82,7 +82,6 @@ class CampusStudentCredential(DefaultFieldsMixin, Base):
     student_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     password_hashed: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     password_salt: Mapped[str] = mapped_column(sa.String(64), nullable=False)
-    must_change_password: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
 
 
 class CampusWorkspaceBinding(DefaultFieldsMixin, Base):
