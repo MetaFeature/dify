@@ -102,7 +102,6 @@ async function restoreSession() {
   try {
     const summaries = await api.listExperimentTracks()
     elements.loginView.hidden = true
-    elements.requiredPasswordView.hidden = true
     elements.dashboardView.hidden = true
     elements.tracksView.hidden = false
     hideMessage(elements.tracksMessage)

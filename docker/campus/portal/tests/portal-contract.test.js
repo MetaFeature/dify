@@ -193,3 +193,17 @@ test('the chapter teaser is clamped to two lines under its title', async () => {
   assert.match(rule, /overflow: hidden;/)
   assert.match(css, /\.chapter-link \{[\s\S]{0,60}?display: grid;/)
 })
+
+test('every element the script touches is declared in its table', () => {
+  // A deleted view used to leave one `elements.someView.hidden = true` behind,
+  // and the swallowed error left a signed-in student on a blank page. The table
+  // is the single place a view may be referenced from.
+  const tableStart = script.indexOf('const elements = {')
+  const table = script.slice(tableStart, script.indexOf('\n}\n', tableStart))
+  const declared = new Set([...table.matchAll(/^\s{2}([a-zA-Z]+):/gm)].map(match => match[1]))
+  const used = new Set([...script.matchAll(/elements\.([a-zA-Z]+)/g)].map(match => match[1]))
+  const undeclared = [...used].filter(name => !declared.has(name))
+
+  assert.ok(declared.size > 0, 'the script must declare its element table')
+  assert.deepEqual(undeclared, [], `undeclared element references: ${undeclared.join(', ')}`)
+})
