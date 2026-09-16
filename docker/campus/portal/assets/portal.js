@@ -362,7 +362,7 @@ function renderDashboard({ access, reservations, allowance }) {
   elements.launchButton.title = exhausted ? '模型额度已用尽，无法进入 Dify 工作区' : ''
   // Amounts are stored with four decimals; students read them in 元 with two.
   elements.allowanceRemaining.textContent = Number(allowance.remaining_usd).toFixed(2)
-  elements.allowanceDetail.textContent = `累计使用 ${allowance.used_usd} 元 · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
+  elements.allowanceDetail.textContent = `累计使用 ${Number(allowance.used_usd).toFixed(2)} 元 · ${allowance.model_calls_enabled ? '模型可用' : '模型额度已用完'}`
   const unfinished = reservations.find(item => item.status === 'confirmed' || item.status === 'waitlisted')
   elements.reservationState.textContent = unfinished ? statusLabel(unfinished.status) : '暂无'
   elements.reservationDetail.textContent = unfinished ? `${formatDateTime(unfinished.starts_at)} – ${formatTime(unfinished.ends_at)}` : messages.reservations.noneDetail
