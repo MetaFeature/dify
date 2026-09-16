@@ -152,8 +152,10 @@ const DocumentsHeader: FC<DocumentsHeaderProps> = ({
 
       {/* Toolbar section */}
       <div className="flex flex-wrap items-center justify-between px-6 pt-4">
-        {/* Left: Filters */}
-        <div className="flex items-center gap-2">
+        {/* Left: Filters. These controls carry fixed widths, so on a narrow
+            viewport the group has to wrap instead of being clipped by the panel's
+            overflow-hidden. */}
+        <div className="flex flex-wrap items-center gap-2">
           <Chip
             className="w-[160px]"
             showLeftIcon={false}
@@ -170,7 +172,7 @@ const DocumentsHeader: FC<DocumentsHeaderProps> = ({
             onChange={(e) => onInputChange(e.target.value)}
             onClear={() => onInputChange('')}
           />
-          <div className="h-3.5 w-px bg-divider-regular"></div>
+          <div className="hidden h-3.5 w-px bg-divider-regular sm:block"></div>
           <Sort
             order={sortValue.startsWith('-') ? '-' : ''}
             value={sortValue.replace('-', '')}

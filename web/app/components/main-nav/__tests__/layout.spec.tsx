@@ -91,6 +91,7 @@ describe('MainNavLayout', () => {
     ;(useSuspenseQuery as Mock).mockReturnValue({
       data: {
         enable_app_deploy: true,
+        branding: { enabled: false, application_title: '' },
       },
     })
     ;(isAgentV2Enabled as Mock).mockReturnValue(true)
@@ -255,7 +256,10 @@ describe('MainNavLayout', () => {
     ;(usePathname as Mock).mockReturnValue(pathname)
     mockAppContextState.current = appContext
     ;(useSuspenseQuery as Mock).mockReturnValue({
-      data: systemFeatures,
+      data: {
+        branding: { enabled: false, application_title: '' },
+        ...systemFeatures,
+      },
     })
 
     render(

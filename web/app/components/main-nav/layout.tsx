@@ -15,6 +15,7 @@ import { isAgentV2Enabled } from '@/features/agent-v2/feature-flag'
 import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import { usePathname } from '@/next/navigation'
 import { MainNav } from '.'
+import { ConsoleRail } from './console-rail'
 import { shouldUseDetailSidebar } from './routes'
 import { MAIN_CONTENT_ID, SkipNav } from './skip-nav'
 
@@ -52,12 +53,19 @@ const MainNavLayout = ({ children, detailSidebar }: MainNavLayoutProps) => {
     canUseAppDeploy: isCurrentWorkspaceEditor && systemFeatures.enable_app_deploy,
     isCurrentWorkspaceDatasetOperator,
   })
+  const appTitle =
+    systemFeatures.branding.enabled && systemFeatures.branding.application_title
+      ? systemFeatures.branding.application_title
+      : 'Dify'
 
   return (
-    <div className="flex h-0 min-h-0 min-w-0 grow overflow-hidden bg-background-body">
+    <div className="flex h-0 min-h-0 min-w-0 grow flex-col overflow-hidden bg-background-body lg:flex-row">
       <SkipNav>{t(($) => $['navigation.skipToMain'])}</SkipNav>
       <AppDetailStoreCleanup />
-      {shouldHideMainNav ? detailSidebar : <MainNav />}
+      <ConsoleRail
+        rail={shouldHideMainNav ? detailSidebar : <MainNav />}
+        title={appTitle}
+      />
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}
